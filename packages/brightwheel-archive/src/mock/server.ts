@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { createHash } from 'node:crypto';
+import { placeholderJpeg, placeholderMp4 } from './fixtures.js';
 
 /**
  * A stand-in Brightwheel server with entirely invented children.
@@ -14,8 +15,10 @@ import { createHash } from 'node:crypto';
  *     note in this file is synthetic, so the screenshots in `docs/` can be committed to a
  *     public repository without exposing anybody's family.
  *
- * The photos are generated SVG-to-PNG-ish placeholders drawn from the activity id, so the
- * same fake photo always looks the same and the screenshots are reproducible.
+ * The photos and videos are real, tiny JPEG and MP4 files generated in `fixtures.ts`, each
+ * a solid colour derived from the activity id, so the same fake photo always looks the
+ * same and ExifTool can genuinely write into it — which is what lets the tests prove the
+ * embedded dates and names are right, rather than assuming.
  */
 
 export interface MockOptions {
@@ -54,30 +57,6 @@ function seeded(seed: string): () => number {
     h = (Math.imul(h, 1103515245) + 12345) & 0x7fffffff;
     return h / 0x7fffffff;
   };
-}
-
-/** A coloured placeholder "photo" as an SVG, deterministic per id. */
-function placeholderSvg(id: string, label: string): string {
-  const rand = seeded(id);
-  const hue = Math.floor(rand() * 360);
-  const hue2 = (hue + 40 + Math.floor(rand() * 80)) % 360;
-  const shapes = Array.from({ length: 6 }, (_, i) => {
-    const cx = Math.floor(rand() * 800);
-    const cy = Math.floor(rand() * 600);
-    const r = 40 + Math.floor(rand() * 120);
-    const h = (hue + i * 30) % 360;
-    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsl(${h} 70% 68%)" opacity="0.55"/>`;
-  }).join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
-<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-<stop offset="0%" stop-color="hsl(${hue} 65% 78%)"/><stop offset="100%" stop-color="hsl(${hue2} 65% 62%)"/>
-</linearGradient></defs>
-<rect width="800" height="600" fill="url(#g)"/>${shapes}
-<text x="400" y="300" font-family="system-ui,sans-serif" font-size="34" font-weight="600"
- fill="rgba(255,255,255,.92)" text-anchor="middle">${label}</text>
-<text x="400" y="344" font-family="system-ui,sans-serif" font-size="19"
- fill="rgba(255,255,255,.75)" text-anchor="middle">sample image - not a real child</text>
-</svg>`;
 }
 
 function buildActivities(studentId: string, count: number, baseUrl: string) {
@@ -151,14 +130,15 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
         return;
       }
       const id = url.pathname.replace('/media/', '').replace(/\.[a-z0-9]+$/i, '');
-      const svg = placeholderSvg(id, id);
+      const isVideo = /\.mp4$/i.test(url.pathname);
+      const body = isVideo ? placeholderMp4(id) : placeholderJpeg(id);
       res.writeHead(200, {
-        'content-type': 'image/svg+xml',
-        'content-length': Buffer.byteLength(svg),
+        'content-type': isVideo ? 'video/mp4' : 'image/jpeg',
+        'content-length': body.length,
         etag: `"${createHash('sha256').update(id).digest('hex').slice(0, 16)}"`,
         'last-modified': new Date('2026-09-18T12:00:00Z').toUTCString(),
       });
-      res.end(svg);
+      res.end(body);
       return;
     }
 
