@@ -259,13 +259,23 @@ test('the page keeps a refused folder marked until the folder itself is fixed', 
     const guard = save.indexOf('if (patch.archiveDir !== undefined)');
     assert.ok(guard > 0, 'only the save that carried the folder may touch the folder field');
     assert.ok(save.indexOf("$('archiveDir').value = d.config.archiveDir") > guard);
-    assert.ok(save.indexOf("$('archiveDir').setAttribute('aria-invalid', 'false')") > guard);
-    assert.equal(save.split("$('archiveDir')").length - 1, 2, 'and it is untouched elsewhere on success');
+    // lastIndexOf, not indexOf: the early return for a no-op save clears it too, above.
+    assert.ok(save.lastIndexOf('clearDirError()') > guard, 'and only it may drop the mark');
+    assert.equal(save.split('clearDirError()').length - 1, 2, 'in exactly those two places');
+    assert.equal(save.split("$('archiveDir')").length - 1, 1, 'and it is untouched elsewhere on success');
 
-    const note = section(html, 'function savedNote()', 'function showSaveError(d, opts)');
-    assert.match(note, /dirError \? el\.querySelector\('\.msg\.err'\)/, 'a later "Saved" puts the refusal back');
-    assert.ok(!note.includes('el.innerHTML ='), 'and never replaces the message box wholesale');
-    assert.match(section(html, 'function showSaveError', 'function updateRunReady'), /dirError = true/);
+    // Typing the stored folder back by hand is the one other way the refusal stops being
+    // true, and that path returns early — so it must clear the mark on its way past.
+    const noop = save.slice(0, save.indexOf('let d;'));
+    assert.match(noop, /clearDirError\(\);/, 'a field that again matches what is stored is not refused');
+
+    // The refusal is restored from its own words. Restoring whatever error happened to be
+    // in the box would pin an unrelated, transient one there for the rest of the session.
+    const note = section(html, 'function savedNote()', '/** The folder is agreed again');
+    assert.match(note, /if \(dirError\) el\.innerHTML = /, 'a later "Saved" puts the refusal back');
+    assert.ok(!note.includes("querySelector('.msg.err')"), 'and never re-uses an unrelated error');
+    assert.match(section(html, 'function showSaveError', 'function updateRunReady'), /dirError = text/);
+    assert.match(section(html, 'function clearDirError()', 'function showSaveError'), /aria-invalid', 'false'/);
   } finally {
     await handle.close();
   }

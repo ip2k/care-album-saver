@@ -479,7 +479,11 @@ let kids = [];
 /** The folder as last accepted by the tool, so re-saving the same value costs nothing. */
 let savedDir = '';
 /** Whether a refused folder is still marked and explained on screen. */
-let dirError = false;
+// The folder refusal's own words, or null. Held as text rather than read back out of the
+// message box, because any other error — a failed save, the tool having stopped — lands in
+// that same box, and restoring one of those would leave a stale complaint on screen that
+// nothing can clear.
+let dirError = null;
 /** Whether Stop has been pressed and the run has not wound down yet. */
 let stopping = false;
 
@@ -512,6 +516,10 @@ function persist(patch, opts = {}) {
 async function save(patch, opts) {
   if (Object.keys(patch).length === 1 && patch.archiveDir === savedDir) {
     // Leaving the field and pressing the button both save; the second is a no-op.
+    // A refusal from earlier is cleared first: what is in the field is now exactly what is
+    // stored, so saying it was refused would be untrue, and leaving the field marked
+    // invalid would tell a screen reader the same untruth.
+    clearDirError();
     savedNote();
     return true;
   }
@@ -530,9 +538,8 @@ async function save(patch, opts) {
   // Otherwise ticking a checkbox after a refused folder silently replaced what the person
   // had typed with the stored path and wiped the refusal explaining why it was not kept.
   if (patch.archiveDir !== undefined) {
-    $('archiveDir').setAttribute('aria-invalid', 'false');
     $('archiveDir').value = d.config.archiveDir;
-    dirError = false;
+    clearDirError();
   }
   savedDir = d.config.archiveDir;
   // Always the stored folder, never the typed one: this says where the photos will go.
@@ -548,8 +555,10 @@ function savedNote() {
   // removes it: the refusal is the only thing saying the photos are not going where the
   // person just typed. It is put back because it is still true — the tick that saved did
   // not fix it.
-  const error = dirError ? el.querySelector('.msg.err') : null;
-  const restore = () => { el.textContent = ''; if (error) el.appendChild(error); };
+  const restore = () => {
+    el.textContent = '';
+    if (dirError) el.innerHTML = '<div class="msg err">' + esc(dirError) + '</div>';
+  };
   // Emptied first, so the second "Saved" is announced as well as the first. The brief
   // blink is also the visual cue that something new was just stored.
   restore();
@@ -560,6 +569,12 @@ function savedNote() {
     restore();
     el.insertAdjacentHTML('beforeend', '<span class="saved">Saved</span>');
   }, 50);
+}
+
+/** The folder is agreed again: drop the refusal and the invalid mark together. */
+function clearDirError() {
+  dirError = null;
+  $('archiveDir').setAttribute('aria-invalid', 'false');
 }
 
 function showSaveError(d, opts) {
@@ -573,7 +588,7 @@ function showSaveError(d, opts) {
   }
   show($('config-msg'), 'err', esc(text));
   if (d.field === 'archiveDir') {
-    dirError = true;
+    dirError = text;
     $('archiveDir').setAttribute('aria-invalid', 'true');
     // Only move focus when the person pressed something; stealing it as they tab away
     // from the field would trap them in it.

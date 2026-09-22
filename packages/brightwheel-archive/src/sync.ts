@@ -323,6 +323,14 @@ export async function sync(
       const failedBefore = result.failed;
 
       for await (const page of client.activityPages(student.id, walk.listing)) {
+        // Also checked here, not only in the item loop below: a page carrying no media
+        // (a day of nothing but check-ins) never enters that loop, so without this a stop
+        // would go unnoticed while the walk kept listing pages.
+        if (options.signal?.aborted) {
+          result.stopped = true;
+          break;
+        }
+
         const seen = { posts: page.posts ?? undefined, examined: page.examined };
         onProgress({
           phase: 'listing',
@@ -388,7 +396,10 @@ export async function sync(
               stripLocation: config.stripLocation,
               writeSidecar: config.writeSidecar,
             });
-            if (!metadata.embedded && metadata.reason && result.warnings.length < 3) {
+            // Either failure is worth telling the person about: the tags not going into
+            // the file, or the .xmp sidecar they asked for not being written. Reporting
+            // only the first would make a failed sidecar silent.
+            if ((!metadata.embedded || metadata.xmpSidecar === false) && metadata.reason && result.warnings.length < 3) {
               result.warnings.push(metadata.reason);
             }
 

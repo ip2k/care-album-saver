@@ -316,37 +316,39 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         }
         running = true;
         lastResult = null;
-        const config = await loadConfig();
-        const client = new BrightwheelClient({
-          session: session.session,
-          baseUrl: options.baseUrl,
-          delayMs: config.delayMs,
-        });
-        json(202, { ok: true });
         const controller = new AbortController();
-        // sync's options are declared by the runtime lane; `signal` is part of the agreed
-        // interface and is typed loosely here only until that declaration lands.
-        const syncOptions: Parameters<typeof sync>[3] & { signal?: AbortSignal } = { signal: controller.signal };
-        const done = sync(client, config, (p) => {
-          progress = p;
-        }, syncOptions)
-          .then((r) => {
-            lastResult = r;
-          })
-          .catch((e: unknown) => {
+
+        // Everything that can wait lives inside this function, so that `current` is
+        // published in the same synchronous turn as `running`. Reading the config file is
+        // an await like any other: a stop() or close() landing in that gap used to find
+        // nothing to abort, answer "nothing is running", and let the server be torn down
+        // with a run about to start and no manifest saved.
+        const done = (async () => {
+          try {
+            const config = await loadConfig();
+            const client = new BrightwheelClient({
+              session: session.session,
+              baseUrl: options.baseUrl,
+              delayMs: config.delayMs,
+            });
+            lastResult = await sync(client, config, (p) => {
+              progress = p;
+            }, { signal: controller.signal });
+          } catch (error: unknown) {
             progress = {
               phase: 'error',
-              message: scrub(e instanceof Error ? e.message : String(e)),
+              message: scrub(error instanceof Error ? error.message : String(error)),
               saved: progress.saved,
               skipped: progress.skipped,
               failed: progress.failed,
             };
-          })
-          .finally(() => {
+          } finally {
             running = false;
             current = null;
-          });
+          }
+        })();
         current = { controller, done };
+        json(202, { ok: true });
         return;
       }
 

@@ -229,11 +229,12 @@ async function main(): Promise<number> {
           config,
           (p) => {
             const line = `  ${scrub(p.message)}`;
+            // Set before the repeat-suppression below: a failure whose text happens to
+            // match the line already on screen is still a failure that has been said.
+            if (p.phase === 'error') failureAnnounced = true;
             if (line === lastLine) return;
             stdout.write(`${line}\n`);
             lastLine = line;
-            // Said once, here, so the catch at the bottom does not say it again.
-            if (p.phase === 'error') failureAnnounced = true;
           },
           { signal: stop.signal },
         );
