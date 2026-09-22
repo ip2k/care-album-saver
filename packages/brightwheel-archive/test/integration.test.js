@@ -258,7 +258,7 @@ test('the setup page binds only to the loopback interface', async () => {
     assert.match(res.headers.get('cache-control'), /no-store/);
     assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
     const html = await res.text();
-    assert.ok(html.includes('Save your child'));
+    assert.ok(html.includes('Care Album Saver'));
     // The token is bound into the page, not guessable.
     assert.ok(ui.token.length >= 30);
   } finally {
@@ -381,9 +381,17 @@ test('the setup page is structurally sound and accessible', async () => {
     // The tool does run a local HTTP server; claiming otherwise is untrue.
     assert.ok(!/no server/i.test(visible), 'must not claim there is no server — this page is served by one');
 
-    // No external origin may be referenced — the CSP forbids it and so should the markup.
-    const externals = html.match(/(src|href)="https?:\/\/[^"]+"/g) || [];
-    assert.deepEqual(externals, [], `page must not reference external origins: ${externals.join(', ')}`);
+    // Nothing may be LOADED from another origin — that is what the CSP forbids, and the
+    // markup must not even ask for it. A link the parent clicks is a navigation, not a
+    // load: exactly one is allowed, to Brightwheel's own sign-in page, because the
+    // alternative is an address they retype and mistype. Its rel, its target and its
+    // "opens in a new tab" wording are checked in page-identity.test.js.
+    const loads = html.match(/(?:src|<link[^>]+href)="https?:\/\/[^"]+"/g) || [];
+    assert.deepEqual(loads, [], `page must not load from external origins: ${loads.join(', ')}`);
+
+    const outward = html.match(/<a\b[^>]+href="https?:\/\/[^"]+"/g) || [];
+    assert.equal(outward.length, 1, `exactly one outward link: ${outward.join(', ')}`);
+    assert.match(outward[0], /href="https:\/\/schools\.mybrightwheel\.com\//, 'and it goes to Brightwheel');
   } finally {
     await ui.close();
   }

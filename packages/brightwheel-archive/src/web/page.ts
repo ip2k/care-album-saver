@@ -32,7 +32,7 @@ export const PAGE = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Brightwheel Archive - Setup</title>
+<title>Care Album Saver</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -113,9 +113,11 @@ export const PAGE = String.raw`<!doctype html>
 
   .wrap { max-width: 47rem; margin: 0 auto; padding: var(--s7) var(--s5) 5rem; }
 
+  /* The name stands on its own: there is no subtitle under it, so the heading carries its
+     whole margin and the gap to step 1 is the one deliberate space, not an 8px remnant of
+     a paragraph that used to sit between them. */
   header { margin-bottom: var(--s6); }
-  h1 { font-size: 1.875rem; line-height: 1.25; margin: 0 0 var(--s2); letter-spacing: -.02em; font-weight: 650; }
-  .lede { color: var(--text-muted); margin: 0; font-size: 1.0625rem; max-width: 38rem; }
+  h1 { font-size: 1.875rem; line-height: 1.25; margin: 0; letter-spacing: -.02em; font-weight: 650; }
 
   ol.steps-list { list-style: none; margin: 0; padding: 0; }
 
@@ -151,6 +153,17 @@ export const PAGE = String.raw`<!doctype html>
 
   ol.howto { margin: 0 0 var(--s4); padding-left: 1.25rem; color: var(--text-muted); font-size: .9375rem; }
   ol.howto li { margin-bottom: var(--s2); padding-left: var(--s1); }
+
+  /* The single link that leaves this page. Underlined as well as coloured, because colour
+     is never the only signal (WCAG 1.4.1), and the words "opens in a new tab" are part of
+     the link text: the arrow says it to a sighted reader, the words say it to everyone
+     else, and a change of context nobody was warned about is the complaint behind WCAG
+     3.2.5. Nothing is loaded from the other origin, so the CSP is untouched. */
+  a.ext { color: var(--accent-ink); text-underline-offset: 3px; }
+  a.ext:hover { color: var(--accent-hover); }
+  a.ext .new-tab { font-size: .8125rem; }
+  a.ext .mark { margin-left: .25em; text-decoration: none; }
+
   kbd, code {
     background: var(--surface-sunken); padding: .125rem .4rem; border-radius: 5px;
     font-size: .8125rem; color: var(--text);
@@ -288,8 +301,7 @@ export const PAGE = String.raw`<!doctype html>
 <a class="skip" href="#main">Skip to the setup steps</a>
 <div class="wrap">
   <header>
-    <h1>Save your child&rsquo;s photos</h1>
-    <p class="lede">This copies photos from your own Brightwheel account onto this computer, sorted into a folder for each week.</p>
+    <h1>Care Album Saver</h1>
   </header>
 
   <main id="main">
@@ -438,6 +450,12 @@ const show = (el, kind, html) => { el.innerHTML = '<div class="msg ' + kind + '"
  * Browser-specific instructions. The keystroke and the menu path genuinely differ, and a
  * parent following Chrome steps in Safari simply fails — Safari hides the Develop menu
  * until you turn it on, which is a dead end nobody guesses their way out of.
+ *
+ * Step one is a real link rather than an address to retype: a parent who mistypes it lands
+ * on somebody else's site and signs in there. It opens in a new tab so this page, and the
+ * box they are about to paste into, stay exactly where they left them. Following it sends
+ * nothing away with it — the response carries Referrer-Policy: no-referrer, and the link
+ * carries noreferrer too, so the setup token in this page's address never travels.
  */
 function howToSteps() {
   const ua = navigator.userAgent;
@@ -454,7 +472,7 @@ function howToSteps() {
       ? 'Click <b>Storage</b> along the top, then <b>Cookies</b> on the left.'
       : 'Click <b>Application</b> along the top, then <b>Cookies</b> on the left.';
   return [
-    'Open <b>schools.mybrightwheel.com</b> in a new tab and sign in as you normally would.',
+    'Open <a class="ext" href="https://schools.mybrightwheel.com/" target="_blank" rel="noopener noreferrer"><b>schools.mybrightwheel.com</b> <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a> and sign in as you normally would.',
     open,
     where,
     'Find the row named <code>_brightwheel_v2</code> and copy what is in its <b>Value</b> column.',
