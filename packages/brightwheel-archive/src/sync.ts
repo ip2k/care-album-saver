@@ -5,6 +5,7 @@ import type { BrightwheelClient } from './api/client.js';
 import type { MediaActivity, Student } from './api/schema.js';
 import type { Config } from './config.js';
 import { applyMetadata, closeMetadata } from './metadata.js';
+import { ARCHIVE_DIR_MODE, checkArchiveDir } from './safety.js';
 
 export interface SyncProgress {
   phase: 'starting' | 'listing' | 'downloading' | 'done' | 'error';
@@ -94,6 +95,7 @@ export async function sync(
   client: BrightwheelClient,
   config: Config,
   onProgress: (p: SyncProgress) => void = () => {},
+  options: { allowTemporaryDir?: boolean } = {},
 ): Promise<SyncResult> {
   const result: SyncResult = {
     saved: 0,
@@ -116,7 +118,15 @@ export async function sync(
   }
   result.students = students.map((s) => s.fullName);
 
-  await mkdir(config.archiveDir, { recursive: true });
+  // Refuse outright rather than quietly archiving to a folder the OS will empty.
+  const verdict = checkArchiveDir(config.archiveDir, { allowTemporary: options.allowTemporaryDir });
+  if (!verdict.ok) throw new Error(verdict.error);
+  if (verdict.warning) result.warnings.push(verdict.warning);
+
+  // 0700, not the default 0755. These are identified photographs of a child — every file
+  // carries the child's name in its metadata — so other accounts on a shared family
+  // computer must not be able to read them.
+  await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
   const manifest = await Manifest.open(config.archiveDir, 'brightwheel');
 
   // Names already used in each folder, so collisions get a suffix rather than overwrite.
@@ -153,7 +163,7 @@ export async function sync(
         const rel = folderFor(config, student, activity.capturedAt);
         const dir = join(config.archiveDir, rel);
         if (!seenFolders.has(dir)) {
-          await mkdir(dir, { recursive: true });
+          await mkdir(dir, { recursive: true, mode: ARCHIVE_DIR_MODE });
           await writeWeekReadme(dir, activity.capturedAt, student.fullName);
           seenFolders.add(dir);
           const existing = await readdir(dir).catch(() => [] as string[]);

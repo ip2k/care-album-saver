@@ -4,6 +4,7 @@ import { BrightwheelClient } from '../api/client.js';
 import { loadConfig, loadSession, normaliseCookieInput, saveConfig, saveSession, type Config } from '../config.js';
 import { Secret, scrub } from '../secrets.js';
 import { sync, type SyncProgress } from '../sync.js';
+import { checkArchiveDir } from '../safety.js';
 import { PAGE } from './page.js';
 
 /**
@@ -161,9 +162,21 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const patch = JSON.parse(await readBody(req)) as Partial<Config>;
+        // Never persist a destination without checking it. This endpoint previously
+        // accepted any path at all and the tool wrote a child's photos there.
+        let warning: string | undefined;
+        if (typeof patch.archiveDir === 'string') {
+          const verdict = checkArchiveDir(patch.archiveDir);
+          if (!verdict.ok) {
+            json(400, { ok: false, error: verdict.error });
+            return;
+          }
+          patch.archiveDir = verdict.resolved;
+          warning = verdict.warning;
+        }
         const config = { ...(await loadConfig()), ...patch };
         await saveConfig(config);
-        json(200, { ok: true, config });
+        json(200, { ok: true, config, warning });
         return;
       }
 
