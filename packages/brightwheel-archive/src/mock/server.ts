@@ -119,6 +119,33 @@ function actorFor(index: number) {
   };
 }
 
+/**
+ * The child, as the activities feed actually embeds them.
+ *
+ * Confirmed against the live API on 2026-09-22: every activity record carries a `target`
+ * object holding the child's `invite_code`, `raw_passcode`, both phone numbers and their
+ * profile photo. The feed is therefore a second route to the family's contact details, not
+ * only to photographs — and until this was checked, no fixture contained any of it, so the
+ * test that asserts none of it reaches disk was only ever exercising `/users/me`.
+ */
+function targetFor(studentId: string) {
+  const student = STUDENTS.find((s) => s.object_id === studentId) ?? STUDENTS[0]!;
+  return {
+    object_id: studentId,
+    first_name: student.first_name,
+    last_name: student.last_name,
+    user_type: 'student',
+    enrollment_status: 'enrolled',
+    invite_code: 'INVITE-NEVER-STORE',
+    raw_passcode: '4821',
+    phone_1: '+15550000000',
+    phone_2: null,
+    auth_phone_number: '+15550000001',
+    email: null,
+    profile_photo: { object_id: 'pp-1', image_url: 'https://example.invalid/pp.jpg' },
+  };
+}
+
 function buildActivities(
   studentId: string,
   count: number,
@@ -150,6 +177,7 @@ function buildActivities(
       media: { image_url: url, thumbnail_url: url },
       video_info: null,
       actor: actorFor(i),
+      target: targetFor(studentId),
     });
   }
   for (let i = 0; i < checkIns; i++) {
@@ -164,6 +192,7 @@ function buildActivities(
       media: null,
       video_info: null,
       actor: actorFor(i),
+      target: targetFor(studentId),
     });
   }
   for (let i = 0; i < count; i++) {
@@ -185,6 +214,7 @@ function buildActivities(
       media: isVideo ? null : { image_url: url, thumbnail_url: url },
       video_info: isVideo ? { downloadable_url: url } : null,
       actor: actorFor(i),
+      target: targetFor(studentId),
     });
   }
   return out;
