@@ -41,3 +41,42 @@ export function transferIdentity(rawUrl: string): string {
 export function sameRemoteFile(a: string, b: string): boolean {
   return transferIdentity(a) === transferIdentity(b);
 }
+
+/**
+ * When a signed URL stops working, if its query string says so.
+ *
+ * Understood: `expires` / `expiry` as a Unix time — seconds, or milliseconds when the
+ * number is far too large to be seconds — and the AWS / GCS form where `X-Amz-Expires`
+ * is a lifetime in seconds counted from `X-Amz-Date`. Anything else, or no expiry at all,
+ * is null. Null must not be read as "still valid": the CDN's own 401/403 remains the final
+ * word, and this is only a way to skip a request that is known to be doomed.
+ */
+export function signedUrlExpiry(rawUrl: string): Date | null {
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  const params = new Map<string, string>();
+  for (const [k, v] of u.searchParams) params.set(k.toLowerCase(), v);
+
+  const absolute = params.get('expires') ?? params.get('expiry');
+  if (absolute && /^\d+$/.test(absolute)) {
+    const n = Number(absolute);
+    // Seconds will not reach 1e11 until the year 5138; milliseconds passed it in 1973.
+    return new Date(n >= 1e11 ? n : n * 1000);
+  }
+
+  for (const vendor of ['x-amz', 'x-goog']) {
+    const lifetime = params.get(`${vendor}-expires`);
+    const issued = params.get(`${vendor}-date`);
+    // The date is ISO 8601 basic format: 20260918T120000Z.
+    const m = issued?.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+    if (lifetime && /^\d+$/.test(lifetime) && m) {
+      const [y, mo, d, h, mi, s] = m.slice(1).map(Number) as [number, number, number, number, number, number];
+      return new Date(Date.UTC(y, mo - 1, d, h, mi, s) + Number(lifetime) * 1000);
+    }
+  }
+  return null;
+}

@@ -33,6 +33,12 @@ export interface ManifestData {
    * timestamps mean without reading this source code.
    */
   notes: string;
+  /**
+   * Facts the adapter needs to carry between runs that describe no single file — for
+   * instance how far a previous run got. Optional, so manifests written before this field
+   * existed still load; an adapter treats its absence as "nothing known".
+   */
+  state?: Record<string, unknown>;
   files: ManifestRecord[];
 }
 
@@ -53,6 +59,8 @@ export class Manifest {
   private byTransferId = new Map<string, ManifestRecord>();
   private byHash = new Map<string, ManifestRecord>();
   private records: ManifestRecord[] = [];
+  /** Adapter-owned state, persisted with the records. See `ManifestData.state`. */
+  readonly state: Record<string, unknown> = {};
 
   private constructor(private readonly root: string, private readonly source: string) {}
 
@@ -65,6 +73,9 @@ export class Manifest {
       // rather than corrupt an archive written by a newer version.
       if (data.schema === MANIFEST_SCHEMA && Array.isArray(data.files)) {
         for (const r of data.files) m.index(r);
+        if (data.state && typeof data.state === 'object' && !Array.isArray(data.state)) {
+          Object.assign(m.state, data.state);
+        }
       }
     } catch {
       // No manifest yet, or it is unreadable. Either way we start from empty.
@@ -142,6 +153,7 @@ export class Manifest {
         'provenance.capturedAt and in the file EXIF/XMP metadata. etag and lastModified ' +
         'are verbatim HTTP response headers; null means the server did not supply one. ' +
         'Local filesystem timestamps are never used as validators.',
+      state: this.state,
       files: this.records,
     };
     const target = join(this.root, MANIFEST_FILENAME);

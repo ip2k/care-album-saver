@@ -11,7 +11,7 @@
  */
 
 export { hashFile, hashBytes } from './hash.js';
-export { transferIdentity, sameRemoteFile } from './url.js';
+export { transferIdentity, sameRemoteFile, signedUrlExpiry } from './url.js';
 export { safeStem, safeExtension, uniqueName, type SafeNameOptions } from './names.js';
 export {
   isoWeek,
