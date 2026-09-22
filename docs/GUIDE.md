@@ -97,6 +97,10 @@ take seconds, because it only looks for what is new.
 
 ![A completed run showing the saved, already-had and failed counts](images/04-done.png)
 
+The tool follows your system appearance, so it looks right in dark mode too:
+
+![The setup assistant in dark mode](images/05-dark.png)
+
 - **Saved** — new photos copied to your computer.
 - **Already had** — recognised as ones you have. This is why a second run is quick.
 - **Failed** — could not be fetched. Run it again later; it picks up where it stopped.

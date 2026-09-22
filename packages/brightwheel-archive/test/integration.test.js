@@ -32,6 +32,21 @@ test('a Secret cannot be printed by accident', () => {
   assert.equal(s.expose(), 'super-secret-cookie-value');
 });
 
+test('a Secret survives the inspect options that defeat a custom inspector', () => {
+  // customInspect:false bypasses [util.inspect.custom] entirely, and showHidden reveals
+  // symbol-keyed properties. A true #private field is invisible to both — which is why
+  // the value is stored in one.
+  const s = new Secret('super-secret-cookie-value');
+  assert.ok(!inspect(s, { customInspect: false }).includes('super-secret'));
+  assert.ok(!inspect(s, { showHidden: true, getters: true, depth: 10 }).includes('super-secret'));
+  assert.ok(!inspect({ deep: { deeper: s } }, { showHidden: true, depth: 10 }).includes('super-secret'));
+  assert.ok(!JSON.stringify({ ...s }).includes('super-secret'), 'spread must not copy the value');
+  assert.deepEqual(Object.keys(s), [], 'no enumerable keys at all');
+  // Template-literal and numeric coercion both route through Symbol.toPrimitive.
+  assert.equal(`${s}`, '[redacted]');
+  assert.ok(!String(s).includes('super-secret'));
+});
+
 test('fingerprints identify a session without revealing it', () => {
   const a = new Secret('abc');
   assert.equal(a.fingerprint(), new Secret('abc').fingerprint());
@@ -286,4 +301,43 @@ test('the signed media URL is never persisted with its signature', async () => {
   const raw = await readFile(join(dir, 'archive.json'), 'utf8');
   assert.ok(!raw.includes('signature='), 'manifest must not contain a URL signature');
   assert.ok(!raw.includes('expires='), 'manifest must not contain a URL expiry');
+});
+
+test('the setup page is structurally sound and accessible', async () => {
+  // The page is one big template literal. A stray backtick or a broken tag would ship a
+  // half-rendered page that still returns HTTP 200, so assert the landmarks explicitly.
+  const ui = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
+  try {
+    const html = await (await fetch(`http://127.0.0.1:${ui.port}/?token=${ui.token}`)).text();
+
+    assert.ok(!html.includes('__TOKEN__'), 'token placeholder must be substituted');
+    assert.ok(html.includes('<main'), 'needs a main landmark');
+    assert.ok(html.includes('class="skip"'), 'needs a skip link');
+    assert.equal((html.match(/<h1/g) || []).length, 1, 'exactly one h1');
+
+    // Every form control must have a real label or an explicit aria-label.
+    for (const id of ['cookie', 'archiveDir', 'organiseBy', 'tagChildName', 'stripLocation']) {
+      assert.ok(
+        html.includes(`for="${id}"`) || new RegExp(`id="${id}"[^>]*aria-label`).test(html),
+        `control #${id} has no associated label`,
+      );
+    }
+
+    // State must be announced, not merely coloured (WCAG 1.4.1).
+    assert.ok(html.includes('aria-live'), 'needs live regions for progress');
+    assert.ok(html.includes('role="alert"'), 'connect errors must be announced');
+    assert.ok(html.includes('role="progressbar"'), 'progress needs a role');
+    assert.ok(html.includes('sr-only'), 'needs screen-reader-only step status');
+
+    // Both colour schemes and reduced motion are handled.
+    assert.ok(html.includes('prefers-color-scheme: dark'), 'needs dark mode');
+    assert.ok(html.includes('prefers-reduced-motion'), 'needs reduced-motion handling');
+    assert.ok(html.includes(':focus-visible'), 'needs a visible focus style');
+
+    // No external origin may be referenced — the CSP forbids it and so should the markup.
+    const externals = html.match(/(src|href)="https?:\/\/[^"]+"/g) || [];
+    assert.deepEqual(externals, [], `page must not reference external origins: ${externals.join(', ')}`);
+  } finally {
+    await ui.close();
+  }
 });
