@@ -340,3 +340,27 @@ test('the login prompt never echoes the session into terminal scrollback', async
   assert.match(output, /Paste it here/, 'but the prompt itself still is — a silent prompt is a hung program');
   assert.match(output, /it will not be shown/, 'and it says why nothing appears as you type');
 });
+
+// --- verify must not print an identifier when a session dies mid-check ------------------
+
+test('a session that expires part-way through verify names the endpoint, never an id', async () => {
+  const { startMockBrightwheel, verify, Secret } = await import('../dist/index.js');
+
+  // The session works for the first request and not the second. That is the exact window
+  // in which the old code printed `/guardians/<object_id>/students` — an identifier, into
+  // a report whose whole promise is that it carries none.
+  const mock = await startMockBrightwheel({ expireSessionAfterRequests: 1 });
+  try {
+    let failure = '';
+    try {
+      await verify(new Secret('test-session-value'), { baseUrl: `${mock.url}/api/v1` });
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    assert.notEqual(failure, '', 'it did fail — the mock retired the session');
+    assert.doesNotMatch(failure, /\/guardians\/|\/students\/|\/users\/me/, 'no URL path in the message');
+    assert.doesNotMatch(failure, /[0-9a-f]{16,}|[0-9a-f]{8}-[0-9a-f]{4}-/i, 'and no id-shaped string either');
+  } finally {
+    await mock.close();
+  }
+});
