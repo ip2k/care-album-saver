@@ -56,12 +56,22 @@ const BROWSERS = {
   Safari: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
 };
 
-test('the page calls itself Care Album Saver, in the tab and in the heading', async () => {
+test('the page calls itself Care Album Saver, and does not put Brightwheel in its own name', async () => {
   const { html } = await servedPage();
 
   assert.match(html, /<title>Care Album Saver<\/title>/, 'the browser tab carries the name');
   assert.match(html, /<h1>Care Album Saver<\/h1>/, 'and so does the heading, word for word');
   assert.equal((html.match(/<h1/g) || []).length, 1, 'exactly one h1');
+
+  // The name is deliberately not the package's, and this is the assertion that says so.
+  // This page is the face of the tool, and a tool that put somebody else's trade mark in
+  // its OWN name is the one a lawyer's letter closes. Every appearance of "Brightwheel"
+  // on this page names the service a parent signs in to — nominative use — and none of
+  // them is the tool's name.
+  const title = html.slice(html.indexOf('<title>'), html.indexOf('</title>'));
+  const heading = html.slice(html.indexOf('<h1>'), html.indexOf('</h1>'));
+  assert.ok(!/brightwheel/i.test(title), 'the tab name is not somebody else\'s mark');
+  assert.ok(!/brightwheel/i.test(heading), 'nor is the heading');
 
   // The subtitle was removed, not reworded. A page carrying two explanations of itself is
   // how the old one and a new one end up contradicting each other later.
@@ -79,9 +89,15 @@ test('the Brightwheel address in step one is a link, and says that it opens a ne
     const steps = howToStepsFor(html, ua);
     const first = steps[0];
 
-    assert.match(first, /href="https:\/\/schools\.mybrightwheel\.com\//, `${name}: a real link, not an address to retype`);
+    // The exact href, closing quote included: a prefix match would still pass if a query
+    // string, a fragment or an interpolated value were ever appended to the one URL that
+    // leaves this page, and this page's own address carries the setup token.
+    assert.match(first, /href="https:\/\/schools\.mybrightwheel\.com\/"/, `${name}: a real link, to exactly that address`);
     assert.match(first, /target="_blank"/, `${name}: opens beside the page, which keeps the paste box in place`);
-    assert.match(first, /rel="noopener noreferrer"/, `${name}: the new tab gets no handle on this one and no referrer`);
+    // As a set, not as a string: the two are order-independent to a browser, so a reorder
+    // is not a regression and must not read as one.
+    const rel = new Set((first.match(/rel="([^"]*)"/)?.[1] ?? '').split(/\s+/).filter(Boolean));
+    assert.ok(rel.has('noopener') && rel.has('noreferrer'), `${name}: the new tab gets no handle on this one and no referrer`);
 
     // An arrow alone is announced as nothing at all, so the words are inside the link text
     // and therefore part of the name a screen reader reads out (WCAG 3.2.5).

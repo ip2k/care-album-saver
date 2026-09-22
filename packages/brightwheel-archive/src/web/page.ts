@@ -121,7 +121,12 @@ export const PAGE = String.raw`<!doctype html>
 
   /* The name stands on its own: there is no subtitle under it, so the heading carries its
      whole margin and the gap to step 1 is the one deliberate space, not an 8px remnant of
-     a paragraph that used to sit between them. */
+     a paragraph that used to sit between them.
+
+     The name itself is deliberate and is NOT the package's name. This page is the only
+     face a parent sees, and it does not carry somebody else's trade mark: "Brightwheel"
+     appears here only where it names the service a parent is signing in to, which is what
+     a trade mark is for. Do not "fix" this to match the package name. */
   header { margin-bottom: var(--s6); }
   h1 { font-size: 1.875rem; line-height: 1.25; margin: 0; letter-spacing: -.02em; font-weight: 650; }
 
