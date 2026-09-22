@@ -96,6 +96,22 @@ header quoted. `verifySession` returns that as the reason; `scrub()`'s first pat
 stops at the newline; everything after it comes back in the 400 body and the page
 displays it. The fix belongs at the source, not in the scrubber: refuse any character
 that is not an RFC 6265 cookie octet in `normaliseCookieInput` and in `loadSession`.
+**Confirmed on 2026-09-22, and worth recording because two reviewers disagreed about it.**
+A concurrent session checked this finding and reported the opposite — that a refused paste
+returns a fixed string and echoes nothing. Both were right about different branches of the
+same handler. A paste that `normaliseCookieInput` *refused* did return a fixed string. A
+paste it *accepted* and the HTTP layer then rejected returned `scrub(error.message)`, and
+that is the leaking path. Reconstructed against the real `scrub`:
+
+    fetch throws: Headers.append: "_brightwheel_v2=NotARealSession…\nSECONDLINE_klmnop…" is an invalid header value
+    after scrub: Headers.append: "_brightwheel_v2=[redacted]\nSECONDLINE_klmnop…" is an invalid header value
+
+The regex `_brightwheel_v2=[^;\s]+` stops at the newline, so everything after it survives.
+That is the general lesson, and the reason the fix belongs at the boundary and not in the
+scrubber: `scrub` redacts up to the next whitespace, which is precisely wrong when the
+pasted value is the thing that contains whitespace. Closed by `src/paste.ts`; the same
+paste is now joined into one value and the message names no part of it.
+
 Three smaller boundary leaks sit beside it: the setup server's progress stream and
 `lastResult` are served unscrubbed while the CLI scrubs the same lines; `login` echoes
 the paste (above); and `CARE_ALBUM_SESSION` stays in `process.env`, which a diagnostic

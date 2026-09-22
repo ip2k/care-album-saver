@@ -22,7 +22,7 @@ const VIEWPORT = { width: 1340, height: 940 };
 
 /**
  * Where the run's photos go. NOT a temporary directory: the tool refuses those, and when
- * it did, the run fell back to the stored default — the real ~/Brightwheel Photos on the
+ * it did, the run fell back to the stored default — the real photos folder on the
  * machine generating the docs. This folder is inside node_modules, which is gitignored
  * and must exist for the script to run at all, and it is deleted at the end.
  */
@@ -33,7 +33,7 @@ const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-sc
  * has no business in a public image; the mock's parent is Alex Maple, so this is theirs.
  * Only the two places that display the path are touched, and only just before a shot.
  */
-const SHOWN_PATH = '/Users/alex/Brightwheel Photos';
+const SHOWN_PATH = '/Users/alex/Care Album Photos';
 async function showPath(page, value) {
   await page.evaluate((v) => {
     document.querySelector('#archiveDir').value = v;
@@ -42,22 +42,38 @@ async function showPath(page, value) {
 }
 
 /**
- * Replace this developer's own home folder wherever the page prints it.
+ * Replace anything belonging to whoever ran this, wherever the page prints it.
  *
- * A sweep over every text node rather than a list of selectors, because the page renders
- * paths from several places and at several moments — the run summary after a run, the
- * schedule card after its state arrives — and a selector list is a list of the places
- * somebody remembered. One of them printed a home-folder path into a committed image.
+ * A sweep over every text node and input value rather than a list of selectors, because
+ * the page renders paths from several places and at several moments — the run summary
+ * after a run, the schedule card after its state arrives — and a selector list is a list
+ * of the places somebody remembered. One of them printed a home-folder path into a
+ * committed image; another printed this script's own scratch folder, inside node_modules,
+ * where the guide means to show a parent their photos folder.
+ *
+ * Two substitutions, longest first: the scratch archive lives inside the home folder, so
+ * replacing the home folder first would leave a half-rewritten path behind.
  */
 async function scrubPersonal(page) {
-  await page.evaluate((home) => {
-    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
-      if (node.textContent.includes(home)) {
-        node.textContent = node.textContent.split(home).join('/Users/alex');
+  await page.evaluate(
+    (pairs) => {
+      const apply = (s) => pairs.reduce((acc, [from, to]) => acc.split(from).join(to), s);
+      const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+        const next = apply(node.textContent);
+        if (next !== node.textContent) node.textContent = next;
       }
-    }
-  }, homedir());
+      // Inputs hold their value as a property, which no text-node walk can reach.
+      for (const el of document.querySelectorAll('input, textarea')) {
+        const next = apply(el.value ?? '');
+        if (next !== el.value) el.value = next;
+      }
+    },
+    [
+      [PHOTOS, SHOWN_PATH],
+      [homedir(), '/Users/alex'],
+    ],
+  );
 }
 
 /**

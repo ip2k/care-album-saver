@@ -24,6 +24,14 @@ secrets/
 
 # ── Downloaded media ─────────────────────────────────────────────────────────
 # Never commit a child's photo. Not yours, not anybody's.
+#
+# Both default folder names. The project was renamed on 2026-09-22 and a fresh install
+# now saves into "Care Album Photos"; an archive made before that is still in
+# "Brightwheel Photos" and is still the default while it is there, so both stay. These
+# folder rules are the belt: every file a run writes is also caught by an extension rule,
+# by the ISO-week folder rule below, or by name — which is what saved this when the
+# rename left only the old folder listed here.
+Care*Album*Photos/
 Brightwheel*Photos/
 archive/
 downloads/
