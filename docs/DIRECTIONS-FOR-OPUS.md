@@ -115,9 +115,21 @@ Each item names the lane in QUESTIONS that argued it. Sizes are S unless marked.
 > | 9, in part | `CLAUDE.md` Status corrected (test count, "never run", the API-surface wording) |
 > | 1.1, 1.2 | settled the other way — see the note above — and the images are regenerated |
 >
-> **Still open here:** 6 (verify's `raw()` printing an id on the error path), the rest of 9
-> (the README's own contradiction at ~407-411), 10 (the "taken" sweep), 11 (the README
-> opening), and everything under **Next** and **Later**. 202 tests pass.
+> | 6 | `verify`'s `raw()` takes a label and uses the shared `assertJsonResponse`; a test proves a mid-verify expiry prints no id |
+> | 9, the rest | README contradiction rewritten; SECURITY.md's `Secret` and gitleaks rows say what is and is not true; token wording; `scrub`'s comment; `openBrowser` deleted |
+> | 10 | the "taken" sweep across the README tables, the video paragraph, the GUIDE tree and `verify`'s narrative |
+> | 11 | the README opens on independence from the account |
+> | 1.2, 1.3, 1.4 | GUIDE links to COOKIE.md; the macOS "behind this window" note was already there; the dead second `/api/open-folder` deleted; desktop notification on a failed scheduled run; `status` distinguishes "set up and never ran" and records `fragilePath`; the duplicate finder reports its blind spot |
+>
+> **Part 1 and everything under "Now" are done.** 203 tests pass, and the whole flow was
+> driven end to end against the mock through the real entry points: page served, a
+> name-only paste refused with the friendly sentence, a good paste connected, both children
+> read, 12 items saved into ISO-week folders with sidecars, a second run saving 0 and
+> skipping 12, and ExifTool reading back the date, the child's name and the note.
+>
+> **Still open:** everything under **Next** and **Later**, plus the owner questions in
+> Part 3. Note that item 19 (`capturedAt` → `postedAt`) turns out to be already done — the
+> sidecar writes `postedAt` today.
 
 
 
