@@ -250,3 +250,40 @@ test('the API never echoes a session back to the browser', async () => {
     await ui.close();
   }
 });
+
+test('sensitive account fields are never written to disk', async () => {
+  // The real /users/me response carries raw_passcode (the child's physical pickup code),
+  // invite_code and phone numbers. Prior art in this space writes the raw API JSON straight
+  // to the working directory. Nothing we persist may contain any of it.
+  const dir = await mkdtemp(join(tmpdir(), 'bw-leak-'));
+  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 });
+
+  const forbidden = ['raw_passcode', 'INVITE-NEVER-STORE', '4821', '+15550000000', '+15550000001'];
+  const files = [];
+  const walk = async (d) => {
+    for (const entry of await readdir(d, { withFileTypes: true })) {
+      const p = join(d, entry.name);
+      if (entry.isDirectory()) await walk(p);
+      else if (/\.(json|md)$/.test(entry.name)) files.push(p);
+    }
+  };
+  await walk(dir);
+  assert.ok(files.length > 0, 'expected files to inspect');
+
+  for (const file of files) {
+    const text = await readFile(file, 'utf8');
+    for (const secret of forbidden) {
+      assert.ok(!text.includes(secret), `${file} leaked "${secret}"`);
+    }
+  }
+});
+
+test('the signed media URL is never persisted with its signature', async () => {
+  // A signed CDN URL is a bearer credential for one child's photo. Storing it verbatim in
+  // the manifest would put a working, shareable link to every photo in a plain-text file.
+  const dir = await mkdtemp(join(tmpdir(), 'bw-sig-'));
+  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 });
+  const raw = await readFile(join(dir, 'archive.json'), 'utf8');
+  assert.ok(!raw.includes('signature='), 'manifest must not contain a URL signature');
+  assert.ok(!raw.includes('expires='), 'manifest must not contain a URL expiry');
+});
