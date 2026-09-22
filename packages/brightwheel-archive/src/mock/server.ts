@@ -51,6 +51,20 @@ export interface MockOptions {
    * this makes a whole page that carries no photos, which is not the end of the feed.
    */
   leadingCheckIns?: number;
+  /**
+   * Photos at the very top of the feed whose capture times are two months OLDER than every
+   * other post: a teacher's batch of last month's outing, uploaded this morning. The feed
+   * is ordered by upload time, so they sit above posts they pre-date. With a small
+   * `maxPageSize` they fill the first page, which is how a walk that stops at the first
+   * page older than its cut-off loses the newer photos underneath them.
+   */
+  backDatedUploads?: number;
+  /**
+   * Media ids the CDN answers with 404, as it does for a post deleted on Brightwheel's
+   * side. A signature that has merely expired is refused (403) instead; this is the
+   * failure no retry can cure.
+   */
+  missingMediaIds?: string[];
 }
 
 const SESSION_COOKIE_NAME = '_brightwheel_v2';
@@ -82,11 +96,39 @@ function seeded(seed: string): () => number {
   };
 }
 
-function buildActivities(studentId: string, count: number, baseUrl: string, issuedAt = 0, checkIns = 0) {
+function buildActivities(
+  studentId: string,
+  count: number,
+  baseUrl: string,
+  issuedAt = 0,
+  checkIns = 0,
+  backDated = 0,
+) {
   const rand = seeded(studentId);
   const out = [];
   // Walk backwards from a fixed date so runs are reproducible.
   const start = new Date('2026-09-18T15:30:00');
+  /** A signed URL for one media id, minted fresh on every call exactly as a real CDN does. */
+  const signed = (id: string, ext: string) =>
+    `${baseUrl}/media/${id}.${ext}?signature=${issuedAt}.${Math.random().toString(36).slice(2, 12)}` +
+    `&expires=${Date.now() + 900000}`;
+
+  // Uploaded most recently, so first in the feed; taken two months before anything else.
+  for (let i = 0; i < backDated; i++) {
+    const when = new Date(start.getTime() - (60 + i) * 24 * 3600 * 1000);
+    const id = `old-${studentId.slice(-3)}-${String(i).padStart(4, '0')}`;
+    const url = signed(id, 'jpg');
+    out.push({
+      object_id: id,
+      action_type: 'ac_photo',
+      event_date: when.toISOString(),
+      created_at: new Date(start.getTime() + 24 * 3600 * 1000).toISOString(),
+      note: NOTES[i % NOTES.length],
+      media: { image_url: url, thumbnail_url: url },
+      video_info: null,
+      actor: { name: TEACHERS[i % TEACHERS.length] },
+    });
+  }
   for (let i = 0; i < checkIns; i++) {
     // Newer than every photo, so they come first. Shaped like a real check-in: no media at all.
     const when = new Date(start.getTime() + (checkIns - i) * 3600 * 1000);
@@ -105,10 +147,9 @@ function buildActivities(studentId: string, count: number, baseUrl: string, issu
     const when = new Date(start.getTime() - i * (rand() * 8 + 4) * 3600 * 1000);
     const id = `act-${studentId.slice(-3)}-${String(i).padStart(4, '0')}`;
     const isVideo = i % 17 === 5;
-    // A fresh signature every call, exactly as a real CDN behaves. It carries the request
-    // number that issued it, so `mediaUrlExpiresAfterRequests` can age it deterministically.
-    const sig = `${issuedAt}.${Math.random().toString(36).slice(2, 12)}`;
-    const url = `${baseUrl}/media/${id}.${isVideo ? 'mp4' : 'jpg'}?signature=${sig}&expires=${Date.now() + 900000}`;
+    // The signature carries the request number that issued it, so
+    // `mediaUrlExpiresAfterRequests` can age it deterministically.
+    const url = signed(id, isVideo ? 'mp4' : 'jpg');
     // Mirrors the real record exactly: `object_id` not `id`; a photo carries
     // `media.image_url`; a video carries `video_info.downloadable_url` AND `media: null`.
     out.push({
@@ -186,6 +227,11 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
         return;
       }
       const id = url.pathname.replace('/media/', '').replace(/\.[a-z0-9]+$/i, '');
+      // Gone from the CDN, not merely stale: the post was deleted on Brightwheel's side.
+      if (options.missingMediaIds?.includes(id)) {
+        res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
+        return;
+      }
       const isVideo = /\.mp4$/i.test(url.pathname);
       const body = isVideo ? placeholderMp4(id) : placeholderJpeg(id);
       res.writeHead(200, {
@@ -241,7 +287,14 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
     if (m?.[1]) {
       const page = Number(url.searchParams.get('page') ?? '0');
       const size = Math.min(Number(url.searchParams.get('page_size') ?? '100'), options.maxPageSize ?? Infinity);
-      let all = buildActivities(m[1], perStudent, baseUrl, requests.length, options.leadingCheckIns);
+      let all = buildActivities(
+        m[1],
+        perStudent,
+        baseUrl,
+        requests.length,
+        options.leadingCheckIns,
+        options.backDatedUploads,
+      );
       // Honour the server-side filters the real API supports.
       const actionType = url.searchParams.get('action_type');
       if (actionType) all = all.filter((a) => a.action_type === actionType);

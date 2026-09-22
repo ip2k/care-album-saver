@@ -309,12 +309,26 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           json(409, { ok: false, error: 'Already running.' });
           return;
         }
-        const session = await loadSession();
+        // Claimed here, in the same turn as the check above and before the first await.
+        // Reading the session file is an await like any other, and two clicks of Start
+        // landing either side of it both used to pass a check made while `running` was
+        // still false. Two runs then wrote the same archive and the same manifest at once:
+        // the second one's save overwrites the first one's record of what it had saved, so
+        // photos on disk stop being listed as held and are downloaded again as duplicates.
+        running = true;
+        let session: Awaited<ReturnType<typeof loadSession>>;
+        try {
+          session = await loadSession();
+        } catch (error) {
+          // Nothing was started, so the claim has to come off or the UI is wedged for good.
+          running = false;
+          throw error;
+        }
         if (!session) {
+          running = false;
           json(400, { ok: false, error: 'Not signed in yet.' });
           return;
         }
-        running = true;
         lastResult = null;
         const controller = new AbortController();
 
