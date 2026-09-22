@@ -25,6 +25,29 @@ export interface MockOptions {
   activitiesPerStudent?: number;
   /** Simulate an expired session for every request. */
   forceExpired?: boolean;
+  /**
+   * The session stops working after this many API requests have been served with it.
+   * Deterministic stand-in for a session that expires part-way through a long run.
+   */
+  expireSessionAfterRequests?: number;
+  /**
+   * A signed media URL works for this many further requests (of any kind) after the
+   * listing that issued it, then the CDN answers 403. Models signatures that a long run
+   * outlives, without depending on the clock.
+   */
+  mediaUrlExpiresAfterRequests?: number;
+  /** Refuse a media URL whose `expires=` has passed, as the real CDN does. */
+  enforceMediaUrlExpiry?: boolean;
+  /**
+   * Clamp `page_size`, as a real API may. Lets a test walk several pages with a handful
+   * of items, and proves the client reads the envelope rather than trusting what it asked for.
+   */
+  maxPageSize?: number;
+  /**
+   * Posts without media — check-ins — at the top of the feed. With a small `maxPageSize`
+   * this makes a whole page that carries no photos, which is not the end of the feed.
+   */
+  leadingCheckIns?: number;
 }
 
 const SESSION_COOKIE_NAME = '_brightwheel_v2';
@@ -80,17 +103,32 @@ function placeholderSvg(id: string, label: string): string {
 </svg>`;
 }
 
-function buildActivities(studentId: string, count: number, baseUrl: string) {
+function buildActivities(studentId: string, count: number, baseUrl: string, issuedAt = 0, checkIns = 0) {
   const rand = seeded(studentId);
   const out = [];
   // Walk backwards from a fixed date so runs are reproducible.
   const start = new Date('2026-09-18T15:30:00');
+  for (let i = 0; i < checkIns; i++) {
+    // Newer than every photo, so they come first. Shaped like a real check-in: no media at all.
+    const when = new Date(start.getTime() + (checkIns - i) * 3600 * 1000);
+    out.push({
+      object_id: `chk-${studentId.slice(-3)}-${String(i).padStart(4, '0')}`,
+      action_type: 'ac_checkin',
+      event_date: when.toISOString(),
+      created_at: when.toISOString(),
+      note: null,
+      media: null,
+      video_info: null,
+      actor: { name: TEACHERS[i % TEACHERS.length] },
+    });
+  }
   for (let i = 0; i < count; i++) {
     const when = new Date(start.getTime() - i * (rand() * 8 + 4) * 3600 * 1000);
     const id = `act-${studentId.slice(-3)}-${String(i).padStart(4, '0')}`;
     const isVideo = i % 17 === 5;
-    // A fresh signature every call, exactly as a real CDN behaves.
-    const sig = Math.random().toString(36).slice(2, 12);
+    // A fresh signature every call, exactly as a real CDN behaves. It carries the request
+    // number that issued it, so `mediaUrlExpiresAfterRequests` can age it deterministically.
+    const sig = `${issuedAt}.${Math.random().toString(36).slice(2, 12)}`;
     const url = `${baseUrl}/media/${id}.${isVideo ? 'mp4' : 'jpg'}?signature=${sig}&expires=${Date.now() + 900000}`;
     // Mirrors the real record exactly: `object_id` not `id`; a photo carries
     // `media.image_url`; a video carries `video_info.downloadable_url` AND `media: null`.
@@ -117,25 +155,32 @@ export interface MockServer {
   url: string;
   port: number;
   close: () => Promise<void>;
-  requests: { method: string; path: string }[];
+  /** Every request served, in order. `search` is the query string, so a test can tell pages apart. */
+  requests: { method: string; path: string; search: string }[];
 }
 
 export async function startMockBrightwheel(options: MockOptions = {}): Promise<MockServer> {
   const validSession = options.validSession ?? 'test-session-value';
   const perStudent = options.activitiesPerStudent ?? 24;
-  const requests: { method: string; path: string }[] = [];
+  const requests: { method: string; path: string; search: string }[] = [];
+  let apiRequests = 0;
 
   let baseUrl = '';
 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', baseUrl || 'http://127.0.0.1');
-    requests.push({ method: req.method ?? 'GET', path: url.pathname });
+    requests.push({ method: req.method ?? 'GET', path: url.pathname, search: url.search });
 
     const cookie = req.headers.cookie ?? '';
-    const authed = !options.forceExpired && cookie.includes(`_brightwheel_v2=${validSession}`);
+    const isMedia = url.pathname.startsWith('/media/');
+    if (!isMedia) apiRequests += 1;
+    const sessionExpired =
+      options.forceExpired ||
+      (options.expireSessionAfterRequests !== undefined && apiRequests > options.expireSessionAfterRequests);
+    const authed = !sessionExpired && cookie.includes(`_brightwheel_v2=${validSession}`);
 
     // Media is served regardless of path shape, so signed-URL churn is exercised.
-    if (url.pathname.startsWith('/media/')) {
+    if (isMedia) {
       // Mirror the real CDN: the URL signature IS the authorisation, and presenting the
       // Brightwheel session cookie is rejected outright. Asserting that here turns a
       // subtle production-only failure into a test failure — sending the session to the
@@ -146,8 +191,19 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
         res.end('permission denied: do not send the session cookie to the media host');
         return;
       }
-      if (!url.searchParams.get('signature')) {
+      const signature = url.searchParams.get('signature');
+      if (!signature) {
         res.writeHead(403, { 'content-type': 'text/plain' }).end('missing signature');
+        return;
+      }
+      const ttl = options.mediaUrlExpiresAfterRequests;
+      if (ttl !== undefined && requests.length - Number(signature.split('.')[0]) > ttl) {
+        res.writeHead(403, { 'content-type': 'text/plain' }).end('signature expired');
+        return;
+      }
+      const expires = url.searchParams.get('expires');
+      if (options.enforceMediaUrlExpiry && expires !== null && Number(expires) < Date.now()) {
+        res.writeHead(403, { 'content-type': 'text/plain' }).end('url expired');
         return;
       }
       const id = url.pathname.replace('/media/', '').replace(/\.[a-z0-9]+$/i, '');
@@ -204,8 +260,8 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
     const m = url.pathname.match(/^\/api\/v1\/students\/([^/]+)\/activities$/);
     if (m?.[1]) {
       const page = Number(url.searchParams.get('page') ?? '0');
-      const size = Number(url.searchParams.get('page_size') ?? '100');
-      let all = buildActivities(m[1], perStudent, baseUrl);
+      const size = Math.min(Number(url.searchParams.get('page_size') ?? '100'), options.maxPageSize ?? Infinity);
+      let all = buildActivities(m[1], perStudent, baseUrl, requests.length, options.leadingCheckIns);
       // Honour the server-side filters the real API supports.
       const actionType = url.searchParams.get('action_type');
       if (actionType) all = all.filter((a) => a.action_type === actionType);
