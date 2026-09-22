@@ -286,7 +286,9 @@ test('sensitive account fields are never written to disk', async () => {
   assert.ok(files.length > 0, 'expected files to inspect');
 
   for (const file of files) {
-    const text = await readFile(file, 'utf8');
+    // The manifest is full of 64-hex-digit content hashes, and a four-digit passcode is
+    // a substring of one of them sooner or later. Mask the hashes, not the passcode.
+    const text = (await readFile(file, 'utf8')).replace(/\b[0-9a-f]{64}\b/g, '<sha256>');
     for (const secret of forbidden) {
       assert.ok(!text.includes(secret), `${file} leaked "${secret}"`);
     }
