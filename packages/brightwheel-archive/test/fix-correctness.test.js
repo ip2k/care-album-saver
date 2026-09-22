@@ -435,3 +435,35 @@ test('a feed that ends exactly on the page limit is finished, not truncated', as
     await mock.close();
   }
 });
+
+test('who posted a photo is recorded, from the fields the real API actually has', async () => {
+  // `actor.name` came from another project's fixtures and does not exist. Because the mock
+  // was written from the same guess, every test agreed with the mistake and every archive
+  // this tool has ever written recorded no author at all. Verified against live Brightwheel
+  // on 2026-09-22: the record carries actor.first_name, actor.last_name, actor.object_id,
+  // actor.email and actor.role.
+  const mock = await startMockBrightwheel({ activitiesPerStudent: 3 });
+  const dir = await mkdtemp(join(tmpdir(), 'bw-author-'));
+  try {
+    await sync(
+      new BrightwheelClient({ session: new Secret(SESSION), baseUrl: `${mock.url}/api/v1`, delayMs: 0 }),
+      configFor(dir, { incremental: false }),
+      () => {},
+      { allowTemporaryDir: true },
+    );
+    const manifest = await manifestOf(dir);
+    const authors = manifest.files.map((f) => f.provenance.author);
+    assert.ok(
+      authors.every((a) => typeof a === 'string' && a.length > 0),
+      `every photo should record who posted it, got ${JSON.stringify(authors)}`,
+    );
+    assert.ok(authors.some((a) => /Alvarez|Okafor|Lindqvist/.test(a)), 'and it is the staff name');
+
+    // The staff email is on the record and must not be taken: a member of staff did not
+    // agree to be in a parent's archive, and a name is all the provenance an archive needs.
+    const raw = await readFile(join(dir, 'archive.json'), 'utf8');
+    assert.ok(!raw.includes('@sunnybrook.example'), 'and never their email address');
+  } finally {
+    await mock.close();
+  }
+});

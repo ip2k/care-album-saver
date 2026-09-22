@@ -77,7 +77,7 @@ async function raw(
 
 export async function verify(
   session: Secret,
-  options: { baseUrl?: string; fetchImpl?: typeof fetch } = {},
+  options: { baseUrl?: string; fetchImpl?: typeof fetch; deep?: boolean } = {},
 ): Promise<VerifyReport> {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   const doFetch = options.fetchImpl ?? fetch;
@@ -134,7 +134,12 @@ export async function verify(
   if (studentId) {
     const query = new URLSearchParams({
       page: '0',
-      page_size: '5',
+      // Enough records to answer the timestamp question. One was not: on a real account the
+      // first photo of the page had an identical event_date and created_at, which says
+      // nothing either way — a teacher who posts immediately produces exactly that. The
+      // question is whether the two EVER differ, so the sample has to be big enough to
+      // contain a photo somebody uploaded later. Still one request, still no downloads.
+      page_size: '50',
       include_parent_actions: 'false',
       action_type: 'ac_photo',
     });
@@ -165,20 +170,121 @@ export async function verify(
       report.warnings.push('`action_type=ac_photo` returned nothing — the filter value may differ.');
     }
 
+    // Every field name a record carries, so that a question like "is the capture time in
+    // here at all?" can be answered by looking rather than by guessing at spellings. Names
+    // and types only — a field's VALUE is the thing that could name a family.
+    if (items.length > 0) {
+      const shapes = new Map<string, string>();
+      const walk = (value: unknown, prefix: string, depth: number): void => {
+        if (depth > 2 || value === null || typeof value !== 'object' || Array.isArray(value)) return;
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+          const path = prefix ? `${prefix}.${k}` : k;
+          shapes.set(path, typeOf(v));
+          walk(v, path, depth + 1);
+        }
+      };
+      for (const item of items) walk(item, '', 0);
+      report.checks.push({
+        endpoint: 'Every field name on a photo record (names and types only)',
+        fields: [...shapes].sort(([a], [b]) => (a < b ? -1 : 1)).map(([field, type]) => ({
+          field,
+          present: true,
+          type,
+        })),
+      });
+    }
+
+    // Which field carries the name of whoever posted the photo. `actor.name` came from
+    // another project's fixtures and is absent on a real record, so the tool has been
+    // writing no author at all. Report which of the plausible spellings exist — names of
+    // fields, never the name in them.
+    if (items.length > 0) {
+      const candidates = [
+        'actor', 'actor.name', 'actor.first_name', 'actor.object_id',
+        'author', 'author.name', 'created_by', 'created_by.name', 'created_by.first_name',
+        'creator', 'creator.name', 'staff', 'staff.name', 'teacher', 'teacher.name',
+        'user', 'user.name', 'user.first_name', 'actor_name', 'creator_name',
+      ];
+      const present = new Set<string>();
+      for (const item of items) {
+        for (const c of check(item as Record<string, unknown>, candidates)) {
+          if (c.present) present.add(`${c.field} (${c.type})`);
+        }
+      }
+      report.findings.push(
+        present.size > 0
+          ? `Who posted a photo is carried by: ${[...present].sort().join(', ')}.`
+          : 'NOT FOUND: no field on any record names whoever posted the photo. The tool ' +
+            'writes no author, and `actor.name` — taken from another project — is not it.',
+      );
+    }
+
+    // The claim the entire timestamp-correction feature depends on, measured across every
+    // record the page returned rather than the first one that happened to come back.
+    const pairs = items
+      .map((item) => item as Record<string, unknown>)
+      .filter((item) => typeof item.event_date === 'string' && typeof item.created_at === 'string')
+      .map((item) => ({
+        ev: new Date(item.event_date as string),
+        cr: new Date(item.created_at as string),
+      }))
+      .filter((p) => !Number.isNaN(p.ev.getTime()) && !Number.isNaN(p.cr.getTime()));
+
+    if (pairs.length > 0) {
+      const diffs = pairs.map((p) => Math.round((p.cr.getTime() - p.ev.getTime()) / 60000));
+      const differing = diffs.filter((d) => d !== 0);
+      const laterUploads = diffs.filter((d) => d > 0).length;
+      const sameDayBreak = pairs.filter(
+        (p) => p.ev.toDateString() !== p.cr.toDateString(),
+      ).length;
+      if (differing.length === 0) {
+        report.findings.push(
+          `INCONCLUSIVE: on all ${pairs.length} records event_date equals created_at. Either this ` +
+            'nursery always posts immediately, or the two fields carry the same thing. Worth ' +
+            're-running when a photo has been posted some hours after it was taken.',
+        );
+      } else {
+        const biggest = Math.max(...differing.map(Math.abs));
+        report.findings.push(
+          `CONFIRMED: event_date and created_at differ on ${differing.length} of ${pairs.length} records ` +
+            `(largest gap ${biggest} minutes, ${laterUploads} uploaded after the moment recorded). ` +
+            'Upload time is not capture time, which is the whole reason this tool rewrites the date.',
+        );
+        if (sameDayBreak > 0) {
+          report.findings.push(
+            `${sameDayBreak} of those cross midnight, so using created_at would file them under the ` +
+              'wrong day — and at a week boundary, the wrong folder.',
+          );
+        }
+      }
+    }
+
+    // 4 (only with --deep) — the question nothing else can answer.
+    //
+    // event_date and created_at are the same on every record of a real account, so
+    // Brightwheel's API does not tell us when a photo was TAKEN, only when it was posted.
+    // If the moment survives anywhere it is inside the image, where the camera wrote it.
+    // Finding out means downloading one photo, which is why it is not the default: the rest
+    // of this command touches no media at all.
+    //
+    // The photo goes to a temporary file, its metadata is read, and the file is deleted in a
+    // finally. Nothing about it is printed except whether a capture date exists and how far
+    // it is from the posted time.
+    if (options.deep) {
+      const withMedia = items
+        .map((item) => item as Record<string, unknown>)
+        .filter((item) => typeof (item.media as Record<string, unknown>)?.image_url === 'string')
+        .slice(0, 3);
+      if (withMedia.length === 0) {
+        report.warnings.push('--deep found no photo to examine on this page.');
+      } else {
+        const probe = await probeCaptureTimes(withMedia, doFetch);
+        report.findings.push(...probe);
+      }
+    }
+
     const a = items[0] as Record<string, unknown> | undefined;
     if (a) {
-      // The claim the entire timestamp-correction feature depends on.
-      const ev = typeof a.event_date === 'string' ? new Date(a.event_date) : null;
-      const cr = typeof a.created_at === 'string' ? new Date(a.created_at) : null;
-      if (ev && cr) {
-        const diffMin = Math.round(Math.abs(cr.getTime() - ev.getTime()) / 60000);
-        report.findings.push(
-          diffMin > 0
-            ? `CONFIRMED: event_date and created_at differ (by ${diffMin} min on this record), so upload time is not capture time.`
-            : 'NOTE: event_date and created_at are identical on this record — inconclusive; try one posted late in the day.',
-        );
-      }
-
       const mediaUrl =
         ((a.media as Record<string, unknown>)?.image_url as string) ??
         ((a.video_info as Record<string, unknown>)?.downloadable_url as string);
@@ -245,6 +351,88 @@ export async function verify(
 }
 
 /** Render the report as text that is safe to paste into a public issue. */
+/**
+ * Download a few photos to a temporary directory, read the date the camera wrote, delete
+ * them. Used only by `verify --deep`.
+ *
+ * Deliberately narrow about what it reports: whether the file carries its own capture time,
+ * how many minutes earlier that is than the moment Brightwheel recorded, and whether the
+ * file still carries GPS coordinates. It never prints the date itself, the filename, the
+ * URL, or anything else the file contains.
+ */
+async function probeCaptureTimes(
+  items: Record<string, unknown>[],
+  doFetch: typeof fetch,
+): Promise<string[]> {
+  let exiftool: { read: (f: string) => Promise<Record<string, unknown>>; end: () => Promise<void> };
+  try {
+    ({ exiftool } = (await import('exiftool-vendored')) as unknown as {
+      exiftool: { read: (f: string) => Promise<Record<string, unknown>>; end: () => Promise<void> };
+    });
+  } catch {
+    return ['--deep needs ExifTool, which is not installed, so the photo could not be read.'];
+  }
+
+  const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'bw-verify-'));
+  const out: string[] = [];
+  let withOwnDate = 0;
+  let withGps = 0;
+  const gaps: number[] = [];
+
+  try {
+    for (const [i, item] of items.entries()) {
+      const url = (item.media as Record<string, unknown>).image_url as string;
+      const response = await doFetch(url);
+      if (!response.ok) {
+        out.push(`--deep could not fetch a photo to examine (HTTP ${response.status}).`);
+        continue;
+      }
+      const file = join(dir, `probe-${i}.jpg`);
+      await writeFile(file, Buffer.from(await response.arrayBuffer()));
+      const tags = await exiftool.read(file);
+      const own = tags.DateTimeOriginal ?? tags.CreateDate ?? null;
+      const owned = own ? new Date(String(own)) : null;
+      if (owned && !Number.isNaN(owned.getTime())) {
+        withOwnDate += 1;
+        const posted = new Date(item.event_date as string);
+        if (!Number.isNaN(posted.getTime())) {
+          gaps.push(Math.round((posted.getTime() - owned.getTime()) / 60000));
+        }
+      }
+      if (tags.GPSLatitude !== undefined || tags.GPSPosition !== undefined) withGps += 1;
+    }
+  } finally {
+    await exiftool.end().catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  if (withOwnDate === 0) {
+    out.push(
+      `DEEP: none of the ${items.length} photos examined carries a capture time of its own. ` +
+        'Brightwheel strips it, or the posting app never wrote one — so the moment a photo ' +
+        'was taken is not recoverable, and the posted time is the best date there is.',
+    );
+  } else {
+    const biggest = gaps.length > 0 ? Math.max(...gaps.map(Math.abs)) : 0;
+    out.push(
+      `DEEP: ${withOwnDate} of ${items.length} photos carry their own capture time, ` +
+        `up to ${biggest} minutes before the moment Brightwheel recorded. That is the real ` +
+        'capture time, and it is inside the file rather than in the API.',
+    );
+  }
+  out.push(
+    withGps > 0
+      ? `DEEP: ${withGps} of the photos examined still carry GPS coordinates. Leaving "remove ` +
+        'location information" on matters on this account.'
+      : 'DEEP: none of the photos examined carries GPS coordinates.',
+  );
+  out.push('DEEP: every photo downloaded for this check was deleted before this report was printed.');
+  return out;
+}
+
 export function formatReport(report: VerifyReport): string {
   const lines: string[] = [
     '',

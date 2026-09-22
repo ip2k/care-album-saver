@@ -96,6 +96,29 @@ function seeded(seed: string): () => number {
   };
 }
 
+/**
+ * Whoever posted the update, in the shape the real API uses.
+ *
+ * It used to be `{ name }`, which the real service does not have — so the parser read a
+ * field that is never there, no archive ever recorded an author, and every test agreed with
+ * the mistake because the mock was written from the same guess. Confirmed against the live
+ * API on 2026-09-22: first_name, last_name, object_id, email and role. The email is
+ * included here precisely because the parser must be seen NOT to take it.
+ */
+function actorFor(index: number) {
+  // TEACHERS holds the courtesy title with the surname, as a nursery would write it, so the
+  // whole of it is the "first name" the real API's first_name/last_name pair reconstructs to.
+  const [title, surname] = TEACHERS[index % TEACHERS.length]!.split(' ') as [string, string];
+  return {
+    object_id: `stf-${surname.toLowerCase()}`,
+    first_name: title,
+    last_name: surname,
+    email: `${surname.toLowerCase()}@sunnybrook.example`,
+    user_type: 'staff',
+    role: { is_administrator: false },
+  };
+}
+
 function buildActivities(
   studentId: string,
   count: number,
@@ -126,7 +149,7 @@ function buildActivities(
       note: NOTES[i % NOTES.length],
       media: { image_url: url, thumbnail_url: url },
       video_info: null,
-      actor: { name: TEACHERS[i % TEACHERS.length] },
+      actor: actorFor(i),
     });
   }
   for (let i = 0; i < checkIns; i++) {
@@ -140,7 +163,7 @@ function buildActivities(
       note: null,
       media: null,
       video_info: null,
-      actor: { name: TEACHERS[i % TEACHERS.length] },
+      actor: actorFor(i),
     });
   }
   for (let i = 0; i < count; i++) {
@@ -161,7 +184,7 @@ function buildActivities(
       note: NOTES[i % NOTES.length],
       media: isVideo ? null : { image_url: url, thumbnail_url: url },
       video_info: isVideo ? { downloadable_url: url } : null,
-      actor: { name: TEACHERS[i % TEACHERS.length] },
+      actor: actorFor(i),
     });
   }
   return out;
