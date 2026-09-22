@@ -48,14 +48,16 @@ computer can reach it. It is not on the internet.
 | | |
 |---|---|
 | **Does this tool send my photos anywhere?** | No. They go from Brightwheel straight to your computer. |
-| **Does it collect usage data or analytics?** | No. It makes no network connections except to Brightwheel. |
+| **Does it collect usage data or analytics?** | No. It talks to Brightwheel's API and to the photo links Brightwheel hands back, and to nothing else. |
 | **Can the authors see anything?** | No. Nothing is sent to us; there is no service to send it to. |
 | **Can other parents see my child's photos?** | No. Brightwheel only ever shows this tool the children on *your* account. |
 | **Can I archive someone else's child?** | No. This is not a limitation we added — it is how Brightwheel works. Your login only reaches your own family. |
 
 ### What about my password?
 
-**By default, this tool never asks for and never sees your Brightwheel password.**
+**This tool never asks for and never sees your Brightwheel password.** There is no box for
+it anywhere — not on the setup page, not in the terminal, not behind an option you could
+turn on by mistake.
 
 You sign in on Brightwheel's own website, exactly as you always do, including the
 6-digit code they text or email you. Then you copy one value — a "session", which is
@@ -65,12 +67,9 @@ That session is stored **on your computer only**, in your private settings folde
 file only your user account can open. It is never sent anywhere except back to
 Brightwheel.
 
-There is also an **optional** sign-in that asks for your email, password and the 6-digit
-code directly, for people who find copying the session too fiddly. It is off by default and
-you have to choose it. If you do: your password is used only for the few seconds it takes
-to get a session, is never written to disk, and is never logged. We still suggest the
-default, because getting into the habit of typing your real password into other people's
-software is a bad habit to build — even when the software is honest.
+Copying that value out of your browser is fiddlier than typing a password would be, and
+that is a trade we made on purpose: getting into the habit of typing your real password
+into other people's software is a bad habit to build, even when the software is honest.
 
 ### The setup page that opens in your browser
 
@@ -165,18 +164,33 @@ npx brightwheel-archive run        # save any new photos
 **macOS / Linux** — add to `crontab -e`:
 
 ```
-0 19 * * *  npx brightwheel-archive run
+0 19 * * *  /usr/local/bin/npx brightwheel-archive run
 ```
 
-**Docker** — the session and photos are mounted in, never baked into the image:
+Use the full path to `npx`, not a bare `npx`. A scheduled job looks for programs in only a
+few places and usually does not find it. Type `which npx` in your terminal and paste what
+it prints — with Homebrew it is often `/opt/homebrew/bin/npx`.
+
+**Windows** — Task Scheduler needs `npx.cmd`, not `npx`.
+[The guide explains both](docs/GUIDE.md#doing-it-automatically-every-day).
+
+**Docker** — there is no published image. Nobody builds one for you, so build it yourself
+from this repository. The session and the photos are mounted in, never baked into the image:
 
 ```sh
+docker build -t brightwheel-archive .
+
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   -v ~/.config/brightwheel-archive:/config \
   -v ~/Brightwheel\ Photos:/photos \
-  ghcr.io/OWNER/brightwheel-archive run
+  brightwheel-archive run --dir /photos
 ```
+
+`--dir /photos` is what sends the photos to the folder you mounted. Naming a command at the
+end of `docker run` replaces the one built into the image, and the built-in one is the only
+place `--dir` would otherwise come from — so if you name `run`, name `--dir /photos` with
+it, or the photos are written inside the container and thrown away when it exits.
 
 On Linux, `--user` runs the container as you, so it can read the mounted session file —
 which only your account can open — and write into the mounted photos folder. Without it the
@@ -186,6 +200,11 @@ a Mac or Windows maps bind mounts itself, so the flag does no harm there.
 `~/.config/brightwheel-archive` is the Linux location. On a Mac the session is in
 `~/Library/Application Support/brightwheel-archive`. Run `brightwheel-archive where` to
 print the exact folder to mount as `/config`.
+
+There is also a `BRIGHTWHEEL_SESSION` environment variable, which the tool reads instead of
+the session file when it is set. **Mount the file rather than use it.** An environment
+variable is visible in process listings, lands in shell history, and is copied into crash
+dumps; a mounted file is none of those things.
 
 ---
 
@@ -197,8 +216,8 @@ print the exact folder to mount as `/config`.
 | `login` | Paste your session in the terminal instead. |
 | `run` | Save any new photos. `Ctrl` + `C` stops it after the photo it is on. |
 | `children` | List the children on your account, with the id Brightwheel uses for each. |
-| `doctor` | Check everything is working. Safe to share — it redacts secrets. |
-| `verify` | Check that Brightwheel's API still has the shape this tool expects. Read-only: it saves no photos and prints no names. |
+| `doctor` | Check everything is working. It never prints your session, only a short fingerprint of it — but it does print your folder paths, which contain your computer's user name. |
+| `verify` | Check that Brightwheel's API still has the shape this tool expects. Read-only: it saves no photos, and prints no names, notes or ids. |
 | `where` | Show where your files and settings are kept. |
 
 | Option | Default | |
@@ -301,7 +320,8 @@ actually read:
 | `QuickTime:TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate` | The same instant, in the track and media headers |
 | `Keys:CreationDate` | The same moment as local time with its offset — the field Apple Photos prefers |
 | `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
-| `XMP-iptcExt:PersonInImage`, `XMP-dc:subject`, `Keys:Keywords` | Your child's name — only with the names switch on |
+| `XMP-iptcExt:PersonInImage` | Your child's name — only with the names switch on |
+| `XMP-dc:subject`, `Keys:Keywords` | Your child's name and `Brightwheel`, as searchable tags — only with the names switch on |
 | `XMP-dc:description`, `Keys:Description` | The teacher's note |
 | `XMP-dc:creator`, `Keys:Author` | Who posted it — only with the names switch on |
 | `XMP-iptcExt:LocationCreatedSublocation` | The nursery's name, when Brightwheel gives one — only with the names switch on |
@@ -312,14 +332,19 @@ back to the time you would have read off the clock in the room.
 
 **The picture itself is never altered or re-compressed.** Only the metadata is touched, so
 the file you keep is the file Brightwheel served. The tests check this the hard way, on both
-kinds: for a photo the compressed image data is compared byte for byte against what the
-server sent, and for a video the `mdat` box that holds the frames is
-(`packages/brightwheel-archive/test/real-media-fixtures.test.js` — "photo metadata
-round-trips…" and "video metadata round-trips…").
+kinds: for a photo, the compressed scan — the part of the file that is the picture — is
+compared byte for byte against what the server sent; for a video, the `mdat` box that holds
+the frames is compared the same way, and — on a machine that has `ffprobe` — the rewritten
+container is then read back to prove it still plays. Both checks live in
+`packages/brightwheel-archive/test/real-media-fixtures.test.js`, in the tests named "photo
+metadata round-trips…" and "video metadata round-trips…".
 
-Every file also gets a `.json` file beside it with the same information in plain text — so
-the archive is readable in twenty years even without this tool, and even if ExifTool is
-not installed.
+Every file also gets a `.json` file beside it, in plain text, so the archive is readable in
+twenty years without this tool and without ExifTool. **It holds more than the photo does:**
+your child's name and their Brightwheel id, the nursery's name, the teacher's note, and who
+posted it — all of it, whatever the switches above are set to. That is deliberate, because
+the sidecar stays behind when you share the photo. It also means the `.json` file is the one
+thing in your archive you should not paste into a public bug report.
 
 ### `archive.json`
 
@@ -362,9 +387,15 @@ Brightwheel clients. We believe they are right. We have not proved it, and until
 has, please do not treat this as finished software.
 
 `brightwheel-archive verify` is how you check it on your own account without archiving
-anything. It makes at most four read-only requests, downloads no photos, and reports which
-fields are present and what type each one is — never a value, never a child's name. Its
-output is safe to paste into a bug report.
+anything. It makes a handful of read-only requests — a few reads of the API, and a check
+that a photo link still answers — and downloads no photos. Mostly it reports which fields
+are present and what type each one is: never a child's name, never a note, never an id,
+never a date. A few plain values do appear, and they are listed here so that nothing in the
+report comes as a surprise — how many children and how many posts it counted, how many
+minutes apart the capture time and the upload time were on one post, the internet address
+photos are served from, and the names (not the contents) of the security parameters on a
+photo link. None of that identifies anybody, which is why the report is safe to paste into
+a bug report.
 
 ### Before you use this: Brightwheel's terms
 
@@ -404,10 +435,20 @@ your child's data, ask the school.
 | [`brightwheel-archive`](packages/brightwheel-archive) | The tool itself: API client, metadata, week folders, CLI and setup assistant. |
 | [`media-ferry`](packages/media-ferry) | Reusable and service-agnostic: resumable downloads, stable identity for signed URLs, content hashing, safe filenames, ISO weeks. Useful in any archiving project. |
 
-**Zero runtime dependencies.** Both packages use only Node's standard library. For
-software that handles children's photos, every third-party package is a risk that has to
-earn its place, and none needed to. ExifTool is optional — without it, dates and names are
-written to the `.json` files instead.
+**The tool itself has zero required runtime dependencies.** The only entry under
+`dependencies` is `media-ferry`, the other package in this repository, which has none of its
+own; everything else the code reaches for is Node's standard library. For software that
+handles children's photos, every third-party package is a risk that has to earn its place,
+and none needed to.
+
+One thing does get installed alongside it, so it should be said plainly rather than tucked
+behind the word "optional". `exiftool-vendored` — the package that writes dates and names
+*inside* your photos — is listed as an optional dependency, and optional does not mean
+off: a normal `npm install` or `npx` fetches it, along with the six packages it depends on
+(a bundled copy of ExifTool, which is Perl, and five small libraries), for about 30 MB.
+That is the normal case. If you would rather not have it, install with `--omit=optional`:
+everything still works, and the dates, names and notes are written to the `.json` file
+beside each photo instead of into the photo.
 
 ---
 
@@ -416,7 +457,7 @@ written to the `.json` files instead.
 ```sh
 pnpm install
 pnpm build
-pnpm test                        # 93 tests, no network needed
+pnpm test                        # 94 tests, no network needed
 ```
 
 One test file on its own:
@@ -429,7 +470,7 @@ CI runs the same suite on Ubuntu, macOS and Windows against Node 20, 22, 24 and 
 combinations (`.github/workflows/ci.yml`). Two of the tests assert owner-only file
 permissions, which Windows does not have; there they are reported as skipped with the reason
 printed, never quietly passed. `BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test` rehearses
-that on a Mac or Linux machine — 93 tests, 91 passed, 2 skipped.
+that on a Mac or Linux machine — 94 tests, 92 passed, 2 skipped.
 
 The guide's images come from `node scripts/screenshots.js`, which drives the real setup page
 in a real browser. It needs Chromium once: `pnpm exec playwright install chromium`.
