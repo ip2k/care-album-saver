@@ -1,4 +1,8 @@
 import { Secret } from './secrets.js';
+import { inspectCookiePaste } from './paste.js';
+
+/** RFC 6265 cookie-octet: what a cookie value may contain, and all a saved one may hold. */
+const COOKIE_OCTETS = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/;
 import { configPath, defaultArchiveDir, readJsonFile, sessionPath, writeSecureFile } from './paths.js';
 
 export interface Config {
@@ -84,10 +88,15 @@ export async function loadSession(): Promise<{ session: Secret; savedAt: Date; e
   if (process.env.BRIGHTWHEEL_SESSION) {
     // Supported for Docker and CI, but the README explains why a mounted file is better:
     // environment variables leak into process listings, shell history and crash dumps.
-    return { session: new Secret(process.env.BRIGHTWHEEL_SESSION), savedAt: new Date(), email: null };
+    const value = process.env.BRIGHTWHEEL_SESSION;
+    if (!COOKIE_OCTETS.test(value)) return null;
+    return { session: new Secret(value), savedAt: new Date(), email: null };
   }
   const stored = await readJsonFile<StoredSession>(sessionPath());
   if (!stored?.cookie) return null;
+  // A saved value that could not be sent as a cookie header is treated as no session at
+  // all: an HTTP client asked to send it would refuse, quoting it back in its complaint.
+  if (typeof stored.cookie !== 'string' || !COOKIE_OCTETS.test(stored.cookie)) return null;
   return {
     session: new Secret(stored.cookie),
     savedAt: new Date(stored.savedAt),
@@ -110,10 +119,7 @@ export async function saveSession(cookie: Secret, email: string | null): Promise
  * Being forgiving here removes the most common support question.
  */
 export function normaliseCookieInput(input: string): Secret | null {
-  const text = input.trim().replace(/^Cookie:\s*/i, '');
-  if (!text) return null;
-  const match = text.match(/_brightwheel_v2=([^;\s]+)/);
-  if (match?.[1]) return new Secret(decodeURIComponent(match[1]));
-  if (!text.includes('=') && !text.includes(';')) return new Secret(text);
-  return null;
+  const verdict = inspectCookiePaste(input);
+  return verdict.ok ? new Secret(verdict.value) : null;
 }
+

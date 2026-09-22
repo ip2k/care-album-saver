@@ -3,9 +3,10 @@ import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { BrightwheelClient } from './api/client.js';
-import { loadConfig, loadSession, normaliseCookieInput, saveConfig, saveSession } from './config.js';
+import { loadConfig, loadSession, saveConfig, saveSession } from './config.js';
 import { configDir, configPath, sessionPath } from './paths.js';
-import { scrub } from './secrets.js';
+import { Secret, scrub } from './secrets.js';
+import { inspectCookiePaste } from './paste.js';
 import { sync } from './sync.js';
 import { startWebUi } from './web/server.js';
 import { formatReport, verify } from './verify.js';
@@ -234,11 +235,14 @@ async function main(): Promise<number> {
       );
       const pasted = await rl.question('  Paste it here: ');
       rl.close();
-      const secret = normaliseCookieInput(pasted);
-      if (!secret) {
-        stdout.write('\n  That did not look like a session value. Nothing was saved.\n');
+      const verdict = inspectCookiePaste(pasted);
+      if (!verdict.ok) {
+        stdout.write(`\n  ${verdict.message} Nothing was saved.\n`);
         return 1;
       }
+      for (const note of verdict.notes) stdout.write(`  (${note})\n`);
+      if (verdict.level === 'warn') stdout.write(`  ${verdict.message}\n`);
+      const secret = new Secret(verdict.value);
       const client = new BrightwheelClient({ session: secret, baseUrl });
       const check = await client.verifySession();
       if (!check.ok) {
@@ -276,6 +280,9 @@ async function main(): Promise<number> {
       stdout.write(`  Photos folder: ${config.archiveDir}\n`);
       stdout.write(`  Session saved: ${session ? `yes (${session.session.fingerprint()})` : 'no'}\n`);
       if (!session) return 1;
+      // The shape and length only — enough to tell "wrong row" from "expired", never the value.
+      const shape = inspectCookiePaste(session.session.expose());
+      stdout.write(`  Session shape: ${shape.kind} (${session.session.length} characters)\n`);
       const client = new BrightwheelClient({ session: session.session, baseUrl });
       const check = await client.verifySession();
       stdout.write(`  Session works: ${check.ok ? 'yes' : `no — ${scrub(check.reason)}`}\n`);
