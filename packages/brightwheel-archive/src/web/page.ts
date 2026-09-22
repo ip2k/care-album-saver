@@ -27,6 +27,8 @@
  *    but not yet stored used to be silently ignored, because the run reads settings from
  *    disk (/design/human-interface-guidelines/feedback).
  */
+import { COOKIE_HELP, COOKIE_HELP_CSS, COOKIE_HELP_SCRIPT } from './cookie-help.js';
+
 export const PAGE = String.raw`<!doctype html>
 <html lang="en">
 <head>
@@ -282,6 +284,10 @@ export const PAGE = String.raw`<!doctype html>
     .card, .kid, button, .msg { border: 1px solid ButtonBorder; }
     .num { forced-color-adjust: none; }
   }
+
+  /* Step 1's picture guide. Its rules live in src/web/cookie-help.ts beside the drawings
+     they paint, and land here because the page has exactly one stylesheet. */
+${COOKIE_HELP_CSS}
 </style>
 </head>
 <body>
@@ -304,6 +310,7 @@ export const PAGE = String.raw`<!doctype html>
         <div class="body">
           <p class="sr-only" id="connect-state">Step 1 of 3. Not started.</p>
           <ol class="howto" id="howto"></ol>
+          ${COOKIE_HELP}
           <p class="why-ask">
             <b>Why this is needed:</b> it is how the tool proves to Brightwheel that it is
             you, so it can see your own children&rsquo;s photos. It stays on this computer,
@@ -462,6 +469,11 @@ function howToSteps() {
   ];
 }
 $('howto').innerHTML = howToSteps().map((s) => '<li>' + s + '</li>').join('');
+
+/* The picture guide that illustrates those same five steps. Written in
+   src/web/cookie-help.ts beside its drawings, and folded in here because the page has
+   exactly one script — a test compiles it to prove the whole thing parses. */
+${COOKIE_HELP_SCRIPT}
 
 function setStep(card, numEl, srEl, state, srText) {
   card.dataset.state = state;

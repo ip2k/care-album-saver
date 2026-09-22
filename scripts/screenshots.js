@@ -238,7 +238,7 @@ const main = async () => {
   await page.click('#btn-connect');
   await page.waitForSelector('.kid', { timeout: 10000 });
   await page.waitForTimeout(400);
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1100 });
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1280 });
   await page.evaluate(() => document.querySelector('#card-connect').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
   await annotate(page, [
@@ -257,7 +257,7 @@ const main = async () => {
   await page.uncheck('#kid-1');
   await saved;
   await page.waitForFunction(() => document.querySelector('#config-msg')?.textContent === 'Saved', { timeout: 5000 });
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1200 });
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1400 });
   await page.evaluate(() => document.querySelector('details').setAttribute('open', ''));
   await page.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
@@ -297,7 +297,7 @@ const main = async () => {
   await access(join(PHOTOS, 'archive.json'));
 
   // 5 — dark mode, on the step with the most controls. Both schemes are first-class.
-  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1160 }, deviceScaleFactor: 2, colorScheme: 'dark' });
+  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1320 }, deviceScaleFactor: 2, colorScheme: 'dark' });
   await dark.goto(ui.url, { waitUntil: 'networkidle' });
   await dark.waitForSelector('.kid', { timeout: 10000 });
   await dark.waitForTimeout(700);
