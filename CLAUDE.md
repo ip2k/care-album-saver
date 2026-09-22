@@ -59,9 +59,11 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 121 tests passing, no network required (`pnpm test`). CI runs the same suite on Ubuntu,
-  macOS and Windows against Node 20, 22, 24 and 26. The win32 rehearsal
-  (`BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test`) is 121 tests, 119 passed, 2 skipped.
+- 176 tests passing on `main` at 6527f06, no network required (`pnpm test`). The CI matrix
+  in `.github/workflows/ci.yml` is written for Ubuntu, macOS and Windows against Node 20,
+  22, 24 and 26 but **has never run: there is no git remote yet**. The win32 rehearsal
+  (`BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test`) is 176 tests, 174 passed,
+  2 skipped.
 - **Proven by test, against real bytes:** what is written into a photo and into a video,
   read back out with ExifTool, and that the pixels and the video frame are unaltered; that
   every file is still saved, with a JSON sidecar, when ExifTool is absent; that a run which
@@ -69,14 +71,15 @@ stores, and this tool is deliberately local-only with no cloud component.
   carries on without skipping anything; that temporary and system folders are refused and
   cloud-synced ones warned about; that the setup page refuses a request with no token, the
   wrong `Host`, or a cross-site origin, and never echoes a session back.
-- **The API surface is UNVERIFIED against live Brightwheel.** It was derived from six
-  existing open-source scrapers, and no request from this project has ever reached the real
-  service. `brightwheel-archive verify` now checks most of the shape read-only — three API
-  reads and one HEAD probe sent without the session, downloading nothing and printing field
-  names and types rather than values — so running it, or capturing a HAR, is the top
-  outstanding task. Do not tell
-  a user this is production-ready until that is done. See docs/QUESTIONS-FOR-FABLE.md,
-  section B, for what is settled and what is not.
+- **The API surface has been checked against one live account, at one nursery.** A full
+  run on 2026-09-21 read every endpoint the tool uses and saved 632 files (174 MB);
+  `verify` and `verify --deep` ran on 2026-09-22 and confirmed the field names, corrected
+  one (`actor.first_name`/`last_name`, not `actor.name`) and found no EXIF in the photos.
+  Still open, each with a read-only `verify` extension planned: whether `page` is 0- or
+  1-based, whether `page_size=100` is honoured, whether `action_type=ac_photo` filters or
+  is ignored, whether a higher-resolution original exists, how long a media signature
+  lives, and whether a second nursery's records distinguish `event_date` from
+  `created_at`. No HAR has been captured. See docs/QUESTIONS-FOR-FABLE.md section B.
 - **Settled 2026-09-22: there is one sign-in, and it is the pasted session.** `src/api/login.ts`
   implemented an email/password/2FA flow that nothing imported and no flag, command or field
   reached; the README promised it to parents anyway. The file is deleted and the promise is
@@ -101,8 +104,10 @@ The global rule is an audit every ~10,000 lines added since the last mark, so th
 is due at roughly **12,600** lines. An earlier edit here wrote 15,000, which did not follow
 from any recorded mark; 2,593 + 10,000 is where it actually falls.
 
-At c6cc452 the tree is **5,356** source lines — 2,763 added since the mark, so the audit is
-not yet due.
+At 6527f06, with the four `ux/*` branches merged, the tree is **8,843** source lines —
+6,250 added since the mark, so the audit is not yet due but is past halfway. The
+2026-09-22 review (docs/DIRECTIONS-FOR-OPUS.md) already lists dead code to remove when it
+comes: the `openBrowser` option, `dist/api/login.*`, fourteen unused `media-ferry` exports.
 
 Counting method, since the original figure does not say: `wc -l` over every `.ts` file
 under `packages/*/src`, excluding tests, scripts and the generated `dist/`. That method
