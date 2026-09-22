@@ -15,7 +15,7 @@ import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { COOKIE_FIGURES, COOKIE_FIGURE_CSS } from '../packages/brightwheel-archive/dist/web/cookie-help.js';
+import { COOKIE_FIGURES, COOKIE_FIGURE_CSS } from '../packages/care-album-saver/dist/web/cookie-help.js';
 
 const OUT = fileURLToPath(new URL('../docs/images', import.meta.url));
 

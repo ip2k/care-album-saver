@@ -1,4 +1,4 @@
-# brightwheel-archive — project context
+# care-album-saver — project context
 
 ## Classification: PERSONAL, open source (MIT)
 
@@ -21,7 +21,7 @@ Stricter than the usual house rule, because the data is photographs of children.
 - **No session cookies, HAR captures, or tokens.** The tool stores these in the OS config
   directory specifically so nothing is ever in the tree.
 - All test data and every `docs/images/*.png` come from the mock server in
-  `packages/brightwheel-archive/src/mock/server.ts`, which invents "Robin" and "Sam Maple",
+  `packages/care-album-saver/src/mock/server.ts`, which invents "Robin" and "Sam Maple",
   and from `src/mock/fixtures.ts`, which draws the placeholder images as real JPEG and MP4
   bytes. Regenerate with `node scripts/screenshots.js`, after
   `pnpm exec playwright install chromium` once.
@@ -62,7 +62,7 @@ stores, and this tool is deliberately local-only with no cloud component.
 - 176 tests passing on `main` at 6527f06, no network required (`pnpm test`). The CI matrix
   in `.github/workflows/ci.yml` is written for Ubuntu, macOS and Windows against Node 20,
   22, 24 and 26 but **has never run: there is no git remote yet**. The win32 rehearsal
-  (`BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test`) is 176 tests, 174 passed,
+  (`CARE_ALBUM_TEST_PLATFORM=win32 pnpm test`) is 176 tests, 174 passed,
   2 skipped.
 - **Proven by test, against real bytes:** what is written into a photo and into a video,
   read back out with ExifTool, and that the pixels and the video frame are unaltered; that
@@ -88,7 +88,7 @@ stores, and this tool is deliberately local-only with no cloud component.
   password into other people's software is the habit phishing depends on.
 
 - **Two directories must be redirected before any test or throwaway script runs**, not one:
-  `BRIGHTWHEEL_ARCHIVE_CONFIG_DIR` for the session and `BRIGHTWHEEL_ARCHIVE_DIR` for the
+  `CARE_ALBUM_CONFIG_DIR` for the session and `CARE_ALBUM_DIR` for the
   photos. `scripts/test-env.js` sets both and refuses anything outside the temp directory;
   import it first in any test that touches either. Forgetting the second one put mock
   photographs in a developer's home folder three times on 2026-09-22, each time from code

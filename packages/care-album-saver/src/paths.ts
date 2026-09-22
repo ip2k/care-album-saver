@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -21,16 +22,42 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 export function configDir(): string {
   const home = homedir();
   const env = process.env;
+  // The old spelling is still honoured, and deliberately first-come: a script, a launchd
+  // job or a shell profile written before the rename must not silently start pointing at
+  // a different directory than the one it has been isolating all along.
+  if (env.CARE_ALBUM_CONFIG_DIR) return env.CARE_ALBUM_CONFIG_DIR;
   if (env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR) return env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
 
-  switch (platform()) {
-    case 'darwin':
-      return join(home, 'Library', 'Application Support', 'brightwheel-archive');
-    case 'win32':
-      return join(env.APPDATA || join(home, 'AppData', 'Roaming'), 'brightwheel-archive');
-    default:
-      return join(env.XDG_CONFIG_HOME || join(home, '.config'), 'brightwheel-archive');
-  }
+  const parent = platform() === 'darwin'
+    ? join(home, 'Library', 'Application Support')
+    : platform() === 'win32'
+      ? env.APPDATA || join(home, 'AppData', 'Roaming')
+      : env.XDG_CONFIG_HOME || join(home, '.config');
+
+  // The project was called brightwheel-archive until 2026-09-22. Someone who set the tool
+  // up before then has their session in a directory of that name, and a rename that
+  // orphaned it would look exactly like being signed out for no reason — on a tool whose
+  // one manual step is signing in again. So: the new directory if it exists, the old one
+  // if only that does, and the new one when there is neither (a first run). Nothing is
+  // moved or deleted here; the next save writes wherever this points.
+  const current = join(parent, 'care-album-saver');
+  if (existsSync(current)) return current;
+  const legacy = join(parent, 'brightwheel-archive');
+  if (existsSync(legacy)) return legacy;
+  return current;
+}
+
+/** Where the pre-rename configuration lived, for `doctor` to mention if it is still there. */
+export function legacyConfigDir(): string | null {
+  const home = homedir();
+  const env = process.env;
+  const parent = platform() === 'darwin'
+    ? join(home, 'Library', 'Application Support')
+    : platform() === 'win32'
+      ? env.APPDATA || join(home, 'AppData', 'Roaming')
+      : env.XDG_CONFIG_HOME || join(home, '.config');
+  const legacy = join(parent, 'brightwheel-archive');
+  return existsSync(legacy) ? legacy : null;
 }
 
 export const configPath = (): string => join(configDir(), 'config.json');
@@ -38,13 +65,23 @@ export const sessionPath = (): string => join(configDir(), 'session.json');
 
 /** Default place to put the photos, if the user does not choose one. */
 export function defaultArchiveDir(): string {
-  // The override exists for the same reason BRIGHTWHEEL_ARCHIVE_CONFIG_DIR does, and it was
+  // The override exists for the same reason CARE_ALBUM_CONFIG_DIR does, and it was
   // added for the same reason: isolating the config directory was not enough. A test or an
   // ad-hoc script that builds a config from DEFAULT_CONFIG without naming a folder archives
   // into the real one — which put mock photographs in a developer's home directory three
   // times on 2026-09-22, each time from code that believed it was isolated. The test run
   // sets this (see scripts/test-env.js); nothing in the product does.
-  return process.env.BRIGHTWHEEL_ARCHIVE_DIR || join(homedir(), 'Brightwheel Photos');
+  const override = process.env.CARE_ALBUM_DIR || process.env.BRIGHTWHEEL_ARCHIVE_DIR;
+  if (override) return override;
+  // A folder this tool creates should not be named after somebody else's service, and the
+  // project may grow to read more than one. But an archive already sitting in the old
+  // folder is a year of a child's photographs, so it is never renamed: if it is there and
+  // the new one is not, it stays the default. A person who has run the tool before has the
+  // path written in their config.json in any case, which wins over this entirely.
+  const legacy = join(homedir(), 'Brightwheel Photos');
+  const current = join(homedir(), 'Care Album Photos');
+  if (!existsSync(current) && existsSync(legacy)) return legacy;
+  return current;
 }
 
 /**

@@ -143,7 +143,7 @@ export class BrightwheelClient {
       Accept: 'application/json',
       // The web client identifies itself as 'web'; an unrecognised value risks rejection.
       'X-Client-Name': 'web',
-      'User-Agent': 'brightwheel-archive (+https://github.com/)',
+      'User-Agent': 'care-album-saver (+https://github.com/)',
     };
   }
 
@@ -158,7 +158,7 @@ export class BrightwheelClient {
    * should reach exactly one origin (the API) and no other.
    */
   mediaHeaders(): Record<string, string> {
-    return { 'User-Agent': 'brightwheel-archive (+https://github.com/)' };
+    return { 'User-Agent': 'care-album-saver (+https://github.com/)' };
   }
 
   private async request(path: string, context: string): Promise<unknown> {

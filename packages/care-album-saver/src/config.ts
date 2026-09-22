@@ -85,10 +85,12 @@ interface StoredSession {
  * anywhere downstream.
  */
 export async function loadSession(): Promise<{ session: Secret; savedAt: Date; email: string | null } | null> {
-  if (process.env.BRIGHTWHEEL_SESSION) {
+  if (process.env.CARE_ALBUM_SESSION || process.env.BRIGHTWHEEL_SESSION) {
     // Supported for Docker and CI, but the README explains why a mounted file is better:
     // environment variables leak into process listings, shell history and crash dumps.
-    const value = process.env.BRIGHTWHEEL_SESSION;
+    // BRIGHTWHEEL_SESSION is the pre-rename spelling, still read so that an existing
+    // container or CI job does not stop working on an upgrade.
+    const value = process.env.CARE_ALBUM_SESSION || process.env.BRIGHTWHEEL_SESSION || '';
     if (!COOKIE_OCTETS.test(value)) return null;
     return { session: new Secret(value), savedAt: new Date(), email: null };
   }

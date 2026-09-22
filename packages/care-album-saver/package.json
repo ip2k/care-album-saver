@@ -1,10 +1,10 @@
 {
-  "name": "brightwheel-archive",
+  "name": "care-album-saver",
   "version": "0.1.0",
   "description": "Save your own child's photos from Brightwheel to your own computer, organised by week.",
   "license": "MIT",
   "type": "module",
-  "bin": { "brightwheel-archive": "./dist/cli.js" },
+  "bin": { "care-album-saver": "./dist/cli.js" },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": ["dist", "README.md", "LICENSE"],

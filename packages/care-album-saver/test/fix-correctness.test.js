@@ -197,8 +197,8 @@ test('two Start clicks in the same instant start one run, not two', async () => 
   // two POSTs landing either side of that await both passed. Two syncs then wrote the same
   // archive and the same manifest at once, and the second one's save overwrote the first's
   // record of what it had saved.
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-two-starts-'));
-  delete process.env.BRIGHTWHEEL_SESSION;
+  process.env.CARE_ALBUM_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-two-starts-'));
+  delete process.env.CARE_ALBUM_SESSION;
   assertIsolatedConfigDir();
 
   const photos = join(PHOTOS_ROOT, 'two-starts');

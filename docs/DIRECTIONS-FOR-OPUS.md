@@ -26,9 +26,17 @@ photos (`scripts/test-env.js`); no real personal data anywhere; zero runtime dep
 
 None of these touch the files Part 2 changes, so the order between the parts is free.
 
-### 1.1 From `ux/shell` — two changes
+### 1.1 From `ux/shell` — DONE 2026-09-22, and the opposite way round
+
+The owner settled the open question: the page keeps **Care Album Saver**, with no tagline,
+and the whole project was renamed so that nothing it owns carries somebody else's mark
+(QUESTIONS C7). So the first bullet below is answered — do not revert the page to the
+package's name, and do not reintroduce the lede. The second bullet (pin the outward link
+exactly) is done. What follows is kept only as the record of what was considered.
+
+
 - **Revert the rename.** "Care Album Saver" is a third name for a product that is
-  `brightwheel-archive` in the package, the CLI, the config directory, the README and the
+  `care-album-saver` in the package, the CLI, the config directory, the README and the
   GUIDE. On the branch, make `<title>` and `<h1>` in `src/web/page.ts` both `Brightwheel
   Archive` (its own test wants them equal) and restore the one-line lede under the heading
   ("Saves your child's photos from your own Brightwheel account onto this computer, sorted
@@ -82,7 +90,7 @@ that opened". No TCC prompt is expected for `choose folder`.
 - **Duplicates summary:** when `auditArchive` reports unrecorded files, have
   `findDuplicates` say "N files are not on the list yet; run repair first" — the finder is
   manifest-only and cannot see the force-quit orphan it was written for.
-- Add a `SECURITY.md` row for `daily.log` (`~/Library/Logs/brightwheel-archive/` and the
+- Add a `SECURITY.md` row for `daily.log` (`~/Library/Logs/care-album-saver/` and the
   Linux/Windows equivalents): it holds the CLI's scrubbed stdout and Node's stderr, and
   therefore child names in progress lines; macOS diagnostic collection gathers
   `~/Library/Logs`. Consider a size cap later.
@@ -186,12 +194,12 @@ Each item names the lane in QUESTIONS that argued it. Sizes are S unless marked.
     `archive.json` description, `SECURITY.md`'s "identified photographs" row and the GUIDE
     options table. Give the mock one caption that names the second child and a room.
     Regenerate `docs/images/03-options.png` once.
-16. **C1** Fold `media-ferry` into `packages/brightwheel-archive/src/ferry/` (keep the
+16. **C1** Fold `media-ferry` into `packages/care-album-saver/src/ferry/` (keep the
     barrel; fix three import sites and three relative-dist test imports; delete the
     fourteen unused exports; write `names.ts`'s control-character classes as escapes).
     Delete `dist/api/login.*` and add a `prepack` that removes `dist` before `tsc --build`.
     **Owner decision first:** publish to npm (then a README inside the package dir) or
-    document the clone route and remove every `npx brightwheel-archive` line from README
+    document the clone route and remove every `npx care-album-saver` line from README
     and GUIDE. Either way the SECURITY.md dependency row changes.
 17. **B3-3/4/5** Add `hash-algorithm` to `SIGNATURE_PARAMS`; make the mock mint
     CloudFront-shaped URLs (`Expires` in seconds, `Signature`, `Key-Pair-Id`) and read them
@@ -224,7 +232,7 @@ margin on expiry; decoding `Policy=`.
 Record each answer in QUESTIONS-FOR-FABLE.md next to its entry.
 
 1. Publish to npm, or clone-and-build? (C1, item 16.) Decides the README.
-2. Product name: `Brightwheel Archive` everywhere, or a recorded rename everywhere? (1.1.)
+2. Product name: `Care Album Saver` everywhere, or a recorded rename everywhere? (1.1.)
 3. Run the revocation test: paste a session, sign out of Brightwheel in the browser, run
    `doctor`. If the session still works, four documents must stop saying "immediately".
 4. Read the `HttpOnly` tick for `_brightwheel_v2` in the DevTools table and record it (A1).

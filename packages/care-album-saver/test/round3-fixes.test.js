@@ -148,8 +148,8 @@ test('a stop that arrives in the instant a run is starting still stops it', asyn
   // then published the handle that a stop needs. A stop landing in that gap was told
   // "nothing is running", and a close() in that gap returned at once and took the server
   // down with the run still going and the manifest unwritten.
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-race-'));
-  delete process.env.BRIGHTWHEEL_SESSION;
+  process.env.CARE_ALBUM_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-race-'));
+  delete process.env.CARE_ALBUM_SESSION;
   assertIsolatedConfigDir();
 
   const photos = join(PHOTOS_ROOT, 'run-1');
@@ -304,7 +304,7 @@ test('a config nobody gave a folder to cannot archive into the real home directo
   // author believed the config-directory isolation covered it. It does not: they are two
   // different directories, and now two different variables.
   const dir = DEFAULT_CONFIG.archiveDir;
-  assert.equal(dir, process.env.BRIGHTWHEEL_ARCHIVE_DIR, 'the test run redirects the default');
+  assert.equal(dir, process.env.CARE_ALBUM_DIR, 'the test run redirects the default');
   assert.notEqual(dir, join(homedir(), 'Brightwheel Photos'));
   assert.ok(!dir.startsWith(homedir() + '/Brightwheel'), 'and never the real photos folder');
 });
