@@ -1,3 +1,7 @@
+// First, before anything that can read the config directory: points this file at a
+// throwaway one even when it is run on its own with `node --test`, which applies no
+// --import (see scripts/test-env.js).
+import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, stat } from 'node:fs/promises';
@@ -24,6 +28,7 @@ const testPlatform = process.env.BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM || platform()
 const posixOnly =
   testPlatform === 'win32' ? 'POSIX file modes do not exist on Windows; files inherit the parent ACL' : false;
 
+before(assertIsolatedConfigDir);
 before(async () => { mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 12 }); });
 after(async () => { await mock?.close(); });
 
@@ -481,10 +486,11 @@ test('the web config endpoint refuses a temporary destination', async () => {
 // ---------------------------------------------------------------- test isolation
 
 test('the test suite never touches the real config directory', () => {
-  // scripts/test-env.js is preloaded by `pnpm test`. If it is missing, every test that
-  // starts the setup UI writes the mock session over the developer's real one.
-  const dir = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
-  assert.ok(dir, 'BRIGHTWHEEL_ARCHIVE_CONFIG_DIR must be set for the whole test run');
+  // The import at the top of this file sets the variable when `pnpm test`'s --import did
+  // not, and assertIsolatedConfigDir refuses a value that names a real config location.
+  // Without both, every test that starts the setup UI writes the mock session over the
+  // developer's own.
+  const dir = assertIsolatedConfigDir();
   assert.ok(!dir.startsWith(join(homedir(), 'Library')), 'must not be under ~/Library');
   assert.ok(!dir.startsWith(join(homedir(), '.config')), 'must not be under ~/.config');
   assert.equal(configDir(), dir);
