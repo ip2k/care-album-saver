@@ -54,9 +54,9 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 94 tests passing, no network required (`pnpm test`). CI runs the same suite on Ubuntu,
+- 121 tests passing, no network required (`pnpm test`). CI runs the same suite on Ubuntu,
   macOS and Windows against Node 20, 22, 24 and 26. The win32 rehearsal
-  (`BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test`) is 94 tests, 92 passed, 2 skipped.
+  (`BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test`) is 121 tests, 119 passed, 2 skipped.
 - **Proven by test, against real bytes:** what is written into a photo and into a video,
   read back out with ExifTool, and that the pixels and the video frame are unaltered; that
   every file is still saved, with a JSON sidecar, when ExifTool is absent; that a run which
@@ -67,8 +67,9 @@ stores, and this tool is deliberately local-only with no cloud component.
 - **The API surface is UNVERIFIED against live Brightwheel.** It was derived from six
   existing open-source scrapers, and no request from this project has ever reached the real
   service. `brightwheel-archive verify` now checks most of the shape read-only — three API
-  reads and two HEAD probes, downloading nothing and printing field names and types rather
-  than values — so running it, or capturing a HAR, is the top outstanding task. Do not tell
+  reads and one HEAD probe sent without the session, downloading nothing and printing field
+  names and types rather than values — so running it, or capturing a HAR, is the top
+  outstanding task. Do not tell
   a user this is production-ready until that is done. See docs/QUESTIONS-FOR-FABLE.md,
   section B, for what is settled and what is not.
 - **Settled 2026-09-22: there is one sign-in, and it is the pasted session.** `src/api/login.ts`
@@ -77,6 +78,13 @@ stores, and this tool is deliberately local-only with no cloud component.
   gone. The argument for not reviving it is in QUESTIONS-FOR-FABLE A1: Brightwheel enforces
   2FA, so unattended password login is impossible, and teaching a parent to type their real
   password into other people's software is the habit phishing depends on.
+
+- **Two directories must be redirected before any test or throwaway script runs**, not one:
+  `BRIGHTWHEEL_ARCHIVE_CONFIG_DIR` for the session and `BRIGHTWHEEL_ARCHIVE_DIR` for the
+  photos. `scripts/test-env.js` sets both and refuses anything outside the temp directory;
+  import it first in any test that touches either. Forgetting the second one put mock
+  photographs in a developer's home folder three times on 2026-09-22, each time from code
+  that believed the first one covered it.
 
 ## Repository hygiene
 
@@ -88,7 +96,7 @@ The global rule is an audit every ~10,000 lines added since the last mark, so th
 is due at roughly **12,600** lines. An earlier edit here wrote 15,000, which did not follow
 from any recorded mark; 2,593 + 10,000 is where it actually falls.
 
-At 9f2eea2 the tree is **4,945** source lines — 2,352 added since the mark, so the audit is
+At c6cc452 the tree is **5,356** source lines — 2,763 added since the mark, so the audit is
 not yet due.
 
 Counting method, since the original figure does not say: `wc -l` over every `.ts` file
