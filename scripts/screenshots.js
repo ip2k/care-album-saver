@@ -238,9 +238,10 @@ const main = async () => {
   await page.click('#btn-connect');
   await page.waitForSelector('.kid', { timeout: 10000 });
   await page.waitForTimeout(400);
-  // Taller than the default: step 1's first instruction is a link long enough to wrap, so
-  // everything below it sits lower than it used to and the shot no longer fits in 1100.
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1220 });
+  // Taller than the default, for two reasons that stack: step 1's first instruction is now
+  // a link long enough to wrap, and the cookie-help disclosure sits under it. Everything
+  // below starts lower than it used to.
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1280 });
   await page.evaluate(() => document.querySelector('#card-connect').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
   await annotate(page, [
@@ -260,7 +261,7 @@ const main = async () => {
   await saved;
   await page.waitForFunction(() => document.querySelector('#config-msg')?.textContent === 'Saved', { timeout: 5000 });
   // Taller for the same reason as shot 2.
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1300 });
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1400 });
   await page.evaluate(() => document.querySelector('details').setAttribute('open', ''));
   await page.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
@@ -301,7 +302,7 @@ const main = async () => {
 
   // 5 — dark mode, on the step with the most controls. Both schemes are first-class.
   // Taller for the same reason as shot 2.
-  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1260 }, deviceScaleFactor: 2, colorScheme: 'dark' });
+  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1320 }, deviceScaleFactor: 2, colorScheme: 'dark' });
   await dark.goto(ui.url, { waitUntil: 'networkidle' });
   await dark.waitForSelector('.kid', { timeout: 10000 });
   await dark.waitForTimeout(700);
