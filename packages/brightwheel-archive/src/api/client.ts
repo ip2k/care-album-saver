@@ -60,12 +60,18 @@ export class BrightwheelClient {
     };
   }
 
-  /** Headers suitable for fetching a media file from the CDN. */
+  /**
+   * Headers for fetching a media file.
+   *
+   * Deliberately WITHOUT the session cookie. Media lives on a CDN behind presigned URLs,
+   * and sending the Brightwheel cookie to it is actively harmful: the CDN rejects the
+   * request with a permission error. The URL's own signature is the authorisation.
+   *
+   * It is also the safer default — the session is an account-takeover credential, so it
+   * should reach exactly one origin (the API) and no other.
+   */
   mediaHeaders(): Record<string, string> {
-    return {
-      Cookie: `${SESSION_COOKIE}=${this.options.session.expose()}`,
-      'User-Agent': 'brightwheel-archive (+https://github.com/)',
-    };
+    return { 'User-Agent': 'brightwheel-archive (+https://github.com/)' };
   }
 
   private async request(path: string, context: string): Promise<unknown> {
@@ -136,10 +142,25 @@ export class BrightwheelClient {
    */
   async *activities(
     studentId: string,
-    opts: { pageSize?: number; maxPages?: number; stopBefore?: Date } = {},
+    opts: {
+      pageSize?: number;
+      maxPages?: number;
+      stopBefore?: Date;
+      /**
+       * Server-side filter, e.g. 'ac_photo'. Brightwheel's feed carries check-ins, naps,
+       * meals and notes as well as media; filtering at the server means we do not page
+       * through — or parse — thousands of records we would only throw away.
+       */
+      actionType?: string;
+      /** Server-side date window. Turns an incremental run into one short request. */
+      since?: Date;
+      until?: Date;
+    } = {},
   ): AsyncGenerator<MediaActivity[], void, void> {
     const pageSize = opts.pageSize ?? 100;
     const maxPages = opts.maxPages ?? 500;
+    const day = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
     for (let page = 0; page < maxPages; page++) {
       const query = new URLSearchParams({
@@ -147,6 +168,9 @@ export class BrightwheelClient {
         page_size: String(pageSize),
         include_parent_actions: 'false',
       });
+      if (opts.actionType) query.set('action_type', opts.actionType);
+      if (opts.since) query.set('start_date', day(opts.since));
+      if (opts.until) query.set('end_date', day(opts.until));
       const raw = await this.request(
         `/students/${encodeURIComponent(studentId)}/activities?${query}`,
         `activities page ${page}`,

@@ -27,6 +27,8 @@ export interface MockOptions {
   forceExpired?: boolean;
 }
 
+const SESSION_COOKIE_NAME = '_brightwheel_v2';
+
 const STUDENTS = [
   { id: 'stu-aaa-111', first_name: 'Robin', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
   { id: 'stu-bbb-222', first_name: 'Sam', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
@@ -129,8 +131,18 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
 
     // Media is served regardless of path shape, so signed-URL churn is exercised.
     if (url.pathname.startsWith('/media/')) {
-      if (!authed) {
-        res.writeHead(403).end('forbidden');
+      // Mirror the real CDN: the URL signature IS the authorisation, and presenting the
+      // Brightwheel session cookie is rejected outright. Asserting that here turns a
+      // subtle production-only failure into a test failure — sending the session to the
+      // media host is both broken and a needless exposure of an account-takeover
+      // credential to a second origin.
+      if (cookie.includes(`${SESSION_COOKIE_NAME}=`)) {
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        res.end('permission denied: do not send the session cookie to the media host');
+        return;
+      }
+      if (!url.searchParams.get('signature')) {
+        res.writeHead(403, { 'content-type': 'text/plain' }).end('missing signature');
         return;
       }
       const id = url.pathname.replace('/media/', '').replace(/\.[a-z0-9]+$/i, '');
