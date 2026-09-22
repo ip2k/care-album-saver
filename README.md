@@ -104,10 +104,21 @@ this is hard:
   `.expose()` on purpose.
 - **`.gitignore` blocks** browser captures (`.har`), cookie files, `.env` files, session
   files and downloaded photos.
-- **A secret scanner runs on every pull request**, with a custom rule that recognises a
-  Brightwheel session specifically. Generic scanners do not know what one looks like.
-- **Everything published to npm is an allowlist**, so a stray local file cannot be
-  included by accident.
+- **A secret scanner runs on every pull request** in this repository, with a custom rule
+  that recognises a Brightwheel session specifically. Be aware of two real limits: GitHub's
+  own built-in secret scanning does **not** know what a Brightwheel session looks like
+  (custom patterns are a paid feature), and **GitHub Actions do not run in a fork** until
+  the fork's owner switches them on. So treat the scanner as a helpful net, not a guarantee.
+- **Everything published to npm is an allowlist** (`files` in `package.json`), so a stray
+  local file cannot be included by accident. Note for contributors: never add an
+  `.npmignore` — it completely overrides `.gitignore` and silently re-includes files the
+  allowlist was protecting.
+
+**If you think your session has leaked, assume you cannot delete it.** Anything pushed to a
+GitHub fork stays retrievable through the upstream repository's network even after you
+delete the commit or the fork — GitHub considers this expected behaviour. The only real fix
+is to make the leaked session useless: sign out of Brightwheel everywhere from their
+website, which invalidates it immediately. Do that first, before trying to rewrite history.
 
 ---
 

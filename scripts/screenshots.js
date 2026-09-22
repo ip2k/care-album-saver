@@ -65,7 +65,7 @@ async function annotate(page, notes) {
       Object.assign(box.style, {
         position: 'absolute',
         width: '236px',
-        top: `${(item.labelTop ?? ay) - 20}px`,
+        top: `${ay + (item.offset ?? 0) - 20}px`,
         [onRight ? 'left' : 'right']: onRight
           ? `${r.right + 64}px`
           : `${document.documentElement.scrollWidth - r.left + 64}px`,
@@ -84,7 +84,7 @@ async function annotate(page, notes) {
       const bx = onRight ? r.right + 64 : document.documentElement.scrollWidth - (document.documentElement.scrollWidth - r.left + 64);
       const line = document.createElementNS(svgNS, 'path');
       const startX = onRight ? bx - 6 : r.left + 6 + 0;
-      const startY = (item.labelTop ?? ay) + 2;
+      const startY = ay + (item.offset ?? 0) + 2;
       const midX = onRight ? (ax + startX) / 2 : (ax + startX) / 2;
       line.setAttribute(
         'd',
@@ -129,15 +129,15 @@ const main = async () => {
   const mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 14 });
   const ui = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2, colorScheme: 'light' });
 
   process.stdout.write('Capturing screenshots (all data is synthetic):\n');
   await page.goto(ui.url, { waitUntil: 'networkidle' });
 
   // 1 — the first thing a parent sees.
   await annotate(page, [
-    { selector: '#card-connect .steps', text: 'Four steps, in plain language. You sign in on Brightwheel’s own site — this tool never sees your password.', labelTop: 250 },
-    { selector: '#cookie', text: 'Paste the one value here. It is stored on your computer only.', labelTop: 430, side: 'left' },
+    { selector: '#howto', text: 'Four steps, in plain language. You sign in on Brightwheel’s own site — this tool never sees your password.', offset: 0 },
+    { selector: '#cookie', text: 'Paste the one value here. It is stored on your computer only.', offset: 0, side: 'left' },
   ]);
   await shot(page, '01-connect');
 
@@ -147,8 +147,8 @@ const main = async () => {
   await page.waitForSelector('.kid', { timeout: 10000 });
   await page.waitForTimeout(400);
   await annotate(page, [
-    { selector: '#num-1', text: 'A green tick means this step is done.', labelTop: 150, side: 'left' },
-    { selector: '#kids', text: 'Your children, read from your own account. Brightwheel never shows this tool anybody else’s child.', labelTop: 470 },
+    { selector: '#num-1', text: 'A green tick means this step is done.', offset: 0, side: 'left' },
+    { selector: '#kids', text: 'Your children, read from your own account. Brightwheel never shows this tool anybody else’s child.', offset: 0 },
   ]);
   await shot(page, '02-connected');
 
@@ -157,9 +157,9 @@ const main = async () => {
   await page.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'center' }));
   await page.waitForTimeout(300);
   await annotate(page, [
-    { selector: '#tagChildName', text: 'Writes your child’s name into the photo so Photos and Immich can find them by name.', labelTop: 120, side: 'left' },
-    { selector: '#stripLocation', text: 'On by default: removes GPS coordinates so a shared file cannot reveal a location.', labelTop: 300, side: 'left' },
-    { selector: 'details summary', text: 'Sensible defaults up front. Everything adjustable is tucked in here.', labelTop: 430 },
+    { selector: '#tagChildName', text: 'Writes your child’s name into the photo so Photos and Immich can find them by name.', offset: -10, side: 'left' },
+    { selector: '#stripLocation', text: 'On by default: removes GPS coordinates so a shared file cannot reveal a location.', offset: 0, side: 'left' },
+    { selector: 'details summary', text: 'Sensible defaults up front. Everything adjustable is tucked in here.', offset: 0 },
   ]);
   await shot(page, '03-options');
 
@@ -170,15 +170,28 @@ const main = async () => {
   }, photoDir);
   await page.waitForTimeout(500);
   await page.click('#btn-run');
-  await page.waitForFunction(() => document.querySelector('#s-saved').textContent !== '0', { timeout: 60000 });
-  await page.waitForTimeout(3500);
+  // Wait for the completion banner, not merely for the first file to land — otherwise the
+  // "finished" screenshot shows a run still in progress.
+  await page.waitForFunction(
+    () => document.querySelector('#run-result')?.textContent?.trim().length > 0,
+    { timeout: 120000 },
+  );
+  await page.waitForTimeout(600);
   await page.evaluate(() => document.querySelector('#card-run').scrollIntoView({ block: 'center' }));
   await page.waitForTimeout(300);
   await annotate(page, [
-    { selector: '.stats', text: 'Saved, already-had, and failed. A second run saves nothing new — it recognises what it already has.', labelTop: 250 },
-    { selector: '.privacy', text: 'The privacy summary is on the page itself, not buried in a document nobody reads.', labelTop: 470, side: 'left' },
+    { selector: '.stats', text: 'Saved, already-had, and failed. A second run saves nothing new — it recognises what it already has.', offset: 0 },
+    { selector: '.privacy', text: 'The privacy summary is on the page itself, not buried in a document nobody reads.', offset: 0, side: 'left' },
   ]);
   await shot(page, '04-done');
+
+  // 5 — dark mode. Both schemes are first-class, so both are documented.
+  const dark = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2, colorScheme: 'dark' });
+  await dark.goto(ui.url, { waitUntil: 'networkidle' });
+  await dark.waitForTimeout(700);
+  await dark.screenshot({ path: join(OUT, '05-dark.png') });
+  process.stdout.write('  docs/images/05-dark.png\n');
+  await dark.close();
 
   await browser.close();
   await ui.close();
