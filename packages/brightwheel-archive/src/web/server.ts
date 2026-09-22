@@ -6,6 +6,7 @@ import { loadConfig, loadSession, normaliseCookieInput, saveConfig, saveSession,
 import { Secret, scrub } from '../secrets.js';
 import { sync, type SyncProgress } from '../sync.js';
 import { checkArchiveDir } from '../safety.js';
+import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
 import { PAGE } from './page.js';
 
 /**
@@ -26,6 +27,11 @@ import { PAGE } from './page.js';
  *
  *  4. Every request carries a one-time token printed by the CLI. Other local accounts and
  *     other processes on a shared computer cannot reach the UI without it.
+ *
+ * Two of the routes below — /api/choose-folder and /api/open-folder — make a process start
+ * on the parent's machine, which is a step up from reading and writing this tool's own
+ * files. They are guarded by all four of the controls above and by two more of their own;
+ * the reasoning is written out at the routes themselves.
  */
 
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -71,6 +77,12 @@ export interface WebUiOptions {
   port?: number;
   baseUrl?: string;
   openBrowser?: boolean;
+  /**
+   * How the operating system's folder chooser and file manager are launched. The suite
+   * passes a stand-in, because no test can click a real dialog and none should open windows
+   * on the machine running it. Nothing in the product passes anything here.
+   */
+  native?: NativeOptions;
 }
 
 export interface WebUiHandle {
@@ -177,6 +189,51 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     return { ok: true, resolved: known.every((s) => chosen.includes(s.id)) ? [] : chosen };
   };
 
+  /**
+   * Validate a settings change and store it.
+   *
+   * Shared by /api/config and /api/choose-folder, so that a folder picked from the
+   * operating system's dialog meets exactly the refusals a typed one does — the cloud-folder
+   * warning included. A picker with its own, gentler path check would be a way around them.
+   */
+  type PatchResult =
+    | { ok: true; config: Config; warning?: string }
+    | { ok: false; error: string; field: 'archiveDir' | 'includeStudents' };
+
+  const applyConfigPatch = async (patch: Partial<Config>): Promise<PatchResult> => {
+    // Never persist a destination without checking it. This endpoint previously
+    // accepted any path at all and the tool wrote a child's photos there.
+    let warning: string | undefined;
+    if (typeof patch.archiveDir === 'string') {
+      const verdict = checkArchiveDir(patch.archiveDir);
+      if (!verdict.ok) return { ok: false, error: verdict.error ?? 'That folder cannot be used.', field: 'archiveDir' };
+      patch.archiveDir = verdict.resolved;
+      warning = verdict.warning;
+    }
+    if (patch.includeStudents !== undefined) {
+      const verdict = await checkIncludeStudents(patch.includeStudents);
+      if (!verdict.ok) return { ok: false, error: verdict.error, field: 'includeStudents' };
+      patch.includeStudents = verdict.resolved;
+    }
+    const config = await withConfigLock(async () => {
+      const merged = { ...(await loadConfig()), ...patch };
+      // /api/children reads a stale selection as "all"; write it down as that the first
+      // time the file is touched, so the two never disagree. Only possible once the
+      // live list has been read — the cache is not refreshed for this.
+      if (children && selectionIsStale(merged, children)) merged.includeStudents = [];
+      await saveConfig(merged);
+      return merged;
+    });
+    return { ok: true, config, warning };
+  };
+
+  /**
+   * Whether a folder chooser is on screen. One at a time: the dialog blocks until it is
+   * answered, so a second click would leave two modal windows fighting for the parent's
+   * attention and two processes waiting on them.
+   */
+  let choosing = false;
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Nothing here may ever be cached: the pages list children's names and photos.
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -256,36 +313,83 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const patch = JSON.parse(await readBody(req)) as Partial<Config>;
-        // Never persist a destination without checking it. This endpoint previously
-        // accepted any path at all and the tool wrote a child's photos there.
-        let warning: string | undefined;
-        if (typeof patch.archiveDir === 'string') {
-          const verdict = checkArchiveDir(patch.archiveDir);
-          if (!verdict.ok) {
-            json(400, { ok: false, error: verdict.error, field: 'archiveDir' });
-            return;
-          }
-          patch.archiveDir = verdict.resolved;
-          warning = verdict.warning;
+        const saved = await applyConfigPatch(patch);
+        if (!saved.ok) {
+          json(400, { ok: false, error: saved.error, field: saved.field });
+          return;
         }
-        if (patch.includeStudents !== undefined) {
-          const verdict = await checkIncludeStudents(patch.includeStudents);
-          if (!verdict.ok) {
-            json(400, { ok: false, error: verdict.error, field: 'includeStudents' });
-            return;
-          }
-          patch.includeStudents = verdict.resolved;
+        json(200, { ok: true, config: saved.config, warning: saved.warning });
+        return;
+      }
+
+      /**
+       * Open the operating system's folder chooser and store what comes back.
+       *
+       * This is the endpoint that makes a process start, so: what stops a website the
+       * parent happens to have open from reaching it?
+       *
+       *  - It is POST, so it cannot be triggered by an <img>, a <link>, a redirect or a
+       *    plain link — the shapes a page can emit without any cooperation from the browser.
+       *  - A cross-origin POST from a page is either blocked before it is sent (no CORS
+       *    preflight is answered here) or arrives carrying Sec-Fetch-Site: cross-site and an
+       *    Origin header. crossSite(), which runs above every route, refuses on either.
+       *  - The Host allowlist stops the DNS-rebinding variant, where the attacker's own
+       *    domain resolves to 127.0.0.1 so the browser considers the request same-origin.
+       *  - The token settles the rest: a page that guessed the port still cannot read the
+       *    24 random bytes printed in the parent's terminal, and a form POST it could send
+       *    blind would arrive without them.
+       *  - And one of its own: only one dialog may be open at a time, so even a request
+       *    that somehow got through cannot paper the screen with choosers.
+       *
+       * What the dialog returns is then a path like any other. It is handed to the same
+       * applyConfigPatch as a typed one, which is what keeps checkArchiveDir's refusals
+       * meaningful; and it is never passed to a shell — see src/native.ts.
+       */
+      if (req.method === 'POST' && url.pathname === '/api/choose-folder') {
+        if (choosing) {
+          json(409, { ok: false, error: 'A folder chooser is already open. Answer that one first.' });
+          return;
         }
-        const config = await withConfigLock(async () => {
-          const merged = { ...(await loadConfig()), ...patch };
-          // /api/children reads a stale selection as "all"; write it down as that the first
-          // time the file is touched, so the two never disagree. Only possible once the
-          // live list has been read — the cache is not refreshed for this.
-          if (children && selectionIsStale(merged, children)) merged.includeStudents = [];
-          await saveConfig(merged);
-          return merged;
-        });
-        json(200, { ok: true, config, warning });
+        choosing = true;
+        let choice;
+        try {
+          choice = await chooseFolder(options.native);
+        } finally {
+          choosing = false;
+        }
+        if (!choice.ok && choice.cancelled) {
+          // Closing the dialog is an answer, not a failure, and nothing changes.
+          json(200, { ok: true, cancelled: true });
+          return;
+        }
+        if (!choice.ok) {
+          // A computer with no chooser is not a broken request: it is the answer, and the
+          // typed field is still there. 200 with the reason, so the page can say it plainly.
+          json(200, { ok: false, error: scrub(choice.error) });
+          return;
+        }
+        const saved = await applyConfigPatch({ archiveDir: choice.path });
+        if (!saved.ok) {
+          json(400, { ok: false, error: saved.error, field: saved.field });
+          return;
+        }
+        json(200, { ok: true, config: saved.config, warning: saved.warning });
+        return;
+      }
+
+      /**
+       * Show the archive folder in the file manager — "where did my photos go", answered
+       * by taking the parent there.
+       *
+       * The path comes from saved settings and NEVER from the request. The body is not read
+       * at all, which is the point: there is no input for a caller to steer, so this cannot
+       * be turned into "open anything on this machine" even by something holding the token.
+       * The guards listed on /api/choose-folder apply here in full.
+       */
+      if (req.method === 'POST' && url.pathname === '/api/open-folder') {
+        const config = await loadConfig();
+        const opened = await openFolder(config.archiveDir, options.native);
+        json(200, opened.ok ? { ok: true, path: config.archiveDir } : { ok: false, error: scrub(opened.error), path: config.archiveDir });
         return;
       }
 
