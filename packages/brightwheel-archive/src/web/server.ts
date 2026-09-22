@@ -7,6 +7,8 @@ import { Secret, scrub } from '../secrets.js';
 import { sync, type SyncProgress } from '../sync.js';
 import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
+import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
+import * as schedule from '../schedule.js';
 import { PAGE } from './page.js';
 
 /**
@@ -479,6 +481,123 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         // and will see the "stopped" phase arrive when the in-flight download is done.
         current.controller.abort();
         json(202, { ok: true });
+        return;
+      }
+
+      // ---------------------------------------------------------- the daily run
+      //
+      // Kept apart from /api/state on purpose. The state endpoint answers on every poll
+      // while a run is going — 700ms apart — and asking launchd or systemd whether a job
+      // exists is a process launch each time. This is asked when the page loads and when
+      // the parent changes something, which is when the answer can have changed.
+
+      if (req.method === 'GET' && url.pathname === '/api/schedule') {
+        const config = await loadConfig();
+        const session = await loadSession();
+        const state = await schedule.status();
+        json(200, {
+          ok: true,
+          schedule: state,
+          // "Already set up" is a session plus a schedule. Anything less is still setup,
+          // and the page must not open on a management view for a tool that has never run.
+          manage: Boolean(session) && state.installed,
+          proposed: await schedule.describe(state.time ?? config.schedule?.time ?? '19:00'),
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/schedule') {
+        const { time } = JSON.parse(await readBody(req)) as { time?: string };
+        if (!time || !schedule.parseTimeOfDay(time)) {
+          json(400, { ok: false, error: 'Choose a time of day first, as hours and minutes.', field: 'scheduleTime' });
+          return;
+        }
+        try {
+          json(200, { ok: true, schedule: await schedule.install(time) });
+        } catch (error) {
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+        }
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/schedule/off') {
+        try {
+          json(200, { ok: true, schedule: await schedule.remove() });
+        } catch (error) {
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+        }
+        return;
+      }
+
+      // ---------------------------------------------------------- looking after the archive
+      //
+      // Each of these reads the archive and its manifest. A run is doing the same thing at
+      // the same time, and the manifest is one file: letting the two overlap is how a
+      // repair writes a list that the run then overwrites, or the other way about. So they
+      // wait, and the page says why rather than failing silently.
+
+      if (req.method === 'POST' && url.pathname.startsWith('/api/maintenance/')) {
+        if (running) {
+          json(409, { ok: false, error: 'Photos are being saved right now. Wait for that to finish, then try again.' });
+          return;
+        }
+        const action = url.pathname.slice('/api/maintenance/'.length);
+        const config = await loadConfig();
+        try {
+          switch (action) {
+            case 'children': {
+              const session = await loadSession();
+              if (!session) {
+                json(400, { ok: false, error: 'Connect to your Brightwheel account first.' });
+                return;
+              }
+              const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl });
+              const check = await checkChildren(client, config);
+              // This call has just read the account, so whatever the cache above holds is
+              // the older answer of the two. Dropped rather than patched: it holds full
+              // Student records and this one holds names and ids, and a half-updated cache
+              // is what a stored selection is checked against when the page saves a tick.
+              children = null;
+              json(200, { ok: true, result: check });
+              return;
+            }
+            case 'archive':
+              json(200, { ok: true, result: await auditArchive(config) });
+              return;
+            case 'repair':
+              json(200, { ok: true, result: await repairManifest(config) });
+              return;
+            case 'duplicates':
+              // Reporting only. Removing is a separate request carrying the list back.
+              json(200, { ok: true, result: await findDuplicates(config) });
+              return;
+            case 'duplicates/remove': {
+              const { paths } = JSON.parse(await readBody(req)) as { paths?: unknown };
+              if (!Array.isArray(paths) || !paths.every((p) => typeof p === 'string' && p.length > 0)) {
+                json(400, { ok: false, error: 'Nothing was named for removal, so nothing was deleted.' });
+                return;
+              }
+              json(200, { ok: true, result: await removeDuplicates(config, { confirm: paths as string[] }) });
+              return;
+            }
+            default:
+              json(404, { ok: false, error: 'Not found' });
+              return;
+          }
+        } catch (error) {
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+          return;
+        }
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/open-folder') {
+        const config = await loadConfig();
+        try {
+          await openFolder(config.archiveDir);
+          json(200, { ok: true, archiveDir: config.archiveDir });
+        } catch (error) {
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+        }
         return;
       }
 

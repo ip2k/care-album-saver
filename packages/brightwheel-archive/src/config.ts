@@ -20,6 +20,30 @@ export interface Config {
   incremental: boolean;
   /** Children to include, by Brightwheel id. Empty means all of them. */
   includeStudents: string[];
+  /**
+   * The daily run, as this tool last set it up. `null` means there is none.
+   *
+   * The operating system's own scheduler is the authority on whether the job exists —
+   * `schedule.status()` asks it — but the answer to "what did we ask for, and where did we
+   * write it" has to be kept here. Without it the setup page could show that something is
+   * scheduled and not what time it runs, which is the one thing a parent wants to know.
+   */
+  schedule: ScheduleRecord | null;
+}
+
+/** Which of the operating system's schedulers is holding the daily run. */
+export type ScheduleMechanism = 'launchd' | 'systemd' | 'cron' | 'schtasks';
+
+export interface ScheduleRecord {
+  /** Time of day on this computer's own clock, 24-hour, as `HH:MM`. */
+  time: string;
+  mechanism: ScheduleMechanism;
+  /**
+   * The file or scheduler entry that holds it, spelled out so that a parent can find it —
+   * and delete it — years from now without this tool being installed.
+   */
+  location: string;
+  installedAt: string;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -32,6 +56,7 @@ export const DEFAULT_CONFIG: Config = {
   delayMs: 400,
   incremental: true,
   includeStudents: [],
+  schedule: null,
 };
 
 export async function loadConfig(): Promise<Config> {
