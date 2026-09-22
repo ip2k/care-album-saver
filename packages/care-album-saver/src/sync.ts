@@ -464,6 +464,21 @@ export async function sync(
         presumedExpired: new Set(),
       };
       let newest = cutOff;
+      /**
+       * When this child's walk began, and the ceiling on the cut-off it may leave behind.
+       *
+       * The cut-off is a maximum over dates the feed supplies, and nothing in the API says
+       * they are sane. One post dated in the future — a teacher's phone with the year set
+       * wrong, a typo in a date field — becomes a floor that no real post can ever beat,
+       * and from then on every incremental run reads three pages, decides the whole feed
+       * is older than the cut-off, and stops. Silently: the run says it finished, and the
+       * photographs it never looked at are simply never saved. Clamping to the moment the
+       * walk started costs nothing in the ordinary case, where every post is older than
+       * now anyway.
+       */
+      const walkStarted = new Date();
+      /** Posts dated later than this run, which is not a thing that should happen. */
+      let futureDated = 0;
       /** Failures this run could cure by trying again. Only these hold the cut-off back. */
       let worthRetrying = 0;
       /** The walk hit its page limit: it has not seen the end of this child's feed. */
@@ -506,6 +521,9 @@ export async function sync(
           }
 
           if (!newest || activity.postedAt > newest) newest = activity.postedAt;
+          // A day's grace: a clock a few minutes ahead, or a timezone read the other way,
+          // is not worth remarking on. A post dated next year is.
+          if (activity.postedAt.getTime() > walkStarted.getTime() + 24 * 3600 * 1000) futureDated += 1;
 
           if (manifest.has({ sourceId: `brightwheel:${activity.id}`, url: activity.url })) {
             result.skipped += 1;
@@ -634,7 +652,15 @@ export async function sync(
       // newest post is not a floor the next run may stand on. An item Brightwheel no longer
       // has is the exception, because no run can cure it; it is written down instead.
       if (!result.stopped && !truncated && newest && worthRetrying === 0) {
-        walked[student.id] = newest.toISOString();
+        // Never later than the moment this walk began: see `walkStarted`.
+        walked[student.id] = (newest > walkStarted ? walkStarted : newest).toISOString();
+      }
+      if (futureDated > 0 && result.warnings.length < 8) {
+        result.warnings.push(
+          `${student.fullName}: ${futureDated} post${futureDated === 1 ? ' is' : 's are'} dated in the future, ` +
+            `which usually means a camera or a computer with its clock set wrong. ${futureDated === 1 ? 'It has' : 'They have'} been saved, ` +
+            `filed under the date given, and ${futureDated === 1 ? 'it has' : 'they have'} not been allowed to make later runs skip anything.`,
+        );
       }
       if (result.stopped) break;
     }
