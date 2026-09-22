@@ -52,3 +52,6 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Claude Code worktrees used by parallel agents
+.claude/worktrees/
