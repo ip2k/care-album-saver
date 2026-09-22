@@ -61,7 +61,8 @@ must_ignore "$TMP/child.jpeg"                    "photo"
 must_ignore "$TMP/child.heic"                    "photo"
 must_ignore "$TMP/clip.mp4"                      "video"
 must_ignore "$TMP/clip.mov"                      "video"
-must_ignore "Brightwheel Photos/a.jpg"           "default archive folder"
+must_ignore "Care Album Photos/a.jpg"            "default archive folder"
+must_ignore "Brightwheel Photos/a.jpg"           "default archive folder, pre-rename"
 
 echo
 echo "Everything else an archive run writes must be ignored:"
@@ -89,6 +90,7 @@ must_track "docs/GUIDE.md"                       "the guide"
 must_track "package.json"                        "a project manifest that is not archive.json"
 
 rm -rf "$TMP"
+rmdir "Care Album Photos" 2>/dev/null || true
 rmdir "Brightwheel Photos" 2>/dev/null || true
 
 echo
