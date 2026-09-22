@@ -1,13 +1,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, stat } from 'node:fs/promises';
-import { tmpdir, platform } from 'node:os';
+import { tmpdir, platform, homedir } from 'node:os';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
 import { request as httpRequest } from 'node:http';
 import {
   BrightwheelClient, startMockBrightwheel, sync, Secret, scrub, scrubDeep,
-  normaliseCookieInput, DEFAULT_CONFIG, writeSecureFile, startWebUi,
+  normaliseCookieInput, DEFAULT_CONFIG, writeSecureFile, startWebUi, checkArchiveDir,
 } from '../dist/index.js';
 
 let mock;
@@ -122,7 +122,7 @@ test('a full sync saves, organises, tags and does not re-download', async () => 
   const dir = await mkdtemp(join(tmpdir(), 'bw-test-'));
   const config = { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 };
 
-  const first = await sync(client(), config);
+  const first = await sync(client(), config, () => {}, { allowTemporaryDir: true });
   assert.equal(first.failed, 0, `failures: ${first.warnings.join('; ')}`);
   assert.equal(first.saved, 24, 'two children, twelve items each');
   assert.deepEqual(first.students, ['Robin Maple', 'Sam Maple']);
@@ -150,14 +150,14 @@ test('a full sync saves, organises, tags and does not re-download', async () => 
 
   // The second run must download nothing: the manifest matches on Brightwheel's media id,
   // even though the mock issues a brand-new signed URL on every single request.
-  const second = await sync(client(), config);
+  const second = await sync(client(), config, () => {}, { allowTemporaryDir: true });
   assert.equal(second.saved, 0, 'nothing new should be downloaded');
   assert.equal(second.skipped, 24, 'everything should be recognised as already held');
 });
 
 test('the manifest never records a local timestamp as a validator', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'bw-manifest-'));
-  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 });
+  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 }, () => {}, { allowTemporaryDir: true });
   const manifest = JSON.parse(await readFile(join(dir, 'archive.json'), 'utf8'));
   assert.equal(manifest.schema, 2);
   assert.ok(manifest.notes.includes('never used as validators'));
@@ -271,7 +271,7 @@ test('sensitive account fields are never written to disk', async () => {
   // invite_code and phone numbers. Prior art in this space writes the raw API JSON straight
   // to the working directory. Nothing we persist may contain any of it.
   const dir = await mkdtemp(join(tmpdir(), 'bw-leak-'));
-  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 });
+  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 }, () => {}, { allowTemporaryDir: true });
 
   const forbidden = ['raw_passcode', 'INVITE-NEVER-STORE', '4821', '+15550000000', '+15550000001'];
   const files = [];
@@ -297,7 +297,7 @@ test('the signed media URL is never persisted with its signature', async () => {
   // A signed CDN URL is a bearer credential for one child's photo. Storing it verbatim in
   // the manifest would put a working, shareable link to every photo in a plain-text file.
   const dir = await mkdtemp(join(tmpdir(), 'bw-sig-'));
-  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 });
+  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 }, () => {}, { allowTemporaryDir: true });
   const raw = await readFile(join(dir, 'archive.json'), 'utf8');
   assert.ok(!raw.includes('signature='), 'manifest must not contain a URL signature');
   assert.ok(!raw.includes('expires='), 'manifest must not contain a URL expiry');
@@ -366,6 +366,91 @@ test('the setup page is structurally sound and accessible', async () => {
     // No external origin may be referenced — the CSP forbids it and so should the markup.
     const externals = html.match(/(src|href)="https?:\/\/[^"]+"/g) || [];
     assert.deepEqual(externals, [], `page must not reference external origins: ${externals.join(', ')}`);
+  } finally {
+    await ui.close();
+  }
+});
+
+// ---------------------------------------------------------------- archive location
+
+test('temporary folders are refused — the OS deletes them', () => {
+  // This is the bug that put 632 files of a real child's photos in /tmp/pwned, where
+  // macOS would have quietly deleted them after three days.
+  for (const bad of ['/tmp/pwned', '/tmp/anything', '/private/tmp/x', '/var/tmp/y', tmpdir()]) {
+    const v = checkArchiveDir(bad);
+    assert.equal(v.ok, false, `${bad} should be refused`);
+    assert.match(v.error, /temporary folder/i);
+    assert.match(v.error, /delete/i, 'the message must say why, not just "no"');
+  }
+});
+
+test('system locations and over-broad targets are refused', () => {
+  for (const bad of ['/System/Library', '/usr/local/x', '/etc', '/']) {
+    assert.equal(checkArchiveDir(bad).ok, false, `${bad} should be refused`);
+  }
+  assert.equal(checkArchiveDir(homedir()).ok, false, 'the whole home folder is too broad');
+  assert.equal(checkArchiveDir('').ok, false, 'empty is refused');
+  assert.equal(checkArchiveDir('relative/path').ok, true, 'relative resolves against cwd, then is judged');
+});
+
+test('cloud-synced folders are allowed but warned about, never silently', () => {
+  const cases = [
+    [join(homedir(), 'Dropbox', 'Kids'), /Dropbox/],
+    [join(homedir(), 'Library', 'Mobile Documents', 'Photos'), /iCloud/],
+    [join(homedir(), 'OneDrive', 'Kids'), /OneDrive/],
+    [join(homedir(), 'Desktop', 'Kids'), /iCloud/],
+  ];
+  for (const [path, expected] of cases) {
+    const v = checkArchiveDir(path);
+    assert.equal(v.ok, true, `${path} should be permitted`);
+    assert.ok(v.warning, `${path} should warn`);
+    assert.match(v.warning, expected);
+  }
+  // A plain folder gets no warning at all.
+  const plain = checkArchiveDir(join(homedir(), 'Brightwheel Photos'));
+  assert.equal(plain.ok, true);
+  assert.equal(plain.warning, undefined);
+});
+
+test('the archive and every folder in it are created owner-only', { skip: platform() === 'win32' }, async () => {
+  // Every file carries the child's name in its metadata, so these are identified
+  // photographs. Other accounts on a shared family computer must not be able to read them.
+  const dir = await mkdtemp(join(tmpdir(), 'bw-mode-'));
+  await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 }, () => {}, {
+    allowTemporaryDir: true,
+  });
+
+  const checked = [];
+  const walk = async (d) => {
+    checked.push(d);
+    for (const entry of await readdir(d, { withFileTypes: true })) {
+      if (entry.isDirectory()) await walk(join(d, entry.name));
+    }
+  };
+  await walk(join(dir, 'Robin-Maple'));
+  assert.ok(checked.length >= 2, 'expected child and week folders');
+  for (const d of checked) {
+    const mode = (await stat(d)).mode & 0o777;
+    assert.equal(mode, 0o700, `${d} is ${mode.toString(8)}, expected 700`);
+  }
+});
+
+test('the web config endpoint refuses a temporary destination', async () => {
+  const ui = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
+  try {
+    const res = await fetch(`http://127.0.0.1:${ui.port}/api/config?token=${ui.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ archiveDir: '/tmp/pwned' }),
+    });
+    assert.equal(res.status, 400, 'must not accept a temp path');
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.match(body.error, /temporary folder/i);
+
+    // And it must not have been written to disk.
+    const state = await (await fetch(`http://127.0.0.1:${ui.port}/api/state?token=${ui.token}`)).json();
+    assert.notEqual(state.config.archiveDir, '/tmp/pwned');
   } finally {
     await ui.close();
   }

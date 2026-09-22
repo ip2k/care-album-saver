@@ -25,3 +25,4 @@ export { applyMetadata, buildTags, writeJsonSidecar } from './metadata.js';
 export { startWebUi, type WebUiHandle } from './web/server.js';
 export { startMockBrightwheel, type MockServer } from './mock/server.js';
 export { verify, formatReport, type VerifyReport } from './verify.js';
+export { checkArchiveDir, ARCHIVE_DIR_MODE, type PathVerdict } from './safety.js';

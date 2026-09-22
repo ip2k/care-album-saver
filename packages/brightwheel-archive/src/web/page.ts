@@ -504,8 +504,16 @@ $('btn-save-config').onclick = async () => {
   };
   const r = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
   const d = await r.json();
-  show($('config-msg'), d.ok ? 'ok' : 'err', d.ok ? 'Settings saved.' : 'Could not save those settings.');
-  if (d.ok) $('p-dir').textContent = d.config.archiveDir;
+  if (!d.ok) {
+    show($('config-msg'), 'err', esc(d.error || 'Could not save those settings.'));
+    $('archiveDir').setAttribute('aria-invalid', 'true');
+    $('archiveDir').focus();
+    return;
+  }
+  $('archiveDir').setAttribute('aria-invalid', 'false');
+  show($('config-msg'), d.warning ? 'warn' : 'ok', d.warning ? esc(d.warning) : 'Settings saved.');
+  $('p-dir').textContent = d.config.archiveDir;
+  $('archiveDir').value = d.config.archiveDir;
 };
 
 $('btn-run').onclick = async () => {
