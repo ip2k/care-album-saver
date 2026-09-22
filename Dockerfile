@@ -7,7 +7,7 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json ./
 COPY packages/media-ferry/package.json packages/media-ferry/
-COPY packages/brightwheel-archive/package.json packages/brightwheel-archive/
+COPY packages/care-album-saver/package.json packages/care-album-saver/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY packages ./packages
 RUN pnpm build && pnpm prune --prod
@@ -36,7 +36,7 @@ COPY --from=build /app/packages ./packages
 RUN mkdir -p /config /photos && chown node:node /config /photos
 # Run as an unprivileged user. The `node` user ships with the base image.
 USER node
-ENV BRIGHTWHEEL_ARCHIVE_CONFIG_DIR=/config
+ENV CARE_ALBUM_CONFIG_DIR=/config
 VOLUME ["/config", "/photos"]
-ENTRYPOINT ["node", "packages/brightwheel-archive/dist/cli.js"]
+ENTRYPOINT ["node", "packages/care-album-saver/dist/cli.js"]
 CMD ["run", "--dir", "/photos"]

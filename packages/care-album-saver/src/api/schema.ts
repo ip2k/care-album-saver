@@ -26,7 +26,7 @@ export class ApiShapeError extends Error {
 }
 
 export class SessionExpiredError extends Error {
-  constructor(message = 'Your Brightwheel session has expired. Run `brightwheel-archive login` to sign in again.') {
+  constructor(message = 'Your Brightwheel session has expired. Run `care-album-saver login` to sign in again.') {
     super(message);
     this.name = 'SessionExpiredError';
   }
@@ -61,7 +61,7 @@ function req(obj: Record<string, unknown>, key: string, context: string): unknow
     throw new ApiShapeError(
       `Brightwheel's response for ${context} is missing the "${key}" field. ` +
         `The API may have changed; please open an issue with the output of ` +
-        `\`brightwheel-archive doctor\`.`,
+        `\`care-album-saver doctor\`.`,
       context,
     );
   }

@@ -96,7 +96,7 @@ const SCRUB_PATTERNS: [RegExp, string][] = [
 
 /**
  * Remove anything that looks like a credential from arbitrary text.
- * Applied to every log line and to the output of `brightwheel-archive bug-report`.
+ * Applied to every log line and to the output of `care-album-saver bug-report`.
  */
 export function scrub(text: string): string {
   let out = text;

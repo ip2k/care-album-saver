@@ -29,7 +29,7 @@ A window with text in it appears. You type commands here and press Enter.
 Type this and press Enter:
 
 ```sh
-npx brightwheel-archive setup
+npx care-album-saver setup
 ```
 
 The first time, it asks to download the tool. Say yes. Then it prints a link like
@@ -114,7 +114,7 @@ Open **Advanced options** for the folder, the layout and the rest.
 | Keep the teacher's note | **On** | Saves the caption as the photo's description. It only applies while **Label photos with names** is on, because a note names people. |
 | Remove location information | **On** | Strips GPS coordinates so a shared photo cannot reveal where it was taken. On the one account this has been checked against, Brightwheel's photos carry no coordinates at all, so this is a precaution rather than a repair. This one needs ExifTool: without it nothing inside the photo can be changed, so any coordinates stay — and the run tells you so. |
 | Folder layout | Child, then week | Or one folder per week with all children together, or one folder per week with a folder for each child inside it. |
-| Where to save the photos | `~/Brightwheel Photos` | **Avoid iCloud Drive, Dropbox or OneDrive folders** unless you want copies on their servers. |
+| Where to save the photos | `~/Care Album Photos` | **Avoid iCloud Drive, Dropbox or OneDrive folders** unless you want copies on their servers. |
 | Only look for new photos | **On** | Much faster. Turn off to re-check from the beginning. |
 | Save an extra settings file beside each photo | **Off** | A small `.xmp` file that photo-editing programs such as Lightroom and darktable can read. Leave it off unless you use one of them. |
 
@@ -124,8 +124,8 @@ who posted it, whichever way the switches are set — it is the record that keep
 readable in twenty years. It stays on your computer when you share a photo, which is the
 point of it; it is also the reason not to paste one into a public bug report.
 
-> **From the terminal instead:** `npx brightwheel-archive children` lists your children with
-> the id Brightwheel uses for each, and `npx brightwheel-archive run --child "Sam Maple"`
+> **From the terminal instead:** `npx care-album-saver children` lists your children with
+> the id Brightwheel uses for each, and `npx care-album-saver run --child "Sam Maple"`
 > (or `--child <id>`, repeated for several) saves only those children's photos for that one
 > run. It does not change the choice you made on this page.
 
@@ -167,7 +167,7 @@ carries on from there instead of starting again.
 - **`Ctrl` + `C` in the black window** closes the setup assistant. If a run is going it is
   stopped first, in exactly the way the Stop button does, so the window takes a moment to
   close.
-- **`Ctrl` + `C` while `npx brightwheel-archive run` is going** (the terminal-only way to
+- **`Ctrl` + `C` while `npx care-album-saver run` is going** (the terminal-only way to
   save photos, below) prints *Stopping after the current photo…*, finishes that photo, and
   ends with *Run the same command again to carry on where it left off.*
 
@@ -180,7 +180,7 @@ again and can leave you a second copy of a photo or two, named `…-2.jpg`.
 ## What you end up with
 
 ```
-Brightwheel Photos/
+Care Album Photos/
 ├── archive.json                                   ← the list of what has been saved
 └── Robin Maple/
     └── 2026-W38/
@@ -213,7 +213,7 @@ crontab -e
 Add this line, save and close. It runs at 7pm daily:
 
 ```
-0 19 * * *  /usr/local/bin/npx brightwheel-archive run
+0 19 * * *  /usr/local/bin/npx care-album-saver run
 ```
 
 Use the full path to `npx`, not a bare `npx`: a scheduled job like this one looks for
@@ -226,12 +226,12 @@ terminal and paste what it prints — on a Mac with Homebrew it is often
 Open **Task Scheduler** → **Create Basic Task** → Daily → Start a program:
 
 - Program: `npx.cmd`
-- Arguments: `brightwheel-archive run`
+- Arguments: `care-album-saver run`
 
 The `.cmd` matters. Task Scheduler starts the program itself rather than going through a
 command prompt, so a bare `npx` sends it looking for `npx.exe`, which does not exist, and
 the task fails at once with *the system cannot find the file specified*. Setting Program to
-`cmd.exe` and Arguments to `/c npx brightwheel-archive run` works just as well.
+`cmd.exe` and Arguments to `/c npx care-album-saver run` works just as well.
 
 ### Docker
 
@@ -239,7 +239,7 @@ Only if you already use Docker — it is not the easy path, and there is no read
 to download. You build one yourself, once, from a copy of this project:
 
 ```sh
-docker build -t brightwheel-archive .
+docker build -t care-album-saver .
 ```
 
 Then, each time:
@@ -247,9 +247,9 @@ Then, each time:
 ```sh
 docker run --rm \
   --user "$(id -u):$(id -g)" \
-  -v ~/.config/brightwheel-archive:/config \
+  -v ~/.config/care-album-saver:/config \
   -v ~/Brightwheel\ Photos:/photos \
-  brightwheel-archive run --dir /photos
+  care-album-saver run --dir /photos
 ```
 
 `--dir /photos` is what sends the photos to the folder you mounted; without it they are
@@ -259,7 +259,7 @@ would supply `--dir` for you, but naming `run` at the end replaces it, so once y
 is what lets it read your session file and write into your folder on Linux; Docker Desktop
 on a Mac or Windows does not need it and is not harmed by it. The `/config` line above is
 the Linux location — on a Mac the session lives in
-`~/Library/Application Support/brightwheel-archive`, and `npx brightwheel-archive where`
+`~/Library/Application Support/care-album-saver`, and `npx care-album-saver where`
 prints the exact folder to mount.
 
 ---
@@ -270,7 +270,7 @@ Run this first. It checks everything and **never prints your session** — only 
 fingerprint of it:
 
 ```sh
-npx brightwheel-archive doctor
+npx care-album-saver doctor
 ```
 
 It is safe to paste into a bug report, with one thing to glance at first: it prints the full
@@ -283,12 +283,12 @@ your user account. Change that to something else if you would rather not show it
 | *That does not look like a Brightwheel session* | What you pasted was not a session value at all — most often a whole line of cookies copied from somewhere else. Go back to the `_brightwheel_v2` row and copy only what is in its **Value** column. |
 | *Your Brightwheel session has expired* — **straight after pasting a fresh value** | Probably not expired: the tool cannot tell a wrong value from an old one, so anything Brightwheel rejects is reported this way. The usual cause is copying the **Name** column (`_brightwheel_v2`) instead of the **Value** column beside it — the value is a long jumble of letters and numbers, not a word. Check that, then paste again. |
 | *Tick at least one child* | Every child is unticked. **Start saving** stays grey until you tick one — the tool will not run with nobody chosen. |
-| *That is a temporary folder, and your computer deletes those automatically* | The folder you typed is one the computer empties by itself, so it is refused rather than losing your photos months from now. Choose somewhere permanent, such as `~/Brightwheel Photos`. |
+| *That is a temporary folder, and your computer deletes those automatically* | The folder you typed is one the computer empties by itself, so it is refused rather than losing your photos months from now. Choose somewhere permanent, such as `~/Care Album Photos`. |
 | *This folder looks like it is inside Dropbox* (or iCloud Drive, OneDrive, Google Drive) | A warning, not a refusal: the folder is saved and the run will use it. It means a copy of every photo goes to that company as well. Fine if you meant it. |
-| *Could not reach the tool* | The black window it was started from has been closed. Start it again with `npx brightwheel-archive setup` and open the new link. |
+| *Could not reach the tool* | The black window it was started from has been closed. Start it again with `npx care-album-saver setup` and open the new link. |
 | *Looked through 40 of 312 updates* | Not a problem — this is the progress line. Brightwheel counts updates of every kind, so that total includes check-ins, naps and notes. It is not a number of photos, and most of them are not photos. |
 | *No children found on this Brightwheel account* | Make sure you signed in as the parent account, not a staff one. |
-| *ExifTool is not installed* | Harmless: every photo is still saved, and the dates and names go into the `.json` file beside it rather than inside it. Writing them *inside* needs the tool's own bundled copy, which comes with it automatically — so this message usually means the install skipped optional packages. Installing ExifTool on your computer by hand will **not** fix it; the tool only ever uses its own copy. Reinstalling normally (`npm install -g brightwheel-archive`, without `--omit=optional`) will. |
+| *ExifTool is not installed* | Harmless: every photo is still saved, and the dates and names go into the `.json` file beside it rather than inside it. Writing them *inside* needs the tool's own bundled copy, which comes with it automatically — so this message usually means the install skipped optional packages. Installing ExifTool on your computer by hand will **not** fix it; the tool only ever uses its own copy. Reinstalling normally (`npm install -g care-album-saver`, without `--omit=optional`) will. |
 | Photos in the wrong week | Please open an issue, and include three things: the photo's file name (`2026-09-18_093214_7f3a9b21.jpg`), the week folder it landed in (`2026-W38` — just that part, not the folder above it, which is your child's name), and the single line from the `.json` file beside it that starts `"postedAt"` (which holds
 the moment the photo was posted to Brightwheel — that is the only date there is; see the
 note below). That is everything needed to diagnose it, and none of it names anybody. **Please do not attach the whole `.json` file.** It also holds your child's name and Brightwheel id, the nursery's name, the teacher's note and who wrote it — and an issue tracker is a public web page that search engines index. |

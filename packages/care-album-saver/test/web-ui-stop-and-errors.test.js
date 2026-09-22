@@ -39,10 +39,10 @@ after(async () => { await mock?.close(); });
  * file one at a time, so there is no other test to pull the directory out from under.
  */
 async function freshConfigDir() {
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-ui-'));
+  process.env.CARE_ALBUM_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-ui-'));
   // loadSession() prefers this variable over the stored file, so a developer who has it
   // set in their shell would otherwise be "connected" in a directory holding no session.
-  delete process.env.BRIGHTWHEEL_SESSION;
+  delete process.env.CARE_ALBUM_SESSION;
   return assertIsolatedConfigDir();
 }
 
@@ -376,27 +376,27 @@ test('the page offers Stop only while a run is going, and reports a stopped run 
 // ---------------------------------------------------------------- test isolation
 
 test('the isolation guard allows only a throwaway directory, not merely "not one of three"', async () => {
-  const restore = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
-  const restoreScratch = process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
+  const restore = process.env.CARE_ALBUM_CONFIG_DIR;
+  const restoreScratch = process.env.CARE_ALBUM_TEST_SCRATCH;
   try {
     // Importing scripts/test-env.js fills the variable in only when it is unset, so a
     // stray value already naming the developer's own directory would sail straight
     // through it and this suite would write the mock's session over their real one.
     const refused = [
       // The three the guard used to know by name.
-      join(homedir(), 'Library', 'Application Support', 'brightwheel-archive'),
-      join(homedir(), '.config', 'brightwheel-archive'),
-      join(homedir(), 'AppData', 'Roaming', 'brightwheel-archive'),
+      join(homedir(), 'Library', 'Application Support', 'care-album-saver'),
+      join(homedir(), '.config', 'care-album-saver'),
+      join(homedir(), 'AppData', 'Roaming', 'care-album-saver'),
       // And the ones it did not, which is the point: anywhere in the home folder was
       // accepted as "isolated" purely because nobody had listed it.
-      join(homedir(), 'brightwheel-archive'),
-      join(homedir(), 'Developer', 'brightwheel-archive', 'config'),
+      join(homedir(), 'care-album-saver'),
+      join(homedir(), 'Developer', 'care-album-saver', 'config'),
       join(homedir(), 'Brightwheel Photos'),
-      '/etc/brightwheel-archive',
+      '/etc/care-album-saver',
       'relative/not-even-absolute',
     ];
     for (const dir of refused) {
-      process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = dir;
+      process.env.CARE_ALBUM_CONFIG_DIR = dir;
       assert.throws(
         assertIsolatedConfigDir,
         /not a throwaway test directory|not a full path/,
@@ -404,30 +404,30 @@ test('the isolation guard allows only a throwaway directory, not merely "not one
       );
     }
 
-    delete process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
+    delete process.env.CARE_ALBUM_CONFIG_DIR;
     assert.throws(assertIsolatedConfigDir, /import scripts\/test-env\.js/);
 
     // What every test file actually does is accepted, or the guard is useless in the other
     // direction. mkdtemp's answer on a Mac is a symlinked spelling of the temp directory,
     // so this also pins that the comparison resolves both sides.
     const throwaway = await mkdtemp(join(tmpdir(), 'bw-guard-'));
-    process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = throwaway;
+    process.env.CARE_ALBUM_CONFIG_DIR = throwaway;
     assert.equal(assertIsolatedConfigDir(), throwaway);
 
     // The one escape hatch: somewhere outside the temp directory that its owner has said in
     // as many words is scratch space. It has to be said, and it only covers what it names.
     const elsewhere = join(homedir(), 'some-runner-scratch', 'bw-config');
-    process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = elsewhere;
+    process.env.CARE_ALBUM_CONFIG_DIR = elsewhere;
     assert.throws(assertIsolatedConfigDir, /throwaway test directory/, 'unmarked, so refused');
-    process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH = join(homedir(), 'some-runner-scratch');
+    process.env.CARE_ALBUM_TEST_SCRATCH = join(homedir(), 'some-runner-scratch');
     assert.equal(assertIsolatedConfigDir(), elsewhere);
-    process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = join(homedir(), 'Library', 'x');
+    process.env.CARE_ALBUM_CONFIG_DIR = join(homedir(), 'Library', 'x');
     assert.throws(assertIsolatedConfigDir, /throwaway test directory/, 'and covers only what it names');
 
     await rm(throwaway, { recursive: true, force: true });
   } finally {
-    process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = restore;
-    if (restoreScratch === undefined) delete process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
-    else process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH = restoreScratch;
+    process.env.CARE_ALBUM_CONFIG_DIR = restore;
+    if (restoreScratch === undefined) delete process.env.CARE_ALBUM_TEST_SCRATCH;
+    else process.env.CARE_ALBUM_TEST_SCRATCH = restoreScratch;
   }
 });

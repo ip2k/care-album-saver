@@ -2,6 +2,6 @@
   "files": [],
   "references": [
     { "path": "./packages/media-ferry" },
-    { "path": "./packages/brightwheel-archive" }
+    { "path": "./packages/care-album-saver" }
   ]
 }

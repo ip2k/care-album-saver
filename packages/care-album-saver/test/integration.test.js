@@ -21,10 +21,10 @@ const SESSION = 'test-session-value';
  * Windows has no POSIX file modes: a file simply inherits its parent folder's ACL. The
  * tests that assert 0600/0700 are skipped there with a reason that appears in the output,
  * because a silent pass would hide a regression on the platforms where the mode is the
- * whole protection. BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 lets a Mac or Linux machine
+ * whole protection. CARE_ALBUM_TEST_PLATFORM=win32 lets a Mac or Linux machine
  * rehearse the skip path before the change ever meets a real Windows runner.
  */
-const testPlatform = process.env.BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM || platform();
+const testPlatform = process.env.CARE_ALBUM_TEST_PLATFORM || platform();
 const posixOnly =
   testPlatform === 'win32' ? 'POSIX file modes do not exist on Windows; files inherit the parent ACL' : false;
 

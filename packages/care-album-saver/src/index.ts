@@ -10,7 +10,7 @@ export {
   type Student,
 } from './api/schema.js';
 export { Secret, scrub, scrubDeep } from './secrets.js';
-export { configDir, configPath, sessionPath, defaultArchiveDir, writeSecureFile } from './paths.js';
+export { configDir, legacyConfigDir, configPath, sessionPath, defaultArchiveDir, writeSecureFile } from './paths.js';
 export {
   DEFAULT_CONFIG,
   loadConfig,
