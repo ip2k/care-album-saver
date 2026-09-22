@@ -462,7 +462,7 @@ beside each photo instead of into the photo.
 ```sh
 pnpm install
 pnpm build
-pnpm test                        # 94 tests, no network needed
+pnpm test                        # 121 tests, no network needed
 ```
 
 One test file on its own:
@@ -475,7 +475,7 @@ CI runs the same suite on Ubuntu, macOS and Windows against Node 20, 22, 24 and 
 combinations (`.github/workflows/ci.yml`). Two of the tests assert owner-only file
 permissions, which Windows does not have; there they are reported as skipped with the reason
 printed, never quietly passed. `BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test` rehearses
-that on a Mac or Linux machine — 94 tests, 92 passed, 2 skipped.
+that on a Mac or Linux machine — 121 tests, 119 passed, 2 skipped.
 
 The guide's images come from `node scripts/screenshots.js`, which drives the real setup page
 in a real browser. It needs Chromium once: `pnpm exec playwright install chromium`.
