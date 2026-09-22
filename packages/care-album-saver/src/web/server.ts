@@ -467,9 +467,14 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
               baseUrl: options.baseUrl,
               delayMs: config.delayMs,
             });
-            lastResult = await sync(client, config, (p) => {
-              progress = p;
+            // Scrubbed on the way through, exactly as the CLI scrubs the same lines
+            // before printing them. These go to /api/state, which the page polls and
+            // renders: a warning built from an error somebody else's code wrote is the
+            // one place a credential could arrive in a line nobody expected to hold one.
+            const result = await sync(client, config, (p) => {
+              progress = { ...p, message: scrub(p.message) };
             }, { signal: controller.signal });
+            lastResult = { ...result, warnings: result.warnings.map(scrub) };
           } catch (error: unknown) {
             progress = {
               phase: 'error',
