@@ -50,7 +50,7 @@ wrote this — can see your photos, your child's name, or which nursery they go 
 
 ### What about my password?
 
-**This tool never asks for and never sees your Brightwheel password.**
+**By default, this tool never asks for and never sees your Brightwheel password.**
 
 You sign in on Brightwheel's own website, exactly as you always do, including the
 6-digit code they text or email you. Then you copy one value — a "session", which is
@@ -59,6 +59,13 @@ like a temporary ticket that says "this person is already signed in" — and pas
 That session is stored **on your computer only**, in your private settings folder, in a
 file only your user account can open. It is never sent anywhere except back to
 Brightwheel.
+
+There is also an **optional** sign-in that asks for your email, password and the 6-digit
+code directly, for people who find copying the session too fiddly. It is off by default and
+you have to choose it. If you do: your password is used only for the few seconds it takes
+to get a session, is never written to disk, and is never logged. We still suggest the
+default, because getting into the habit of typing your real password into other people's
+software is a bad habit to build — even when the software is honest.
 
 ### The setup page that opens in your browser
 
@@ -200,10 +207,36 @@ by an internal paginated endpoint, so this tool reads that endpoint directly ins
 driving a browser and simulating scrolling. That makes it fast, reliable, and gentle on
 Brightwheel's servers (one request at a time, with a pause between them).
 
-> **Not affiliated with or endorsed by Brightwheel.** This is an independent tool for
-> exporting your own family's data. It is provided as-is. Field names in an undocumented
-> API can change without warning; if that happens the tool stops with a clear message
-> rather than silently saving nothing.
+### Before you use this: Brightwheel's terms
+
+**Please read this part properly. We are not going to pretend the question does not exist.**
+
+Brightwheel's [Terms of Service](https://mybrightwheel.com/terms/) restrict automated
+access to their service. They prohibit anyone who *"Crawls, scrapes, or spiders any page,
+data, or portion of or relating to the Services or Content"* and who *"Copies or stores the
+Content or any portion thereof."* This tool does automated access, and it does store
+content.
+
+We make **no claim** that using it is permitted. That is between you and Brightwheel.
+Please read their terms yourself and decide. Use this at your own risk.
+
+What we can tell you plainly:
+
+- It only ever reads **your own account** — the photos of your own children.
+- It only **reads**. It never changes or deletes anything in your Brightwheel account.
+- It is deliberately gentle: one request at a time, with a pause between them. That is a
+  lighter load than scrolling the website yourself.
+
+We also want to correct something you may read elsewhere. Tools like this are sometimes
+justified by data-protection "portability" rights. **That argument does not hold here.**
+Brightwheel's privacy policy treats your child's photos as Customer Data that it processes
+*on behalf of the school*. That makes the school the data controller and Brightwheel the
+processor — and portability rights run against the controller. If you want a formal copy of
+your child's data, ask the school.
+
+> **Not affiliated with or endorsed by Brightwheel.** This is an independent tool, provided
+> as-is with no warranty. Field names in an undocumented API can change without warning; if
+> that happens the tool stops with a clear message rather than silently saving nothing.
 
 ### The two packages
 
