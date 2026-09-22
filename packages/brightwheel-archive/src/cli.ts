@@ -8,6 +8,7 @@ import { configDir, configPath, sessionPath } from './paths.js';
 import { scrub } from './secrets.js';
 import { sync } from './sync.js';
 import { startWebUi } from './web/server.js';
+import { formatReport, verify } from './verify.js';
 
 const HELP = `
 brightwheel-archive — save your own child's photos from Brightwheel
@@ -17,6 +18,7 @@ brightwheel-archive — save your own child's photos from Brightwheel
   brightwheel-archive run          Save any new photos
   brightwheel-archive children     List the children on your account
   brightwheel-archive doctor       Check that everything is working
+  brightwheel-archive verify       Check the Brightwheel API shape (read-only, no photos)
   brightwheel-archive where        Show where files are kept
 
 Options
@@ -131,6 +133,23 @@ async function main(): Promise<number> {
       }
       stdout.write(`  ExifTool:      ${exif}\n`);
       return check.ok ? 0 : 1;
+    }
+
+    case 'verify': {
+      const session = await loadSession();
+      if (!session) {
+        stdout.write('  Not signed in. Run: brightwheel-archive setup\n');
+        return 1;
+      }
+      try {
+        const report = await verify(session.session, { baseUrl });
+        stdout.write(formatReport(report));
+        stdout.write('  This output is safe to share.\n\n');
+        return report.sessionValid ? 0 : 1;
+      } catch (error) {
+        stdout.write(`\n  Verification failed: ${scrub(error instanceof Error ? error.message : String(error))}\n`);
+        return 1;
+      }
     }
 
     case 'run': {

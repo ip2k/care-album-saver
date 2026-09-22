@@ -334,6 +334,35 @@ test('the setup page is structurally sound and accessible', async () => {
     assert.ok(html.includes('prefers-reduced-motion'), 'needs reduced-motion handling');
     assert.ok(html.includes(':focus-visible'), 'needs a visible focus style');
 
+    // A run already in flight must resume polling when the page is reopened or reloaded.
+    // Without this the bar sits still, which reads as a hang that is not happening.
+    assert.match(html, /if \(state\.running\) poll\(\)/, 'reopening during a run must restart polling');
+
+    // Every server-supplied string reaching innerHTML must go through the escaper.
+    for (const sink of ['d.error', 'p.message', 'k.fullName', 'state.email']) {
+      assert.ok(html.includes('esc(' + sink + ')'), sink + ' must be escaped before innerHTML');
+    }
+
+    // Jargon a non-technical parent would not know, per HIG inclusion guidance.
+    // Checked against the visible copy only — script and style blocks carry developer
+    // comments, which no user ever reads.
+    // Strip scripts, styles, comments AND tags — what is left is the copy a parent reads.
+    // Attribute values (id="incremental") are markup, not prose, and must not trip this.
+    const visible = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<[^>]+>/g, ' ');
+    for (const word of ['terminal', 'sidecar', 'manifest', 'incremental', 'cookie jar']) {
+      assert.ok(
+        !new RegExp('\\b' + word + '\\b', 'i').test(visible),
+        'visible copy must not use the word "' + word + '"',
+      );
+    }
+
+    // The tool does run a local HTTP server; claiming otherwise is untrue.
+    assert.ok(!/no server/i.test(visible), 'must not claim there is no server — this page is served by one');
+
     // No external origin may be referenced — the CSP forbids it and so should the markup.
     const externals = html.match(/(src|href)="https?:\/\/[^"]+"/g) || [];
     assert.deepEqual(externals, [], `page must not reference external origins: ${externals.join(', ')}`);

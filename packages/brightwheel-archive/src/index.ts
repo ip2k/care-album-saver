@@ -24,3 +24,4 @@ export { sync, type SyncProgress, type SyncResult } from './sync.js';
 export { applyMetadata, buildTags, writeJsonSidecar } from './metadata.js';
 export { startWebUi, type WebUiHandle } from './web/server.js';
 export { startMockBrightwheel, type MockServer } from './mock/server.js';
+export { verify, formatReport, type VerifyReport } from './verify.js';
