@@ -11,8 +11,9 @@ nursery — one you keep, whatever happens to your account.
 
 ```
 Brightwheel Photos/
+├── archive.json           ← the tool's list of what it has already saved
 ├── Robin Maple/
-│   ├── 2026-W37/          ← 8–14 September 2026
+│   ├── 2026-W37/          ← 7–13 September 2026
 │   │   ├── 2026-09-09_084512_a1b2c3d4.jpg
 │   │   ├── 2026-09-09_084512_a1b2c3d4.jpg.json
 │   │   └── README.md
@@ -92,7 +93,15 @@ Honesty matters more here than reassurance, so:
   families' children in it. Please treat those photos the way you would want yours treated.
 - **Labelling photos with your child's name writes that name into the file itself.** That
   is what makes them searchable in Apple Photos and similar apps — but it also means the
-  name travels with the file if you ever share it. You can turn this off.
+  name travels with the file if you ever share it. You can turn this off. The nursery's
+  name is written into a separate field whenever Brightwheel gives us one, and that part is
+  not covered by the switch.
+- **On Windows, the files are not owner-only.** On a Mac or Linux this tool writes the
+  session file so that only your account can open it, and creates the photo folders the
+  same way. Windows has no equivalent file setting: the session and the photos inherit the
+  permissions of the folder they are in. For `%APPDATA%` that already keeps other standard
+  accounts on the PC out, but it is weaker than what a Mac or Linux gets, and it is not
+  something this tool can fix.
 
 ### For people who fork this project
 
@@ -101,7 +110,8 @@ committing your own session by accident and publishing it. The project is built 
 this is hard:
 
 - **Your session is never stored in the project folder.** It lives in your operating
-  system's settings folder (`~/Library/Application Support/brightwheel-archive` on a Mac).
+  system's settings folder — `~/Library/Application Support/brightwheel-archive` on a Mac,
+  `~/.config/brightwheel-archive` on Linux, `%APPDATA%\brightwheel-archive` on Windows.
   There is nothing in the repository to commit, because nothing is there.
 - **The session is an unprintable object in the code.** Printing it, logging it, or
   putting it in an error message produces `[redacted]`, not the value. You have to call
@@ -134,7 +144,10 @@ The setup assistant walks you through everything. **[Full illustrated guide →]
 npx brightwheel-archive setup
 ```
 
-Then open the link it prints. Three steps: connect, choose your settings, save.
+Then open the link it prints. Three steps: connect your account, tick the children you want
+and check the settings, then press **Start saving**. Each setting saves itself the moment
+you change it, so there is nothing to remember to press, and while a run is going there is a
+**Stop** button beside **Start saving**.
 
 <p align="center">
   <img src="docs/images/01-connect.png" alt="The setup assistant, showing how to find your Brightwheel session" width="780">
@@ -158,10 +171,20 @@ npx brightwheel-archive run        # save any new photos
 
 ```sh
 docker run --rm \
+  --user "$(id -u):$(id -g)" \
   -v ~/.config/brightwheel-archive:/config \
   -v ~/Brightwheel\ Photos:/photos \
   ghcr.io/OWNER/brightwheel-archive run
 ```
+
+On Linux, `--user` runs the container as you, so it can read the mounted session file —
+which only your account can open — and write into the mounted photos folder. Without it the
+container runs as its own user and can only write folders that user owns. Docker Desktop on
+a Mac or Windows maps bind mounts itself, so the flag does no harm there.
+
+`~/.config/brightwheel-archive` is the Linux location. On a Mac the session is in
+`~/Library/Application Support/brightwheel-archive`. Run `brightwheel-archive where` to
+print the exact folder to mount as `/config`.
 
 ---
 
@@ -171,40 +194,144 @@ docker run --rm \
 |---|---|
 | `setup` | Open the setup assistant in your browser. Easiest way to start. |
 | `login` | Paste your session in the terminal instead. |
-| `run` | Save any new photos. |
-| `children` | List the children on your account. |
+| `run` | Save any new photos. `Ctrl` + `C` stops it after the photo it is on. |
+| `children` | List the children on your account, with the id Brightwheel uses for each. |
 | `doctor` | Check everything is working. Safe to share — it redacts secrets. |
+| `verify` | Check that Brightwheel's API still has the shape this tool expects. Read-only: it saves no photos and prints no names. |
 | `where` | Show where your files and settings are kept. |
 
 | Option | Default | |
 |---|---|---|
 | `--dir <path>` | `~/Brightwheel Photos` | Where to save |
 | `--all` | off | Re-check everything, not just new photos |
+| `--child <id or name>` | every child | Only this child, for this one run. Repeat it for several. |
 | `--no-name-tag` | off | Do not write your child's name into the photo |
-| `--port <n>` | random | Port for the setup assistant |
+| `--port <n>` | chosen for you | Port for the setup assistant |
+| `--base-url <url>` | Brightwheel's own | Point at a different API. Used by the tests. |
+
+On Windows the default folder is `%USERPROFILE%\Brightwheel Photos`. Once you have chosen a
+folder in the setup page, that is the default instead.
+
+`--child` takes either the id that `brightwheel-archive children` prints, or the child's
+full name, where capitals do not matter. It changes one run only — the choice you made in
+the setup page is not touched. `--help` prints this same list in the terminal.
 
 ---
 
-## What gets written into each photo
+## Stopping a run, and carrying on
 
-Photo apps disagree about which field means "when was this taken", so this tool writes all
-of the common ones. Your photos land on the right day in whichever app you use.
+Press `Ctrl` + `C` while a run is going. It finishes the photo it is saving, writes down
+everything it has saved so far, and stops. The summary line then begins **Stopped.** rather
+than **Done.** — for example `Stopped. 12 new, 40 already had, 0 failed.` — followed by a
+line telling you to run the same command again to carry on where it left off.
+
+Press `Ctrl` + `C` a second time and it exits on the spot. That is the harsher option:
+nothing is written down, so the photo in flight is abandoned and up to a couple of dozen
+files saved since the last checkpoint are fetched again next time, leaving you a second
+copy of each, named `…-2.jpg`. The first `Ctrl` + `C` avoids all of that, which is why it
+is worth the few seconds.
+
+In the setup page, the **Stop** button beside **Start saving** stops a run the same way. So
+does `Ctrl` + `C` in the terminal you started the setup assistant from — it stops the run
+first, which means waiting for the photo in flight, and a second `Ctrl` + `C` closes
+straight away.
+
+`run` finishes with an exit code your scheduler can read: **0** when it reached the end of
+the feed, and **0** when you stopped it and nothing failed — a stop you asked for is not a
+failure. It is **1** when a photo failed to save.
+
+### If a run is interrupted
+
+A run can also end early for reasons you did not choose: your Brightwheel session expires
+part-way through, the connection drops, the disk fills up. In every case:
+
+- **Everything already saved stays saved.** The files are on disk, and before the run gives
+  up it writes down that it has them — and says so plainly if it could not.
+- **The next plain `run` finishes the job.** It starts again at the newest post and works
+  back, recognises the photos it already has, and downloads only the rest.
+- **You do not need `--all`.** That option is for re-checking an archive you think is wrong,
+  not for recovering from an interruption.
+
+A power cut or a force-quit is the one case where the tool gets no chance to write anything
+down. Nothing is lost — the files are on disk — but up to a couple of dozen of them are
+downloaded a second time on the next run, and you end up with a duplicate of each.
+
+The tool only moves its "everything up to here is done" marker for a child when a run has
+walked that child's whole feed with nothing left behind. An interrupted run holds the newest
+photos and nothing older, so treating its newest photo as the marker would silently skip the
+rest of the feed for ever. It does not.
+
+The first `run` after upgrading from a version that had no such marker reads each child's
+whole feed once. That pass downloads nothing you already have — it only reads the listing,
+to work out where to carry on from — and every run after it is quick again.
+
+---
+
+## What gets written into each photo and video
+
+Photo and video apps disagree about which field means "when was this taken", so this tool
+writes all of the common ones. Your files land on the right day in whichever app you use.
+
+### Photos
 
 | Field | Holds |
 |---|---|
-| `DateTimeOriginal`, `CreateDate` | When the photo was taken |
-| `OffsetTimeOriginal` | The timezone, so the date is unambiguous |
-| `XMP-photoshop:DateCreated` | The same date, for Immich and web galleries |
+| `EXIF:DateTimeOriginal`, `CreateDate`, `ModifyDate` | When the photo was taken, as the clock read where it was taken |
+| `EXIF:OffsetTimeOriginal`, `OffsetTimeDigitized` | The timezone offset, so that local time is unambiguous |
+| `IPTC:DateCreated`, `TimeCreated`, `DigitalCreationDate`, `DigitalCreationTime` | The same moment, with the offset, for older galleries |
+| `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
 | `XMP-iptcExt:PersonInImage` | Your child's name |
-| `Keywords`, `XMP-dc:subject` | Your child's name, as a searchable tag |
-| `XMP-dc:description` | The teacher's note |
+| `IPTC:Keywords`, `XMP-dc:subject` | Your child's name and `Brightwheel`, as searchable tags |
+| `XMP-dc:description`, `IPTC:Caption-Abstract`, `EXIF:UserComment` | The teacher's note |
+| `XMP-dc:creator` | Who posted it |
+| `XMP-iptcExt:LocationCreatedSublocation` | The nursery's name, when Brightwheel gives one |
 
-**The picture itself is never altered or re-compressed.** Only the metadata section is
-touched, so the photo you keep is the photo Brightwheel served.
+### Videos
 
-Every photo also gets a `.json` file beside it with the same information in plain text —
-so the archive is readable in twenty years even without this tool, and even if ExifTool is
+An MP4 or MOV is a QuickTime container, and none of the EXIF fields above exist inside one.
+**`DateTimeOriginal` is not written to a video**, because it is not a QuickTime tag: asking
+for it anyway buries it in a block that no video app consults for the date, while the
+container keeps saying whenever the file was encoded. These are the fields video apps
+actually read:
+
+| Field | Holds |
+|---|---|
+| `QuickTime:CreateDate`, `ModifyDate` | When the video was taken, written in UTC as the QuickTime specification requires |
+| `QuickTime:TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate` | The same instant, in the track and media headers |
+| `Keys:CreationDate` | The same moment as local time with its offset — the field Apple Photos prefers |
+| `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
+| `XMP-iptcExt:PersonInImage`, `XMP-dc:subject`, `Keys:Keywords` | Your child's name |
+| `XMP-dc:description`, `Keys:Description` | The teacher's note |
+| `XMP-dc:creator`, `Keys:Author` | Who posted it |
+| `XMP-iptcExt:LocationCreatedSublocation` | The nursery's name, when Brightwheel gives one |
+
+So a video's headers hold UTC while its week folder is named for the local day. Both are
+right — each follows its own convention — and a player that reads the header converts it
+back to the time you would have read off the clock in the room.
+
+**The picture itself is never altered or re-compressed.** Only the metadata is touched, so
+the file you keep is the file Brightwheel served. The tests check this the hard way, on both
+kinds: for a photo the compressed image data is compared byte for byte against what the
+server sent, and for a video the `mdat` box that holds the frames is
+(`packages/brightwheel-archive/test/real-media-fixtures.test.js` — "photo metadata
+round-trips…" and "video metadata round-trips…").
+
+Every file also gets a `.json` file beside it with the same information in plain text — so
+the archive is readable in twenty years even without this tool, and even if ExifTool is
 not installed.
+
+### `archive.json`
+
+One more file sits at the top of your photos folder. `archive.json` is the tool's memory:
+every file it has saved, with its size, a checksum and where it came from. That is what
+makes the second run quick — a photo it recognises is never fetched twice. It also holds one
+marker per child, recording how far the last complete pass through that child's feed
+reached, which is where the next run starts.
+
+Paths inside it are written with forward slashes on every platform, so an archive built on
+Windows reads on a Mac or Linux and back again. Do not delete it: without it the tool has
+forgotten everything and downloads the lot a second time, alongside the copies you already
+have.
 
 ### Why the dates need correcting
 
@@ -212,6 +339,11 @@ Brightwheel records both when a photo was *taken* and when the teacher *uploaded
 often hours later. Downloading the file from the website gives you the upload time. A
 photo taken at 9am on Friday and uploaded at 7pm lands in the wrong evening, and at a
 week boundary, in the wrong week folder entirely. This tool always uses the capture time.
+
+That rests on one belief about Brightwheel's data we have not been able to confirm: that the
+field called `event_date` is the capture time and `created_at` is the upload time. Every
+open-source Brightwheel client we studied assumes it. `brightwheel-archive verify` is the
+command that checks it against your own account.
 
 ---
 
@@ -221,6 +353,17 @@ Brightwheel has no public API. The website's photo feed — the one you scroll �
 by an internal paginated endpoint, so this tool reads that endpoint directly instead of
 driving a browser and simulating scrolling. That makes it fast, reliable, and gentle on
 Brightwheel's servers (one request at a time, with a pause between them).
+
+**What we have not been able to check.** Nobody has yet run this against a real Brightwheel
+account and confirmed that it reads the feed correctly. There is no published documentation
+for that endpoint, so the field names were pieced together from six other open-source
+Brightwheel clients. We believe they are right. We have not proved it, and until somebody
+has, please do not treat this as finished software.
+
+`brightwheel-archive verify` is how you check it on your own account without archiving
+anything. It makes at most four read-only requests, downloads no photos, and reports which
+fields are present and what type each one is — never a value, never a child's name. Its
+output is safe to paste into a bug report.
 
 ### Before you use this: Brightwheel's terms
 
@@ -272,9 +415,23 @@ written to the `.json` files instead.
 ```sh
 pnpm install
 pnpm build
-pnpm test                        # 25 tests, no network needed
-node scripts/screenshots.js      # regenerate the guide images
+pnpm test                        # 93 tests, no network needed
 ```
+
+One test file on its own:
+
+```sh
+node --test --import ./scripts/test-env.js packages/brightwheel-archive/test/sync-resilience.test.js
+```
+
+CI runs the same suite on Ubuntu, macOS and Windows against Node 20, 22, 24 and 26 — twelve
+combinations (`.github/workflows/ci.yml`). Two of the tests assert owner-only file
+permissions, which Windows does not have; there they are reported as skipped with the reason
+printed, never quietly passed. `BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test` rehearses
+that on a Mac or Linux machine — 93 tests, 91 passed, 2 skipped.
+
+The guide's images come from `node scripts/screenshots.js`, which drives the real setup page
+in a real browser. It needs Chromium once: `pnpm exec playwright install chromium`.
 
 Tests run against a built-in mock Brightwheel server with invented children. **No real
 child's photo, name or session is ever in this repository**, including in the
