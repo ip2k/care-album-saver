@@ -34,9 +34,13 @@ Two places, and only two places:
 1. **Brightwheel's service**, where they already are.
 2. **The computer you run this on**, in the folder you choose.
 
-That's it. There is no third place. This tool has no website, no account, no server, and
-no company behind it. Nothing is uploaded anywhere. Nobody — including the people who
+That's it. There is no third place. There is no website to sign up to, no online account,
+and no company behind it. Nothing is uploaded anywhere. Nobody — including the people who
 wrote this — can see your photos, your child's name, or which nursery they go to.
+
+One honest clarification, because the word matters: the setup page *does* run a small web
+server, but it runs **on your own computer**, only while the program is open, and only your
+computer can reach it. It is not on the internet.
 
 ### Can anyone else see them?
 
@@ -44,7 +48,7 @@ wrote this — can see your photos, your child's name, or which nursery they go 
 |---|---|
 | **Does this tool send my photos anywhere?** | No. They go from Brightwheel straight to your computer. |
 | **Does it collect usage data or analytics?** | No. It makes no network connections except to Brightwheel. |
-| **Can the authors see anything?** | No. There is nothing to see. There is no server. |
+| **Can the authors see anything?** | No. Nothing is sent to us; there is no service to send it to. |
 | **Can other parents see my child's photos?** | No. Brightwheel only ever shows this tool the children on *your* account. |
 | **Can I archive someone else's child?** | No. This is not a limitation we added — it is how Brightwheel works. Your login only reaches your own family. |
 

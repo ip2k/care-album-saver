@@ -154,6 +154,13 @@ export const PAGE = String.raw`<!doctype html>
     border: 1px solid var(--border);
   }
 
+  /* The reason for the ask sits directly above the input it justifies, per HIG privacy
+     guidance, rather than in a panel below the fold nobody scrolls to. */
+  .why-ask {
+    background: var(--accent-tint); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: var(--s3) var(--s4);
+    margin: 0 0 var(--s4); font-size: .9375rem; color: var(--text);
+  }
   .field { margin-bottom: var(--s4); }
   label.field-label { display: block; font-size: .9375rem; font-weight: 550; margin-bottom: var(--s2); }
   textarea, input[type=text], input[type=email], input[type=password], select {
@@ -267,6 +274,12 @@ export const PAGE = String.raw`<!doctype html>
         <div class="body">
           <p class="sr-only" id="connect-state">Step 1 of 3. Not started.</p>
           <ol class="howto" id="howto"></ol>
+          <p class="why-ask">
+            <b>Why this is needed:</b> it is how the tool proves to Brightwheel that it is
+            you, so it can see your own children&rsquo;s photos. It stays on this computer,
+            it is not your password, and you can cancel it at any time by signing out of
+            Brightwheel.
+          </p>
           <div class="field">
             <label class="field-label" for="cookie">Paste the value here</label>
             <textarea id="cookie" rows="3" aria-describedby="connect-hint connect-msg"></textarea>
@@ -281,7 +294,7 @@ export const PAGE = String.raw`<!doctype html>
       <section class="card" id="card-children" aria-labelledby="h-children">
         <div class="step-head">
           <span class="num" aria-hidden="true" id="num-2">2</span>
-          <h2 id="h-children">Your children and what gets saved</h2>
+          <h2 id="h-children">Children on this account</h2>
         </div>
         <p class="hint">Brightwheel only ever shows this tool the children on your own account.</p>
         <div class="body">
@@ -331,8 +344,8 @@ export const PAGE = String.raw`<!doctype html>
               </div>
               <div class="opt">
                 <input type="checkbox" id="writeSidecar">
-                <label for="writeSidecar">Also write .xmp sidecar files
-                  <span class="why">Only useful with Lightroom or darktable.</span>
+                <label for="writeSidecar">Save an extra settings file beside each photo
+                  <span class="why">A small .xmp file that photo-editing programs such as Lightroom and darktable can read. Leave this off unless you use one of them.</span>
                 </label>
               </div>
               <button class="secondary" id="btn-save-config" type="button">Save settings</button>
@@ -349,7 +362,7 @@ export const PAGE = String.raw`<!doctype html>
           <span class="num" aria-hidden="true" id="num-3">3</span>
           <h2 id="h-run">Save the photos</h2>
         </div>
-        <p class="hint">The first time takes a while. After that it only looks for what is new, which is quick. You can close this page &mdash; it keeps going in the terminal.</p>
+        <p class="hint">The first time takes a while. After that it only looks for what is new, which is quick. You can close this page &mdash; it keeps going in the black window you started it from.</p>
         <div class="body">
           <p class="sr-only" id="run-state">Step 3 of 3. Waiting for step 1.</p>
           <button id="btn-run" type="button" disabled>Start saving</button>
@@ -359,7 +372,7 @@ export const PAGE = String.raw`<!doctype html>
           <div class="stats">
             <div class="stat"><span class="n" id="s-saved">0</span><span class="l">Saved</span></div>
             <div class="stat"><span class="n" id="s-skipped">0</span><span class="l">Already had</span></div>
-            <div class="stat"><span class="n" id="s-failed">0</span><span class="l">Failed</span></div>
+            <div class="stat"><span class="n" id="s-failed">0</span><span class="l">Couldn&rsquo;t save</span></div>
           </div>
           <div id="run-result"></div>
         </div>
@@ -370,8 +383,8 @@ export const PAGE = String.raw`<!doctype html>
 
   <aside class="privacy" aria-labelledby="h-privacy">
     <h2 id="h-privacy">Where your photos go</h2>
-    <p>From Brightwheel straight onto this computer, into <span class="path" id="p-dir">your chosen folder</span>. Nothing is uploaded anywhere else. This tool has no account, no server and no analytics.</p>
-    <p>This page is open only on this computer. Nobody else on your network can reach it, and it closes when you stop the program.</p>
+    <p>From Brightwheel straight onto this computer, into <span class="path" id="p-dir">your chosen folder</span>. Nothing is uploaded anywhere else. There is no online account to sign up for, and nothing is collected about you.</p>
+    <p>This page is being served by the program running on your own computer &mdash; that is why the address starts with 127.0.0.1, which means <em>this machine only</em>. Nobody else on your network can open it, and it disappears when you stop the program.</p>
   </aside>
 </div>
 
@@ -441,6 +454,11 @@ async function refresh() {
     loadChildren();
   }
   paint(state.progress, state.running, state.lastResult);
+  // A run started before this page was opened (or before a reload) is still going in the
+  // terminal. Without restarting the poll here the bar sits motionless, and HIG's
+  // progress-indicators guidance is explicit that people read a stationary indicator as a
+  // stalled process — so the page would imply a hang that is not happening.
+  if (state.running) poll();
 }
 
 async function loadChildren() {
@@ -472,7 +490,7 @@ $('btn-connect').onclick = async () => {
       field.focus();
     }
   } catch {
-    show($('connect-msg'), 'err', 'Could not reach the tool. Is it still running in your terminal?');
+    show($('connect-msg'), 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
   }
   btn.disabled = false; btn.textContent = 'Connect';
 };
