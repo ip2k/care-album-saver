@@ -22,6 +22,9 @@
  *  - Light and dark are both first-class, via prefers-color-scheme
  *    (/design/human-interface-guidelines/dark-mode).
  *  - Motion respects prefers-reduced-motion (/design/human-interface-guidelines/motion).
+ *  - Where the photos go is picked, not typed. A browser deliberately withholds absolute
+ *    paths from a page, so the folder chooser is opened by the tool itself; the typed field
+ *    stays as the fallback for a computer that has no chooser to open.
  *  - What is on screen is what runs. Every setting saves itself the moment it changes, and
  *    "Start saving" sends the whole form again before it starts. A tick that was visible
  *    but not yet stored used to be silently ignored, because the run reads settings from
@@ -257,6 +260,19 @@ export const PAGE = String.raw`<!doctype html>
   }
   details .inner { padding-top: var(--s4); }
 
+  /* The folder field and its three actions. "Choose a folder" sits beside the box because a
+     picked path and a typed one are the same setting; saving and opening are separate acts,
+     so they get their own row. Everything wraps on a narrow screen rather than squeezing
+     the path into a sliver. */
+  .dir-row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: flex-start; }
+  .dir-row input[type=text] { flex: 1 1 16rem; width: auto; }
+  .dir-row button { flex: 0 0 auto; }
+  .dir-actions { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s3); }
+  /* Kept clear of the buttons above it: a line of small text touching a control reads as
+     part of it. The height is reserved so the card does not jump as the note fills. */
+  .dir-note { font-size: .875rem; color: var(--text-muted); margin: var(--s3) 0 0; min-height: 1.4em; }
+  .dir-note.err { color: var(--danger); font-weight: 550; }
+
   /* Start and Stop sit together, with a real gap: two buttons touching read as one
      control, and the destructive-sounding one must not be a slip of the mouse away. */
   .run-actions { display: flex; flex-wrap: wrap; gap: var(--s3); }
@@ -386,9 +402,16 @@ ${COOKIE_HELP_CSS}
               </div>
               <div class="field">
                 <label class="field-label" for="archiveDir">Where to save the photos</label>
-                <input type="text" id="archiveDir" spellcheck="false" aria-describedby="dir-warn config-msg">
+                <div class="dir-row">
+                  <input type="text" id="archiveDir" spellcheck="false" aria-describedby="dir-warn dir-note config-msg">
+                  <button class="secondary" id="btn-choose-dir" type="button">Choose a folder&hellip;</button>
+                </div>
                 <p class="why" id="dir-warn" style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Avoid iCloud Drive, Dropbox or OneDrive folders unless you want copies on their servers.</p>
-                <button class="secondary" id="btn-dir" type="button" style="margin-top:var(--s3)">Use this folder</button>
+                <div class="dir-actions">
+                  <button class="secondary" id="btn-dir" type="button">Use this folder</button>
+                  <button class="secondary" id="btn-open-dir" type="button">Open this folder</button>
+                </div>
+                <p class="dir-note" id="dir-note" role="status" aria-live="polite"></p>
               </div>
               <div class="opt">
                 <input type="checkbox" id="incremental" checked>
@@ -571,12 +594,21 @@ async function save(patch, opts) {
     $('archiveDir').value = d.config.archiveDir;
     clearDirError();
   }
+  applySaved(d);
+  return true;
+}
+
+/**
+ * What the whole page does with a settings change the tool accepted. Shared with the folder
+ * chooser, so a picked folder lands on screen exactly as a typed one does — same stored
+ * path, same cloud-folder warning, same quiet "Saved".
+ */
+function applySaved(d) {
   savedDir = d.config.archiveDir;
   // Always the stored folder, never the typed one: this says where the photos will go.
   $('p-dir').textContent = d.config.archiveDir;
   if (d.warning) show($('config-msg'), 'warn', esc(d.warning));
   else savedNote();
-  return true;
 }
 
 function savedNote() {
@@ -769,6 +801,101 @@ $('organiseBy').addEventListener('change', () => persist({ organiseBy: $('organi
 $('archiveDir').addEventListener('change', () => persist({ archiveDir: $('archiveDir').value }));
 $('btn-dir').onclick = () => persist({ archiveDir: $('archiveDir').value }, { focus: true });
 
+/** The small line under the folder buttons. Its own space, never the settings message box,
+    which belongs to saving and must not be overwritten by "a chooser is open". */
+function setDirNote(text, isError) {
+  const el = $('dir-note');
+  el.classList.toggle('err', Boolean(isError));
+  el.textContent = text;
+}
+
+/**
+ * Pick the folder instead of typing it.
+ *
+ * A browser will not give a page a real path — <input webkitdirectory> reports only a
+ * folder's name and showDirectoryPicker() hands back a handle with no path in it, both on
+ * purpose. So the tool, which is running on this very computer, opens the operating
+ * system's own chooser and reports back what was picked. What comes back is then checked
+ * exactly as a typed path is: same refusals, same cloud-folder warning.
+ */
+$('btn-choose-dir').onclick = async () => {
+  const btn = $('btn-choose-dir');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Choosing\u2026';
+  // The dialog belongs to the operating system, not to this page, so it can open behind the
+  // browser window — and a parent staring at a frozen button would have no way to know.
+  setDirNote('A folder chooser has opened. It may be behind this window.', false);
+  let d;
+  try {
+    const r = await api('/api/choose-folder', { method: 'POST', body: '{}' });
+    d = await r.json();
+  } catch {
+    d = { ok: false, error: 'Could not reach the tool. Check it is still running in the window you started it from.' };
+  }
+  btn.disabled = false;
+  btn.textContent = label;
+  if (d.ok && d.cancelled) {
+    setDirNote('No folder was chosen, so nothing changed.', false);
+    return;
+  }
+  if (!d.ok) {
+    // A refused folder is marked and explained where a typed refusal is, so that there is
+    // one place to look whichever way the path arrived.
+    if (d.field === 'archiveDir') {
+      setDirNote('', false);
+      showSaveError(d, { focus: true });
+    } else {
+      setDirNote(d.error, true);
+    }
+    return;
+  }
+  setDirNote('', false);
+  // The picked path is now the stored one, so the field shows it and any earlier refusal
+  // is no longer true of what is in the box.
+  $('archiveDir').value = d.config.archiveDir;
+  clearDirError();
+  applySaved(d);
+};
+
+/**
+ * Show the archive folder in the file manager.
+ *
+ * This page never sends a path: the tool opens the folder it has stored, and nothing else.
+ */
+async function openArchiveFolder(btn, note) {
+  btn.disabled = true;
+  let d;
+  try {
+    const r = await api('/api/open-folder', { method: 'POST', body: '{}' });
+    d = await r.json();
+  } catch {
+    d = { ok: false, error: 'Could not reach the tool. Check it is still running in the window you started it from.' };
+  }
+  btn.disabled = false;
+  note.classList.toggle('err', !d.ok);
+  note.textContent = d.ok ? 'Opened in your file manager. If you cannot see it, look behind this window.' : d.error;
+}
+
+/**
+ * The same offer at the end of a run. The folder is named as well as opened, because a
+ * parent who wants to find it again tomorrow needs to have read where it is, and because
+ * the button is useless on a computer with no file manager this tool can reach.
+ */
+function offerOpenFolder() {
+  $('run-result').insertAdjacentHTML('beforeend',
+    '<div class="dir-actions" style="align-items:center">' +
+    '<button class="secondary" id="btn-open-done" type="button">Open this folder</button>' +
+    '<span class="path">' + esc(savedDir) + '</span></div>' +
+    '<p class="dir-note" id="open-done-note" role="status" aria-live="polite"></p>');
+}
+
+$('btn-open-dir').onclick = () => openArchiveFolder($('btn-open-dir'), $('dir-note'));
+// Delegated, because the summary the second button sits in is rebuilt by innerHTML.
+$('run-result').addEventListener('click', (e) => {
+  if (e.target.id === 'btn-open-done') openArchiveFolder(e.target, $('open-done-note'));
+});
+
 $('btn-run').onclick = async () => {
   $('btn-run').disabled = true;
   $('run-result').innerHTML = '';
@@ -863,6 +990,9 @@ function paint(p, running, result) {
       if (result.failed > 0) html += ' <b>' + result.failed + '</b> could not be fetched &mdash; press Start saving again to retry them.';
       show($('run-result'), result.failed > 0 ? 'warn' : 'ok', html);
     }
+    // "Where did my photos go" is the question at the end of a run, so answer it with a
+    // button rather than a path to copy out.
+    if (result) offerOpenFolder();
   }
   if (p.phase === 'stopped') {
     // Neither finished nor failed. Everything already saved is on disk and the next run
