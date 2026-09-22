@@ -16,7 +16,7 @@ brightwheel-archive — save your own child's photos from Brightwheel
   brightwheel-archive setup        Open the setup assistant in your browser (easiest)
   brightwheel-archive login        Paste your Brightwheel session in the terminal
   brightwheel-archive run          Save any new photos
-  brightwheel-archive children     List the children on your account
+  brightwheel-archive children     List the children on your account, with their ids
   brightwheel-archive doctor       Check that everything is working
   brightwheel-archive verify       Check the Brightwheel API shape (read-only, no photos)
   brightwheel-archive where        Show where files are kept
@@ -25,6 +25,8 @@ Options
   --dir <path>       Where to save photos (default: ~/Brightwheel Photos)
   --all              Re-check every photo, not just new ones
   --no-name-tag      Do not write your child's name into the photo metadata
+  --child <id|name>  Only this child, for this run (repeat for several; your saved
+                     settings are not changed)
   --port <number>    Port for the setup assistant
   --base-url <url>   Point at a different API (used by the tests)
   --help             Show this message
@@ -40,6 +42,7 @@ async function main(): Promise<number> {
       dir: { type: 'string' },
       all: { type: 'boolean' },
       'no-name-tag': { type: 'boolean' },
+      child: { type: 'string', multiple: true },
       port: { type: 'string' },
       'base-url': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
@@ -109,9 +112,14 @@ async function main(): Promise<number> {
       }
       const client = new BrightwheelClient({ session: session.session, baseUrl });
       const me = await client.me();
-      for (const child of await client.students(me.id)) {
-        stdout.write(`  ${child.fullName}${child.schoolName ? `  (${child.schoolName})` : ''}\n`);
+      const children = await client.students(me.id);
+      const width = Math.max(...children.map((c) => c.fullName.length));
+      for (const child of children) {
+        stdout.write(
+          `  ${child.fullName.padEnd(width)}  id: ${child.id}${child.schoolName ? `  (${child.schoolName})` : ''}\n`,
+        );
       }
+      stdout.write(`\n  To save photos for some of them only: brightwheel-archive run --child <id or name>\n`);
       return 0;
     }
 
@@ -163,6 +171,24 @@ async function main(): Promise<number> {
         baseUrl,
         delayMs: config.delayMs,
       });
+      if (values.child?.length) {
+        // A one-off filter, applied to the loaded config and never written back: this
+        // command does not save settings, so the setup page's choice survives it.
+        const me = await client.me();
+        const children = await client.students(me.id);
+        const chosen: string[] = [];
+        for (const wanted of values.child) {
+          const needle = wanted.trim().toLowerCase();
+          const match = children.find((c) => c.id === wanted.trim() || c.fullName.toLowerCase() === needle);
+          if (!match) {
+            stdout.write(`  No child called "${wanted}" on this account. Run: brightwheel-archive children\n`);
+            return 1;
+          }
+          if (!chosen.includes(match.id)) chosen.push(match.id);
+        }
+        config.includeStudents = chosen;
+        stdout.write(`  Only: ${children.filter((c) => chosen.includes(c.id)).map((c) => c.fullName).join(', ')}\n`);
+      }
       let lastLine = '';
       const result = await sync(client, config, (p) => {
         const line = `  ${p.message}`;

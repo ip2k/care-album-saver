@@ -37,7 +37,7 @@ The first time, it asks to download the tool. Say yes. Then it prints a link lik
 
 **Copy that whole link and paste it into your browser.** You will see this:
 
-![The setup assistant's first step, with the four instructions for finding your Brightwheel session highlighted](images/01-connect.png)
+![The setup assistant's first step, with the five instructions for finding your Brightwheel session highlighted](images/01-connect.png)
 
 > **Why the odd-looking link?** `127.0.0.1` means *this computer*. The page is not on the
 > internet — nobody else can open it. The `token` is a one-time password so that other
@@ -59,9 +59,9 @@ and copy one value across.
    a long jumble of letters and numbers.
 5. Paste it into the box and press **Connect**.
 
-If it worked, the step turns green and your children appear:
+If it worked, the step turns green and your children appear, each with a tick box:
 
-![The assistant after connecting, showing a green tick and the two children read from the account](images/02-connected.png)
+![The assistant after connecting, showing a green tick and the two children read from the account, each with a ticked box](images/02-connected.png)
 
 > **Is it safe to copy that value?** It is a temporary pass that says you are already
 > signed in. It is stored on your computer only, in a file only you can open, and sent
@@ -74,19 +74,35 @@ If it worked, the step turns green and your children appear:
 
 ## Step 3 — Choose what you want
 
-The defaults are sensible; you can press Start without changing anything. Open
-**Advanced options** if you want to adjust things.
+The defaults are sensible; you can press Start without changing anything.
 
-![The options, with name labelling, location removal and the advanced drawer highlighted](images/03-options.png)
+**Which children.** Every child on your account starts ticked. Untick a child to leave
+their photos out — for instance if one of them has left the nursery, or you only want a
+single child in this folder. At least one must stay ticked, and the line underneath the
+names always says, in words, whose photos will be saved. Open **Advanced options** if you
+want to adjust the rest.
+
+**Nothing to remember to press.** Each setting is saved the moment you change it, and a
+small *Saved* appears to say so. The one exception is the folder, because a half-typed
+path is not a folder yet: it is saved when you leave that box, press Enter, or press
+**Use this folder**. When you press **Start saving**, what is on the screen is what runs.
+
+![The options, with a child unticked, name labelling, location removal, the advanced drawer and the Saved note highlighted](images/03-options.png)
 
 | Setting | Default | What it means |
 |---|---|---|
+| Save photos for | **All your children** | Untick a child to leave their photos out. A child who joins your account later is included automatically as long as everyone is ticked. |
 | Label photos with your child's name | **On** | Lets Apple Photos and similar find them by name. The name is written inside the photo file. |
 | Keep the teacher's note | **On** | Saves the caption as the photo's description. |
 | Remove location information | **On** | Strips GPS coordinates so a shared photo cannot reveal where it was taken. |
 | Folder layout | Child, then week | Or one folder per week with all children together. |
 | Where to save | `~/Brightwheel Photos` | **Avoid iCloud Drive, Dropbox or OneDrive folders** unless you want copies on their servers. |
 | Only look for new photos | **On** | Much faster. Turn off to re-check from the beginning. |
+
+> **From the terminal instead:** `npx brightwheel-archive children` lists your children with
+> the id Brightwheel uses for each, and `npx brightwheel-archive run --child "Sam Maple"`
+> (or `--child <id>`, repeated for several) saves only those children's photos for that one
+> run. It does not change the choice you made on this page.
 
 ---
 
