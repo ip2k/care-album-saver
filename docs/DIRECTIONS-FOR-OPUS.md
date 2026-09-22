@@ -103,12 +103,23 @@ Each item names the lane in QUESTIONS that argued it. Sizes are S unless marked.
 
 **Now (correctness and privacy):**
 
-> **Done on 2026-09-22 (merge 'judge and clean what a parent pastes'):** items 1, 7 and the
-> `typeof cookie === 'string'` half of 2, via `src/paste.ts` — one classifier embedded in
-> the page, used by the server and `login`, with `test/paste.test.js`. Still open from
-> that group: the `readJson` helper and the scrubbed progress stream (2), the clamp (3),
-> and everything from 4 on. The page gained a live hint under the paste box, so the five
-> `docs/images/*.png` need the one regeneration 1.2 already asks for.
+> **Done on 2026-09-22.** Working through this list, `main` now has:
+>
+> | Item | Where |
+> |---|---|
+> | 1, 7, and the `typeof cookie` half of 2 | `src/paste.ts`, one classifier embedded in the page and used by the server and `login`; `test/paste.test.js` |
+> | 2, the rest | progress lines and warnings scrubbed on the way to `/api/state` |
+> | 3 | the cut-off clamped to the walk's start, with a `futureDatedPosts` mock option and a test that goes red without it |
+> | 4, 5 | the signed-URL rule is case-insensitive and admits `~`; gitleaks-action v3 with `GITHUB_TOKEN`; `test/gitleaks-rules.test.js` compiles every rule and proves a CloudFront URL fires |
+> | 8 | `login` writes through a muted stream; a test spawns the CLI and proves the value is not echoed |
+> | 9, in part | `CLAUDE.md` Status corrected (test count, "never run", the API-surface wording) |
+> | 1.1, 1.2 | settled the other way — see the note above — and the images are regenerated |
+>
+> **Still open here:** 6 (verify's `raw()` printing an id on the error path), the rest of 9
+> (the README's own contradiction at ~407-411), 10 (the "taken" sweep), 11 (the README
+> opening), and everything under **Next** and **Later**. 202 tests pass.
+
+
 
 1. **A2-1** Refuse non-cookie characters at the boundary. In `config.ts`
    `normaliseCookieInput` (both the prefixed and the bare form) and in `loadSession`,
