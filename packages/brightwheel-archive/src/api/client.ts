@@ -55,7 +55,8 @@ export class BrightwheelClient {
     return {
       Cookie: `${SESSION_COOKIE}=${this.options.session.expose()}`,
       Accept: 'application/json',
-      'X-Client-Name': 'brightwheel-archive',
+      // The web client identifies itself as 'web'; an unrecognised value risks rejection.
+      'X-Client-Name': 'web',
       'User-Agent': 'brightwheel-archive (+https://github.com/)',
     };
   }
@@ -159,8 +160,9 @@ export class BrightwheelClient {
   ): AsyncGenerator<MediaActivity[], void, void> {
     const pageSize = opts.pageSize ?? 100;
     const maxPages = opts.maxPages ?? 500;
-    const day = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    // start_date / end_date are ISO-8601 UTC with milliseconds and a Z suffix, not a bare
+    // calendar date — confirmed across ChaseBro/brightwheel-takeout and ss44/Keepsake.
+    const iso = (d: Date) => d.toISOString().replace(/(\.\d{3})?Z$/, '.000Z');
 
     for (let page = 0; page < maxPages; page++) {
       const query = new URLSearchParams({
@@ -169,8 +171,8 @@ export class BrightwheelClient {
         include_parent_actions: 'false',
       });
       if (opts.actionType) query.set('action_type', opts.actionType);
-      if (opts.since) query.set('start_date', day(opts.since));
-      if (opts.until) query.set('end_date', day(opts.until));
+      if (opts.since) query.set('start_date', iso(opts.since));
+      if (opts.until) query.set('end_date', iso(opts.until));
       const raw = await this.request(
         `/students/${encodeURIComponent(studentId)}/activities?${query}`,
         `activities page ${page}`,

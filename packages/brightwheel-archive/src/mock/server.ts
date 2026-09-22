@@ -30,8 +30,8 @@ export interface MockOptions {
 const SESSION_COOKIE_NAME = '_brightwheel_v2';
 
 const STUDENTS = [
-  { id: 'stu-aaa-111', first_name: 'Robin', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
-  { id: 'stu-bbb-222', first_name: 'Sam', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
+  { object_id: 'stu-aaa-111', first_name: 'Robin', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
+  { object_id: 'stu-bbb-222', first_name: 'Sam', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
 ];
 
 const NOTES = [
@@ -91,13 +91,18 @@ function buildActivities(studentId: string, count: number, baseUrl: string) {
     const isVideo = i % 17 === 5;
     // A fresh signature every call, exactly as a real CDN behaves.
     const sig = Math.random().toString(36).slice(2, 12);
+    const url = `${baseUrl}/media/${id}.${isVideo ? 'mp4' : 'jpg'}?signature=${sig}&expires=${Date.now() + 900000}`;
+    // Mirrors the real record exactly: `object_id` not `id`; a photo carries
+    // `media.image_url`; a video carries `video_info.downloadable_url` AND `media: null`.
     out.push({
-      id,
+      object_id: id,
       action_type: isVideo ? 'ac_video' : 'ac_photo',
       event_date: when.toISOString(),
+      // Uploaded six hours after capture, so a test can prove we use event_date.
       created_at: new Date(when.getTime() + 6 * 3600 * 1000).toISOString(),
       note: NOTES[i % NOTES.length],
-      media_url: `${baseUrl}/media/${id}.${isVideo ? 'mp4' : 'jpg'}?signature=${sig}&expires=${Date.now() + 900000}`,
+      media: isVideo ? null : { image_url: url, thumbnail_url: url },
+      video_info: isVideo ? { downloadable_url: url } : null,
       actor: { name: TEACHERS[i % TEACHERS.length] },
     });
   }
@@ -169,19 +174,52 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
     };
 
     if (url.pathname === '/api/v1/users/me') {
-      json({ object: { id: 'guardian-xyz-999', email: 'parent@example.com' } });
+      // Flat record with object_id, matching the real fixture. The passcode/invite/phone
+      // fields are included on purpose: they are present in the real response, and a test
+      // asserts we never write them to disk.
+      json({
+        object_id: 'guardian-xyz-999',
+        email: 'parent@example.com',
+        first_name: 'Alex',
+        last_name: 'Maple',
+        user_type: 'guardian',
+        raw_passcode: '4821',
+        invite_code: 'INVITE-NEVER-STORE',
+        auth_phone_number: '+15550000000',
+        phone_1: '+15550000001',
+      });
       return;
     }
     if (/^\/api\/v1\/guardians\/[^/]+\/students$/.test(url.pathname)) {
-      json({ students: STUDENTS.map((s) => ({ student: s })) });
+      json({
+        count: STUDENTS.length,
+        students: STUDENTS.map((s) => ({
+          relationship_type: 'parent',
+          guardian_id: 'guardian-xyz-999',
+          student: s,
+        })),
+      });
       return;
     }
     const m = url.pathname.match(/^\/api\/v1\/students\/([^/]+)\/activities$/);
     if (m?.[1]) {
       const page = Number(url.searchParams.get('page') ?? '0');
       const size = Number(url.searchParams.get('page_size') ?? '100');
-      const all = buildActivities(m[1], perStudent, baseUrl);
-      json({ activities: all.slice(page * size, page * size + size) });
+      let all = buildActivities(m[1], perStudent, baseUrl);
+      // Honour the server-side filters the real API supports.
+      const actionType = url.searchParams.get('action_type');
+      if (actionType) all = all.filter((a) => a.action_type === actionType);
+      const startDate = url.searchParams.get('start_date');
+      if (startDate) all = all.filter((a) => a.event_date >= startDate);
+      const endDate = url.searchParams.get('end_date');
+      if (endDate) all = all.filter((a) => a.event_date <= endDate);
+      json({
+        count: all.length,
+        offset: page * size,
+        page,
+        page_size: size,
+        activities: all.slice(page * size, page * size + size),
+      });
       return;
     }
     res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"not found"}');
