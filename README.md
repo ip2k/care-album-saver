@@ -91,11 +91,16 @@ Honesty matters more here than reassurance, so:
 - **Photos may contain other children.** A group photo from your child's class has other
   families' children in it. Please treat those photos the way you would want yours treated.
 - **Labelling photos with names writes those names into the file itself.** Your child's
-  name, the nursery's name and the name of whoever posted the photo. That is what makes
-  them searchable in Apple Photos and similar apps — but it also means those names travel
-  with the file if you ever share it. You can turn this off with one switch, and then
-  nothing inside the file says who or where. The details are still recorded in the small
-  `.json` file beside each photo, which stays behind when you share the photo itself.
+  name, the nursery's name, the name of whoever posted the photo, and the teacher's note —
+  which usually names all three in one sentence. That is what makes them searchable in
+  Apple Photos and similar apps, but it also means those names travel with the file if you
+  ever share it. You can turn this off with one switch, and then nothing inside the file
+  says who or where. Everything is still recorded in the small `.json` file beside each
+  photo, which stays behind when you share the photo itself.
+- **Removing location information needs ExifTool.** If you have not installed it, every
+  photo is still saved and everything is still written to the `.json` file beside it — but
+  nothing can be changed inside the photo, so any coordinates it arrived with are still
+  there. The run says so rather than leaving you to assume otherwise.
 - **On Windows, the files are not owner-only.** On a Mac or Linux this tool writes the
   session file so that only your account can open it, and creates the photo folders the
   same way. Windows has no equivalent file setting: the session and the photos inherit the

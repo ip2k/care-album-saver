@@ -24,6 +24,15 @@ if (!process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR) {
   process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'bw-test-config-'));
 }
 
+// The config directory was only half of it. DEFAULT_CONFIG.archiveDir is
+// defaultArchiveDir(), so a test — or an agent's throwaway script — that syncs without
+// naming a folder writes a full archive into ~/Brightwheel Photos. That happened three
+// times on 2026-09-22 while this very isolation was being written, which is the argument
+// for making the bad state unrepresentable rather than remembering to pass a path.
+if (!process.env.BRIGHTWHEEL_ARCHIVE_DIR) {
+  process.env.BRIGHTWHEEL_ARCHIVE_DIR = mkdtempSync(join(tmpdir(), 'bw-test-photos-'));
+}
+
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
  *
@@ -70,6 +79,30 @@ function isInside(child, parent) {
  * scratch space in BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH. Anywhere else is refused, whether or
  * not anyone has thought of it.
  */
+/**
+ * The same rule for the photos as for the session: a test may only archive somewhere
+ * disposable. Called by assertIsolatedConfigDir, so every file that already guards its
+ * config directory gets this for free.
+ */
+function assertIsolatedArchiveDir() {
+  const dir = process.env.BRIGHTWHEEL_ARCHIVE_DIR;
+  if (!dir) {
+    throw new Error(
+      'BRIGHTWHEEL_ARCHIVE_DIR is not set. Import scripts/test-env.js first: without it a ' +
+        'sync built from DEFAULT_CONFIG archives into the real ~/Brightwheel Photos.',
+    );
+  }
+  const scratch = process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
+  const allowed = scratch ? [tmpdir(), scratch] : [tmpdir()];
+  if (!isAbsolute(dir) || !allowed.some((root) => isInside(dir, root))) {
+    throw new Error(
+      `BRIGHTWHEEL_ARCHIVE_DIR is ${dir}, which is not a throwaway test directory. A test ` +
+        'must not write photographs anywhere a person keeps theirs.',
+    );
+  }
+  return dir;
+}
+
 export function assertIsolatedConfigDir() {
   const dir = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
   if (!dir) {
@@ -80,7 +113,10 @@ export function assertIsolatedConfigDir() {
   }
   const scratch = process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
   const allowed = scratch ? [tmpdir(), scratch] : [tmpdir()];
-  if (allowed.some((root) => isInside(dir, root))) return dir;
+  if (allowed.some((root) => isInside(dir, root))) {
+    assertIsolatedArchiveDir();
+    return dir;
+  }
   throw new Error(
     `BRIGHTWHEEL_ARCHIVE_CONFIG_DIR is ${dir}, which is not a throwaway test directory. ` +
       `A test config directory must be inside ${tmpdir()} (use mkdtemp), or inside a directory ` +
@@ -121,13 +157,19 @@ export async function exifToolSkipReason(load) {
   } catch (error) {
     const reason = `exiftool-vendored did not load; it is an optional dependency: ${error.message}`;
     if (process.env.CI && process.env.BRIGHTWHEEL_ARCHIVE_OPTIONAL_EXIFTOOL !== '1') {
-      throw new Error(
-        `${reason}\n` +
-          'This is CI, where the optional dependency is expected to install, so the metadata ' +
-          'tests are failing rather than skipping: a green run that skipped them would prove ' +
-          'nothing about what is written into a photo. Set ' +
-          'BRIGHTWHEEL_ARCHIVE_OPTIONAL_EXIFTOOL=1 for a runner that deliberately has no ExifTool.',
+      // On CI the optional dependency is expected to install, so a skip would be a green run
+      // that proved nothing about what goes into a photo. Return false — "do not skip" — and
+      // let each test fail where it reaches for ExifTool.
+      //
+      // Deliberately NOT a throw: this runs while a test file is still being evaluated, so
+      // throwing takes the whole file down, including tests that have nothing to do with
+      // metadata — stop-mid-listing, manifest races, the web-UI stop path. Failing the tests
+      // that actually need ExifTool is the smaller, truer blast radius.
+      process.stderr.write(
+        `${reason}\nThis is CI, so the metadata tests will run and fail rather than skip. ` +
+          'Set BRIGHTWHEEL_ARCHIVE_OPTIONAL_EXIFTOOL=1 for a runner that deliberately has none.\n',
       );
+      return false;
     }
     return reason;
   }

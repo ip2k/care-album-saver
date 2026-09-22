@@ -2,7 +2,7 @@ import '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -293,4 +293,18 @@ test('turning the names off leaves no name of any kind inside the file', { skip:
     await closeMetadata();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------- where photos may land
+
+test('a config nobody gave a folder to cannot archive into the real home directory', () => {
+  // DEFAULT_CONFIG.archiveDir is defaultArchiveDir(), so any code that builds a config
+  // without naming a folder — a test, or a throwaway script — used to archive straight into
+  // ~/Brightwheel Photos. It happened three times on 2026-09-22, each time from code whose
+  // author believed the config-directory isolation covered it. It does not: they are two
+  // different directories, and now two different variables.
+  const dir = DEFAULT_CONFIG.archiveDir;
+  assert.equal(dir, process.env.BRIGHTWHEEL_ARCHIVE_DIR, 'the test run redirects the default');
+  assert.notEqual(dir, join(homedir(), 'Brightwheel Photos'));
+  assert.ok(!dir.startsWith(homedir() + '/Brightwheel'), 'and never the real photos folder');
 });

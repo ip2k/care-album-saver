@@ -71,12 +71,17 @@ higher-resolution original exists, whether `page` is 0- or 1-based, and the true
 
 **There is now a read-only command for most of this.** `brightwheel-archive verify`
 (`src/verify.ts`) makes three API reads — `/users/me`, the guardian's students, and one
-five-record page of activities — plus two HEAD probes of a single media URL, and
-downloads nothing. It reports which fields are **present** and what **type** they are,
-never their values, so its output is safe to paste into a public issue. It settles the
-`object_id`-versus-`id` question, the `.student` nesting, whether `action_type=ac_photo`
-is accepted, where the media URL lives, whether that URL is signed, and whether the media
-host rejects the session cookie.
+five-record page of activities — plus one HEAD probe of a single media URL, sent without
+the session, and downloads nothing. It reports which fields are **present** and what
+**type** they are rather than their values. A few values it does print, deliberately and
+with care: the last two labels of the media host, the *names* of the signature parameters,
+and how far apart `event_date` and `created_at` are on one record. None of those names a
+family, which is what makes the report safe to paste into a public issue — but "no values
+at all" would be the wrong thing to promise. It settles the `object_id`-versus-`id`
+question, the `.student` nesting, whether `action_type=ac_photo` is accepted, where the
+media URL lives, and whether that URL is signed. It deliberately does **not** settle
+whether the media host rejects the session cookie: finding out means sending an
+account-takeover credential to a third party, which this tool will not do.
 
 It does **not** settle three of the five above: whether `page` is 0- or 1-based (it only
 ever asks for page 0), the true maximum `page_size` (it asks for 5, while a real run asks

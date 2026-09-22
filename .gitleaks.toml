@@ -53,4 +53,6 @@ regexes = [
   # boundary matters: a bare `signature=x` would also allowlist a real signature that
   # happens to start with an x.
   '''signature=(aaa|zzz|deadbeef|x)\b''',
+  # The verify-report fixture, which needs a signature long enough to look like one.
+  '''signature=not-a-real-signature''',
 ]

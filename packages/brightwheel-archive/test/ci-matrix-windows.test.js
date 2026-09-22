@@ -152,7 +152,7 @@ test('Docker: the documented /photos volume passes as the node user and as any -
   assert.equal(checkArchiveDir('/', { platform: 'linux', homedir: '/', tmpdir: '/tmp' }).ok, false);
 });
 
-test('the file-mode tests skip on Windows with a printed reason, never silently', async () => {
+test('the file-mode tests skip on Windows with a printed reason, never silently', async (t) => {
   // Runs the integration file in a child that believes it is on Windows. The two tests
   // that assert 0600/0700 must be reported as skipped, with the reason in the output —
   // that is what turns "35 pass" on a Windows runner from a question into an answer.
@@ -161,7 +161,11 @@ test('the file-mode tests skip on Windows with a printed reason, never silently'
   // The child runs the real setup UI, so it gets a throwaway directory and the same guard
   // the child itself applies — checked here too, because the child's own failure would be
   // buried in its TAP output rather than reported as this test failing.
+  // Restored afterwards: this is the process every other test file in this run shares, and
+  // leaving it pointed somewhere else is how one test quietly decides another's fate.
+  const previous = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
   process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = configDir;
+  t.after(() => { process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = previous; });
   assert.equal(assertIsolatedConfigDir(), configDir);
   // The runner marks its own children with NODE_TEST_CONTEXT, and a grandchild that
   // inherits it reports in the runner's internal protocol instead of TAP.

@@ -338,19 +338,19 @@ export const PAGE = String.raw`<!doctype html>
           <div class="opt">
             <input type="checkbox" id="tagChildName" checked>
             <label for="tagChildName">Label photos with names
-              <span class="why">Your child&rsquo;s name, the nursery&rsquo;s name and the name of whoever posted the photo, stored inside the file. That is what lets Apple Photos, Immich and similar apps search by name &mdash; and it means those names travel with the file if you ever share it. Turn this off and nothing inside the file says who or where; the details are still kept in the small .json file beside it, which stays behind when you share the photo.</span>
+              <span class="why">Your child&rsquo;s name, the nursery&rsquo;s name, the name of whoever posted the photo, and the teacher&rsquo;s note &mdash; which usually says all three &mdash; stored inside the file. That is what lets Apple Photos, Immich and similar apps search by name, and it means those names travel with the file if you ever share it. Turn this off and nothing inside the file says who or where. Everything is still kept in the small .json file beside the photo, which stays behind when you share the photo itself.</span>
             </label>
           </div>
           <div class="opt">
             <input type="checkbox" id="tagNote" checked>
             <label for="tagNote">Keep the teacher&rsquo;s note
-              <span class="why">Saves the caption as the photo&rsquo;s description.</span>
+              <span class="why">Saves the caption as the photo&rsquo;s description. It applies only while &ldquo;Label photos with names&rdquo; is on, because a note usually names the child, the room and the teacher in one sentence.</span>
             </label>
           </div>
           <div class="opt">
             <input type="checkbox" id="stripLocation" checked>
             <label for="stripLocation">Remove location information
-              <span class="why">Strips any GPS coordinates, so the file cannot reveal where it was taken.</span>
+              <span class="why">Strips any GPS coordinates, so the file cannot reveal where it was taken. This one needs ExifTool; without it the run says so plainly rather than leaving you to assume it happened.</span>
             </label>
           </div>
 

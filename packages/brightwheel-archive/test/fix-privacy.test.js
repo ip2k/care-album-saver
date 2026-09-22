@@ -260,8 +260,12 @@ test('archive.json is owner-only: it names every child, every note and everyone 
 /** A stand-in Brightwheel that records every request, so a test can see what was sent. */
 function fakeApi() {
   const calls = [];
+  // The signature is the literal the secret scanner's allowlist names, so that this
+  // fixture cannot be mistaken for a real one — see .gitleaks.toml. The host deliberately
+  // carries the nursery's name, because a per-tenant bucket really can, and the test below
+  // is about verify not printing it.
   const mediaUrl =
-    'https://sunnybrook-early-learning.media.example.net/p/1.jpg?signature=abcdefghijklmnopqrstuvwx&expires=99';
+    'https://sunnybrook-early-learning.media.example.net/p/1.jpg?signature=not-a-real-signature&expires=99';
   const json = (body) =>
     new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
 

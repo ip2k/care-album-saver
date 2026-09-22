@@ -403,3 +403,35 @@ const PHOTOS_ROOT = fileURLToPath(new URL('../../../node_modules/.cache/bw-corre
 after(async () => {
   await rm(PHOTOS_ROOT, { recursive: true, force: true });
 });
+
+test('a feed that ends exactly on the page limit is finished, not truncated', async () => {
+  // The other side of the truncation warning. A feed whose last page is the last page the
+  // walk is allowed to read looks identical to one that was cut short — unless the page is
+  // short, which is the feed ending. Getting this wrong told a parent on every single run
+  // that their archive might be incomplete, about an archive that was complete.
+  const mock = await startMockBrightwheel({ activitiesPerStudent: 15, maxPageSize: 10 });
+  try {
+    class ShortWalk extends BrightwheelClient {
+      async *activityPages(studentId, opts) {
+        // 15 posts at 10 a page is two pages, the second holding 5. maxPages 2 means the
+        // walk ends on the limit and on the end of the feed at the same moment.
+        yield* super.activityPages(studentId, { ...opts, maxPages: 2 });
+      }
+    }
+    const client = new ShortWalk({ session: new Secret(SESSION), baseUrl: `${mock.url}/api/v1`, delayMs: 0 });
+    const dir = await mkdtemp(join(tmpdir(), 'bw-not-truncated-'));
+    const result = await sync(client, configFor(dir, { incremental: true }), () => {}, { allowTemporaryDir: true });
+
+    assert.ok(
+      !result.warnings.some((w) => /longer than this tool reads in one go/.test(w)),
+      `a finished feed must not be reported as cut short: ${JSON.stringify(result.warnings)}`,
+    );
+    assert.notDeepEqual(
+      (await manifestOf(dir)).state.walkedThrough,
+      {},
+      'and a finished walk moves the cut-off, so the next run is cheap',
+    );
+  } finally {
+    await mock.close();
+  }
+});

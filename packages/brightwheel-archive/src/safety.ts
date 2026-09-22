@@ -157,9 +157,12 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
 /**
  * Permissions for the archive itself.
  *
- * 0700: owner only. The photos are of a child and, because this tool writes the child's
- * name into the metadata of every file, they are identified photographs. They should not be
- * readable by other accounts on a shared family computer. Windows ignores the mode and
- * inherits the parent ACL instead; the README says so rather than implying otherwise.
+ * 0700: owner only. The photos are of a child, and the archive identifies them whatever the
+ * names switch says — the folder is named for the child, the .json file beside each photo
+ * carries the child, the nursery and the teacher, and archive.json carries all of it for
+ * the whole archive. Turning the names off keeps them out of the photo you might share; it
+ * does not make the archive anonymous, and this mode is what protects it from other
+ * accounts on a shared family computer. Windows ignores the mode and inherits the parent
+ * ACL instead; the README says so rather than implying otherwise.
  */
 export const ARCHIVE_DIR_MODE = 0o700;
