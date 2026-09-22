@@ -410,6 +410,10 @@ async function main(): Promise<number> {
             message: scrub(error instanceof Error ? error.message : String(error)),
             trigger: 'schedule',
           });
+          // And say so where somebody will see it. The record answers the question; this
+          // is what makes anyone ask it. Fixed text — the error is not in it — and a
+          // desktop with no notifier just means the record is the only trace.
+          await schedule.notify(schedule.FAILED_NOTICE).catch(() => false);
         }
         throw error;
       } finally {

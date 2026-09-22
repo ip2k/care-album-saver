@@ -118,6 +118,53 @@ function resolveEnv(env: ScheduleEnvironment = {}): Resolved {
 /** The arguments the scheduled job runs. `--scheduled` is what writes the last-run record. */
 const RUN_ARGS = ['run', '--scheduled'];
 
+/**
+ * Paths that will not survive the next upgrade of the thing that owns them.
+ *
+ * A scheduled job records the absolute path of the Node binary and of this tool's entry
+ * point, which is what lets it avoid every `npx` problem. The cost is that both paths have
+ * to keep existing. A Node installed by a version manager lives under a version number
+ * that a later `nvm install` leaves behind, and a tool run through `npx` or `dlx` lives in
+ * a cache that is cleaned. Either way the job stays registered and silently does nothing —
+ * the exact failure `status` cannot otherwise tell from "nothing new to save".
+ */
+const EPHEMERAL = /[\/\\](?:\.nvm|\.volta|\.fnm|_npx|\.pnpm-store)[\/\\]|[\/\\]dlx-/i;
+
+/**
+ * Tell the person something happened, using whatever the desktop already has.
+ *
+ * A scheduled run fails while nobody is watching, and `last-run.json` only answers the
+ * question once somebody thinks to ask it. This is the nudge that makes them ask.
+ *
+ * The text is fixed and names nobody: a notification is drawn by the operating system,
+ * may sit in a notification centre for days, and on a shared screen is read by whoever
+ * walks past. It never carries the error, a child's name or a path. Launched with an
+ * argument array like everything else here, and a failure to notify is never a failure of
+ * the run — if the desktop has no notifier, the run's own record is still written.
+ */
+export async function notify(message: string, env: ScheduleEnvironment = {}): Promise<boolean> {
+  const e = resolveEnv(env);
+  const title = 'Care Album Saver';
+  try {
+    if (e.platform === 'darwin') {
+      // The message is a literal here, never interpolated from an error: this is
+      // AppleScript source, and the argument array does not protect its contents.
+      const script = message === FAILED_NOTICE
+        ? `display notification "The daily photo run did not work. Open the setup assistant to see why." with title "${title}"`
+        : null;
+      if (!script) return false;
+      return (await e.run('osascript', ['-e', script])).code === 0;
+    }
+    if (e.platform === 'win32') return false;
+    return (await e.run('notify-send', [title, message])).code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** The one notice this tool sends. Fixed text, so nothing about a family can reach it. */
+export const FAILED_NOTICE = 'The daily photo run did not work. Open the setup assistant to see why.';
+
 export interface TimeOfDay {
   hour: number;
   minute: number;
@@ -327,6 +374,8 @@ export interface ScheduleStatus {
   mechanism: ScheduleMechanism | null;
   /** `HH:MM` on this computer's clock. */
   time: string | null;
+  /** Registered and old enough to have run, but nothing has. See `status`. */
+  overdue?: boolean;
   /** The next time it will run, ISO 8601, or null when nothing is scheduled. */
   nextRun: string | null;
   lastRun: LastRun | null;
@@ -433,6 +482,7 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
     mechanism,
     location,
     installedAt: new Date().toISOString(),
+    fragilePath: EPHEMERAL.test(e.nodePath) ? e.nodePath : EPHEMERAL.test(e.cliPath) ? e.cliPath : null,
   };
   const config = await loadConfig();
   await saveConfig({ ...config, schedule: record });
@@ -509,9 +559,36 @@ export async function status(env: ScheduleEnvironment = {}): Promise<ScheduleSta
   const registered = await isRegistered(e, record.mechanism);
 
   const when = time ? spokenTime(time) : record.time;
+
+  /**
+   * A job that is registered, is old enough to have run, and never has.
+   *
+   * This is the quiet failure: the scheduler holds the entry, the setup page says the
+   * daily run is on, and nothing happens — because the Node binary or this tool's entry
+   * point moved (see EPHEMERAL), or because the job was installed on a laptop that has
+   * been shut at seven every evening since. A day of grace past the first occurrence
+   * after installation, so a job set up this afternoon is not accused of anything.
+   */
+  const installedAt = Date.parse(record.installedAt ?? '');
+  const lastAt = lastRun ? Date.parse(lastRun.at) : NaN;
+  const dueSince = Number.isFinite(installedAt) ? installedAt + 2 * 24 * 3600 * 1000 : NaN;
+  const overdue =
+    registered !== false &&
+    Number.isFinite(dueSince) &&
+    Date.now() > dueSince &&
+    (!Number.isFinite(lastAt) || lastAt < Date.now() - 2 * 24 * 3600 * 1000);
+
+  const sinceInstall = Number.isFinite(installedAt)
+    ? Math.floor((Date.now() - installedAt) / (24 * 3600 * 1000))
+    : null;
   const summary = registered === false
     ? `A daily run at ${when} was set up on this computer, but it is no longer there — something removed it. Turn it on again below.`
-    : `Photos are saved automatically every day at ${when}. This only happens while the computer is on and signed in.`;
+    : overdue
+      ? `A daily run at ${when} is set up${sinceInstall === null ? '' : ` — ${sinceInstall} days ago`}, but it has not saved anything yet. ` +
+        (record.fragilePath
+          ? 'That usually means the program it points at has moved, which happens when Node is upgraded or a temporary copy is cleaned up. Turn it off and on again below to point it at the current one.'
+          : 'Either the computer has been off or asleep at that time every day, or the program it points at has moved. Turn it off and on again below to point it at the current one.')
+      : `Photos are saved automatically every day at ${when}. This only happens while the computer is on and signed in.`;
 
   return {
     installed: true,
@@ -521,6 +598,7 @@ export async function status(env: ScheduleEnvironment = {}): Promise<ScheduleSta
     lastRun,
     registered,
     location: record.location,
+    overdue,
     summary,
   };
 }
