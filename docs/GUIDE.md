@@ -110,13 +110,19 @@ Open **Advanced options** for the folder, the layout and the rest.
 | Setting | Default | What it means |
 |---|---|---|
 | Save photos for | **All your children** | Untick a child to leave their photos out. A child who joins your account later is included automatically as long as everyone is ticked. |
-| Label photos with your child's name | **On** | Lets Apple Photos and similar find them by name. The name is written inside the photo file. |
+| Label photos with names | **On** | Writes three names inside the photo file: your child's, the nursery's, and whoever posted it. That is what lets Apple Photos, Immich and similar apps search by name — and it means those three names travel with the file if you ever share it. Turn it off and nothing inside the file says who or where. |
 | Keep the teacher's note | **On** | Saves the caption as the photo's description. |
 | Remove location information | **On** | Strips GPS coordinates so a shared photo cannot reveal where it was taken. |
 | Folder layout | Child, then week | Or one folder per week with all children together, or one folder per week with a folder for each child inside it. |
-| Where to save | `~/Brightwheel Photos` | **Avoid iCloud Drive, Dropbox or OneDrive folders** unless you want copies on their servers. |
+| Where to save the photos | `~/Brightwheel Photos` | **Avoid iCloud Drive, Dropbox or OneDrive folders** unless you want copies on their servers. |
 | Only look for new photos | **On** | Much faster. Turn off to re-check from the beginning. |
 | Save an extra settings file beside each photo | **Off** | A small `.xmp` file that photo-editing programs such as Lightroom and darktable can read. Leave it off unless you use one of them. |
+
+**The names switch changes the photo, not the `.json` file beside it.** That small file
+always records your child's name and Brightwheel id, the nursery, the teacher's note and
+who posted it, whichever way the switches are set — it is the record that keeps the archive
+readable in twenty years. It stays on your computer when you share a photo, which is the
+point of it; it is also the reason not to paste one into a public bug report.
 
 > **From the terminal instead:** `npx brightwheel-archive children` lists your children with
 > the id Brightwheel uses for each, and `npx brightwheel-archive run --child "Sam Maple"`
@@ -229,16 +235,27 @@ the task fails at once with *the system cannot find the file specified*. Setting
 
 ### Docker
 
+Only if you already use Docker — it is not the easy path, and there is no ready-made image
+to download. You build one yourself, once, from a copy of this project:
+
+```sh
+docker build -t brightwheel-archive .
+```
+
+Then, each time:
+
 ```sh
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   -v ~/.config/brightwheel-archive:/config \
   -v ~/Brightwheel\ Photos:/photos \
-  ghcr.io/OWNER/brightwheel-archive run --dir /photos
+  brightwheel-archive run --dir /photos
 ```
 
 `--dir /photos` is what sends the photos to the folder you mounted; without it they are
-written inside the container and go when it does. `--user` runs the container as you, which
+written inside the container and go when it does. (The image has a built-in command that
+would supply `--dir` for you, but naming `run` at the end replaces it, so once you name
+`run` you have to name `--dir /photos` too.) `--user` runs the container as you, which
 is what lets it read your session file and write into your folder on Linux; Docker Desktop
 on a Mac or Windows does not need it and is not harmed by it. The `/config` line above is
 the Linux location — on a Mac the session lives in
@@ -249,25 +266,30 @@ prints the exact folder to mount.
 
 ## When something goes wrong
 
-Run this first — it checks everything and **hides any secrets**, so it is safe to paste
-into a bug report:
+Run this first. It checks everything and **never prints your session** — only a short
+fingerprint of it:
 
 ```sh
 npx brightwheel-archive doctor
 ```
 
+It is safe to paste into a bug report, with one thing to glance at first: it prints the full
+paths to your settings and photos folders, and on most computers those contain the name of
+your user account. Change that to something else if you would rather not show it.
+
 | Message | What to do |
 |---|---|
 | *Your Brightwheel session has expired* | Normal — they expire. Run `setup` again and paste a fresh value. If it happens in the middle of a run, everything saved up to that point is kept and the next run carries on from there. |
-| *That does not look like a Brightwheel session* | You may have copied the **Name** column instead of **Value**. |
+| *That does not look like a Brightwheel session* | What you pasted was not a session value at all — most often a whole line of cookies copied from somewhere else. Go back to the `_brightwheel_v2` row and copy only what is in its **Value** column. |
+| *Your Brightwheel session has expired* — **straight after pasting a fresh value** | Probably not expired: the tool cannot tell a wrong value from an old one, so anything Brightwheel rejects is reported this way. The usual cause is copying the **Name** column (`_brightwheel_v2`) instead of the **Value** column beside it — the value is a long jumble of letters and numbers, not a word. Check that, then paste again. |
 | *Tick at least one child* | Every child is unticked. **Start saving** stays grey until you tick one — the tool will not run with nobody chosen. |
 | *That is a temporary folder, and your computer deletes those automatically* | The folder you typed is one the computer empties by itself, so it is refused rather than losing your photos months from now. Choose somewhere permanent, such as `~/Brightwheel Photos`. |
 | *This folder looks like it is inside Dropbox* (or iCloud Drive, OneDrive, Google Drive) | A warning, not a refusal: the folder is saved and the run will use it. It means a copy of every photo goes to that company as well. Fine if you meant it. |
 | *Could not reach the tool* | The black window it was started from has been closed. Start it again with `npx brightwheel-archive setup` and open the new link. |
 | *Looked through 40 of 312 updates* | Not a problem — this is the progress line. Brightwheel counts updates of every kind, so that total includes check-ins, naps and notes. It is not a number of photos, and most of them are not photos. |
-| *No children found on this account* | Make sure you signed in as the parent account, not a staff one. |
-| *ExifTool is not installed* | Harmless. Dates and names go into the `.json` files instead. Install ExifTool to embed them. |
-| Photos in the wrong week | Please open an issue — include the `.json` file (it has no private data beyond your child's name). |
+| *No children found on this Brightwheel account* | Make sure you signed in as the parent account, not a staff one. |
+| *ExifTool is not installed* | Harmless: every photo is still saved, and the dates and names go into the `.json` file beside it rather than inside it. Writing them *inside* needs the tool's own bundled copy, which comes with it automatically — so this message usually means the install skipped optional packages. Installing ExifTool on your computer by hand will **not** fix it; the tool only ever uses its own copy. Reinstalling normally (`npm install -g brightwheel-archive`, without `--omit=optional`) will. |
+| Photos in the wrong week | Please open an issue, and include three things: the photo's file name (`2026-09-18_093214_7f3a9b21.jpg`), the week folder it landed in (`2026-W38` — just that part, not the folder above it, which is your child's name), and the single line from the `.json` file beside it that starts `"capturedAt"`. That is everything needed to diagnose it, and none of it names anybody. **Please do not attach the whole `.json` file.** It also holds your child's name and Brightwheel id, the nursery's name, the teacher's note and who wrote it — and an issue tracker is a public web page that search engines index. |
 
 ---
 
