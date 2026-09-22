@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BrightwheelClient } from '../api/client.js';
+import type { Student } from '../api/schema.js';
 import { loadConfig, loadSession, normaliseCookieInput, saveConfig, saveSession, type Config } from '../config.js';
 import { Secret, scrub } from '../secrets.js';
 import { sync, type SyncProgress } from '../sync.js';
@@ -84,6 +85,66 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
   let progress: SyncProgress = { phase: 'starting', message: 'Ready', saved: 0, skipped: 0, failed: 0 };
   let running = false;
   let lastResult: unknown = null;
+  // The children on the account, as last read from Brightwheel. Kept so that choosing a
+  // child in the page does not cost a round trip to Brightwheel per tick, and so that
+  // "every child is ticked" can be recognised and stored as "all" (an empty list), which
+  // is what keeps a child added to the account later from being silently left out.
+  let children: Student[] | null = null;
+  // Settings now save themselves as each control changes, so two quick ticks can arrive
+  // together. Each save is a read-modify-write of one file; run them one at a time or the
+  // second read can miss the first write and quietly undo it.
+  let configWrites: Promise<void> = Promise.resolve();
+
+  const withConfigLock = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = configWrites.then(work);
+    // A refused save must not jam the queue for the saves after it.
+    configWrites = result.then(() => {}, () => {});
+    return result;
+  };
+
+  const readChildren = async (client: BrightwheelClient): Promise<Student[]> => {
+    if (!children) {
+      const me = await client.me();
+      children = await client.students(me.id);
+    }
+    return children;
+  };
+
+  /** Which of the account's children the config selects. Empty config means all of them. */
+  const includedIds = (config: Config, list: Student[]): string[] =>
+    config.includeStudents.length === 0
+      ? list.map((s) => s.id)
+      : list.filter((s) => config.includeStudents.includes(s.id)).map((s) => s.id);
+
+  /**
+   * Check a child selection before it is stored.
+   *
+   * The page sends the ids that are ticked, never the empty-means-all shorthand, so that
+   * "nothing ticked" is expressible and can be refused here rather than turning into a
+   * confusing "no children found" the first time a run starts.
+   */
+  const checkIncludeStudents = async (
+    value: unknown,
+  ): Promise<{ ok: true; resolved: string[] } | { ok: false; error: string }> => {
+    if (!Array.isArray(value) || !value.every((v) => typeof v === 'string' && v.length > 0)) {
+      return { ok: false, error: 'Could not read which children were chosen. Reload the page and try again.' };
+    }
+    const chosen = [...new Set(value as string[])];
+    if (chosen.length === 0) {
+      return { ok: false, error: 'Tick at least one child. Photos are only saved for the children you tick.' };
+    }
+    const session = await loadSession();
+    if (!session) return { ok: true, resolved: chosen };
+    const known = await readChildren(new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl }));
+    const knownIds = new Set(known.map((s) => s.id));
+    if (chosen.some((id) => !knownIds.has(id))) {
+      return {
+        ok: false,
+        error: 'One of the chosen children is no longer on this Brightwheel account. Reload the page and choose again.',
+      };
+    }
+    return { ok: true, resolved: known.every((s) => chosen.includes(s.id)) ? [] : chosen };
+  };
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Nothing here may ever be cached: the pages list children's names and photos.
@@ -156,6 +217,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         await saveSession(secret, check.email);
+        // A different account has different children.
+        children = null;
         json(200, { ok: true, email: check.email, fingerprint: secret.fingerprint() });
         return;
       }
@@ -168,14 +231,25 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         if (typeof patch.archiveDir === 'string') {
           const verdict = checkArchiveDir(patch.archiveDir);
           if (!verdict.ok) {
-            json(400, { ok: false, error: verdict.error });
+            json(400, { ok: false, error: verdict.error, field: 'archiveDir' });
             return;
           }
           patch.archiveDir = verdict.resolved;
           warning = verdict.warning;
         }
-        const config = { ...(await loadConfig()), ...patch };
-        await saveConfig(config);
+        if (patch.includeStudents !== undefined) {
+          const verdict = await checkIncludeStudents(patch.includeStudents);
+          if (!verdict.ok) {
+            json(400, { ok: false, error: verdict.error, field: 'includeStudents' });
+            return;
+          }
+          patch.includeStudents = verdict.resolved;
+        }
+        const config = await withConfigLock(async () => {
+          const merged = { ...(await loadConfig()), ...patch };
+          await saveConfig(merged);
+          return merged;
+        });
         json(200, { ok: true, config, warning });
         return;
       }
@@ -188,7 +262,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         }
         const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl });
         const me = await client.me();
-        json(200, { ok: true, children: await client.students(me.id) });
+        // Always re-read here rather than serving the cache: this is the call the page
+        // makes on load, and a child added to the account since should appear.
+        children = await client.students(me.id);
+        json(200, { ok: true, children, included: includedIds(await loadConfig(), children) });
         return;
       }
 
