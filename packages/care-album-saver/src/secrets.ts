@@ -96,7 +96,16 @@ const SCRUB_PATTERNS: [RegExp, string][] = [
 
 /**
  * Remove anything that looks like a credential from arbitrary text.
- * Applied to every log line and to the output of `care-album-saver bug-report`.
+ * Applied to every error message and progress line the CLI prints and the setup page is
+ * shown. There is no `bug-report` command; an earlier version of this comment named one.
+ *
+ * Note what it can and cannot recognise. It matches a value still attached to its
+ * `_brightwheel_v2=` prefix and unbroken by whitespace — a BARE value is invisible to it,
+ * and a value containing a newline is redacted only as far as that newline. Neither is a
+ * gap to close with a cleverer pattern: a "long base64-ish blob" rule would redact half
+ * the archive's own filenames. It is the reason the real control is refusing impossible
+ * characters at the paste boundary, in `src/paste.ts`, so that nothing shaped like that
+ * ever reaches a log to be scrubbed.
  */
 export function scrub(text: string): string {
   let out = text;

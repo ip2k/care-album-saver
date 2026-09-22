@@ -2,13 +2,17 @@
 
 **Save your own child's photos from Brightwheel onto your own computer, sorted into a folder for each week.**
 
-Your childcare provider posts photos of your child to Brightwheel. Those photos live on
-Brightwheel's servers, and they arrive with nothing in them — no date, no name, nothing your
-photo app can sort by. This tool copies them onto your computer, gives each one the date it
-was posted, labels it with your child's name, and files it in a folder for that week.
+Your nursery posts photos of your child to Brightwheel, and there they stay: on
+Brightwheel's servers, saved one at a time from the website, and reachable only for as long
+as your family's access to that profile lasts. When a child leaves, so does the album.
 
-Run it once a day and you build up a complete, private archive of your child's time at
-nursery — one you keep, whatever happens to your account.
+This tool copies all of them onto your own computer, into a folder for each week. The files
+arrive carrying nothing — no date, no name, nothing a photo app can sort by — so it writes
+in the time each one was posted, your child's name and the teacher's note, and leaves a
+plain-text `.json` beside every file so the archive still reads in twenty years without
+this tool. Run it once a day and it only fetches what is new.
+
+What you end up with is yours, on your disk, and it outlives the account.
 
 ```
 Care Album Photos/
@@ -74,7 +78,7 @@ into other people's software is a bad habit to build, even when the software is 
 
 ### The setup page that opens in your browser
 
-When you run the setup assistant, a page opens at an address starting `127.0.0.1`. That
+When you run the setup assistant, it prints a link starting `127.0.0.1` for you to paste into your browser. That
 number means **this computer and nothing else**. The page is not on the internet. Nobody
 on your wifi, in your building, or anywhere in the world can open it. It closes when you
 stop the program.
@@ -305,7 +309,7 @@ writes all of the common ones. Your files land on the right day in whichever app
 
 | Field | Holds |
 |---|---|
-| `EXIF:DateTimeOriginal`, `CreateDate`, `ModifyDate` | When the photo was taken, as the clock read where it was taken |
+| `EXIF:DateTimeOriginal`, `CreateDate`, `ModifyDate` | The time it was **posted** to Brightwheel, as the clock read there (see "About the dates, honestly") |
 | `EXIF:OffsetTimeOriginal`, `OffsetTimeDigitized` | The timezone offset, so that local time is unambiguous |
 | `IPTC:DateCreated`, `TimeCreated`, `DigitalCreationDate`, `DigitalCreationTime` | The same moment, with the offset, for older galleries |
 | `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
@@ -325,7 +329,7 @@ actually read:
 
 | Field | Holds |
 |---|---|
-| `QuickTime:CreateDate`, `ModifyDate` | When the video was taken, written in UTC as the QuickTime specification requires |
+| `QuickTime:CreateDate`, `ModifyDate` | The time it was **posted**, written in UTC as the QuickTime specification requires |
 | `QuickTime:TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate` | The same instant, in the track and media headers |
 | `Keys:CreationDate` | The same moment as local time with its offset — the field Apple Photos prefers |
 | `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
@@ -337,7 +341,12 @@ actually read:
 
 So a video's headers hold UTC while its week folder is named for the local day. Both are
 right — each follows its own convention — and a player that reads the header converts it
-back to the time you would have read off the clock in the room.
+back to the local time it was posted.
+
+One consequence worth knowing before it surprises you: run plain `exiftool` on an archived
+video and `CreateDate` reads as the UTC wall clock, with no zone beside it, which can look
+hours off. Photo and video apps show the local time, because they convert it. Both are the
+same instant; only the hex editor sees UTC.
 
 **The picture itself is never altered or re-compressed.** Only the metadata is touched, so
 the file you keep is the file Brightwheel served. The tests check this the hard way, on both
@@ -407,11 +416,18 @@ by an internal paginated endpoint, so this tool reads that endpoint directly ins
 driving a browser and simulating scrolling. That makes it fast, reliable, and gentle on
 Brightwheel's servers (one request at a time, with a pause between them).
 
-**What we have not been able to check.** Nobody has yet run this against a real Brightwheel
-account and confirmed that it reads the feed correctly. There is no published documentation
-for that endpoint, so the field names were pieced together from six other open-source
-Brightwheel clients. We believe they are right. We have not proved it, and until somebody
-has, please do not treat this as finished software.
+**What has been checked, and against what.** One real account, at one nursery. A full run
+on 21 September 2026 read the feed and saved 632 files, and `verify` then confirmed the
+field names this tool relies on — and corrected one: the person who posted a photo is in
+`first_name` and `last_name`, not `name`, so every archive written before that recorded no
+author at all. There is no published documentation for the endpoint; the names were first
+pieced together from six other open-source Brightwheel clients, and that is exactly why
+they needed checking.
+
+**Still unchecked**, and each of these is one more read away: whether pages count from 0 or
+1, the largest page size the API allows, whether a higher-resolution original exists, and
+how long a photo link stays valid. One account at one nursery is also not every nursery, so
+if `verify` reports something different on yours, that is worth an issue.
 
 `care-album-saver verify` is how you check it on your own account without archiving
 anything. It makes a handful of read-only requests — a few reads of the API, and a check
