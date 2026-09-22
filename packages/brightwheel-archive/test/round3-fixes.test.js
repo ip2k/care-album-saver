@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BrightwheelClient,
+  buildTags,
   DEFAULT_CONFIG,
   Secret,
   startMockBrightwheel,
@@ -194,5 +195,54 @@ test('a stop that arrives in the instant a run is starting still stops it', asyn
     assert.ok(Array.isArray(manifest.files), 'the manifest was written before the server went away');
   } finally {
     await handle.close().catch(() => {});
+  }
+});
+
+// ---------------------------------------------------------------- what "no names" means
+
+test('turning the names off leaves no name of any kind inside the file', async () => {
+  // The switch reads, to a parent, as "do not make this photo self-identifying". It used
+  // to govern only the child's name, while the nursery's name and the name of whoever
+  // posted the photo went in regardless — so a file shared with the switch off still said
+  // which nursery the child attends. Both now follow the same switch.
+  const student = { id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook Early Learning' };
+  const activity = {
+    id: 'act-1',
+    studentId: 'stu-x',
+    capturedAt: new Date('2026-09-18T09:15:00'),
+    note: 'Water play in the garden.',
+    url: 'https://example.invalid/a.jpg',
+    kind: 'image',
+    author: 'Ms. Alvarez',
+  };
+
+  for (const kind of ['image', 'video']) {
+    const off = buildTags({
+      filePath: '/dev/null',
+      activity: { ...activity, kind },
+      student,
+      tagChildName: false,
+      tagNote: true,
+      stripLocation: true,
+      writeSidecar: false,
+    });
+    const written = JSON.stringify(off);
+    assert.ok(!written.includes('Robin'), `${kind}: the child's name must not be written`);
+    assert.ok(!written.includes('Sunnybrook'), `${kind}: nor the nursery's`);
+    assert.ok(!written.includes('Alvarez'), `${kind}: nor whoever posted it`);
+    // The note is a different switch, and is still honoured.
+    assert.ok(written.includes('Water play'), `${kind}: the note has its own switch`);
+
+    const on = JSON.stringify(buildTags({
+      filePath: '/dev/null',
+      activity: { ...activity, kind },
+      student,
+      tagChildName: true,
+      tagNote: true,
+      stripLocation: true,
+      writeSidecar: false,
+    }));
+    assert.ok(on.includes('Robin') && on.includes('Sunnybrook') && on.includes('Alvarez'),
+      `${kind}: and all three are written when the switch is on`);
   }
 });

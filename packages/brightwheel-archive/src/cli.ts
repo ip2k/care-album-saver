@@ -24,7 +24,7 @@ brightwheel-archive — save your own child's photos from Brightwheel
 Options
   --dir <path>       Where to save photos (default: ~/Brightwheel Photos)
   --all              Re-check every photo, not just new ones
-  --no-name-tag      Do not write your child's name into the photo metadata
+  --no-name-tag      Do not write any name into the photo metadata
   --child <id|name>  Only this child, for this run (repeat for several; your saved
                      settings are not changed)
   --port <number>    Port for the setup assistant
