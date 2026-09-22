@@ -1,0 +1,47 @@
+name: security
+
+# Runs on every push and pull request, including from forks. A fork that accidentally
+# commits a session cookie gets told before it is merged here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Full history: a secret committed then "removed" is still there.
+      - name: Verify .gitignore actually blocks credentials
+        run: ./scripts/verify-ignores.sh
+      - name: Scan for credentials
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: corepack enable && pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm audit --audit-level=moderate
+
+  test:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
