@@ -1,7 +1,17 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Manifest, download, hashFile, safeStem, uniqueName, weekFolder, weekLabel } from 'media-ferry';
-import type { BrightwheelClient } from './api/client.js';
+import {
+  DownloadError,
+  Manifest,
+  download,
+  hashFile,
+  safeStem,
+  signedUrlExpiry,
+  uniqueName,
+  weekFolder,
+  weekLabel,
+} from 'media-ferry';
+import type { ActivityListOptions, ActivityPage, BrightwheelClient } from './api/client.js';
 import type { MediaActivity, Student } from './api/schema.js';
 import type { Config } from './config.js';
 import { applyMetadata, closeMetadata } from './metadata.js';
@@ -14,7 +24,17 @@ export interface SyncProgress {
   saved: number;
   skipped: number;
   failed: number;
+  /**
+   * How many items this run will handle, when that is knowable. It is not: Brightwheel's
+   * `count` is posts of every kind — check-ins, naps and meals as well as photos — and an
+   * incremental run stops early. A number here would turn into an invented percentage in
+   * the UI, so it stays undefined and the honest measures are `posts` and `examined`.
+   */
   total?: number;
+  /** Posts of every kind on the current child's feed, as Brightwheel counts them. */
+  posts?: number;
+  /** How many of those this run has looked through so far. */
+  examined?: number;
 }
 
 export interface SyncResult {
@@ -91,6 +111,101 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
   await writeFile(join(dir, 'README.md'), body, 'utf8');
 }
 
+/**
+ * Where each child's last *complete* walk of the feed reached, kept in the manifest.
+ *
+ * "Stop once we reach posts older than what we already hold" is only safe when what we
+ * hold is contiguous. A run that died on page three holds the newest posts and nothing
+ * older; taking the newest of those as the cut-off would skip the rest of the feed on
+ * every later run, silently and forever. So the cut-off advances only when a walk reaches
+ * the end with nothing left behind, and an interrupted or partly failed run resumes from
+ * the previous cut-off, skipping what it already saved. Manifests written before this
+ * existed have no cut-off at all and get one full, download-free walk.
+ */
+function walkedThrough(manifest: Manifest): Record<string, string> {
+  const state = manifest.state;
+  if (typeof state.walkedThrough !== 'object' || state.walkedThrough === null || Array.isArray(state.walkedThrough)) {
+    state.walkedThrough = {};
+  }
+  return state.walkedThrough as Record<string, string>;
+}
+
+/** What one child's walk of the feed needs in order to ask for a page a second time. */
+interface Walk {
+  client: BrightwheelClient;
+  student: Student;
+  /** The options the walk was started with; a re-request must page identically. */
+  listing: ActivityListOptions;
+  /**
+   * Listing pages fetched a second time because a signature on them had expired, by page
+   * index: activity id -> fresh URL. Every signature on a page ages together, so the first
+   * expiry pays for one extra request and the other ninety-nine on that page reuse it.
+   */
+  refreshed: Map<number, Map<string, string>>;
+}
+
+const isRefused = (e: unknown) => e instanceof DownloadError && (e.status === 401 || e.status === 403);
+const hasExpired = (url: string) => {
+  const expiry = signedUrlExpiry(url);
+  return expiry !== null && expiry.getTime() <= Date.now();
+};
+
+/**
+ * Download one item, surviving an expired signature.
+ *
+ * Media URLs are signed and short-lived (docs/QUESTIONS-FOR-FABLE.md, B3). A long run —
+ * a first archive of years of photos, videos over a slow connection — outlives the ones on
+ * its early pages, and the CDN then refuses a file that is perfectly available. The remedy
+ * is to ask for the listing page again, which carries fresh signatures, and try that URL.
+ *
+ * Bounded on purpose: this item re-fetches its page at most once, and never requests the
+ * same URL twice. A refusal that survives all of that is something other than expiry, and
+ * the item is left for the next run rather than hammered. A refusal counts, a network error
+ * does not — that is the caller's problem to report as it is.
+ */
+async function fetchMedia(walk: Walk, page: ActivityPage, activity: MediaActivity, target: string) {
+  const headers = walk.client.mediaHeaders();
+  const tried = new Set<string>();
+  let refetched = false;
+
+  /** A URL for this item we have not tried: the page's refreshed copy, or one re-fetch. */
+  const alternative = async (): Promise<string | null> => {
+    const cached = walk.refreshed.get(page.page)?.get(activity.id);
+    if (cached && !tried.has(cached)) return cached;
+    if (refetched) return null;
+    refetched = true;
+    const again = await walk.client.activitiesPage(walk.student.id, page.page, walk.listing);
+    walk.refreshed.set(page.page, new Map(again.items.map((i) => [i.id, i.url])));
+    const fresh = walk.refreshed.get(page.page)?.get(activity.id);
+    // Gone from the page, or the same URL back (so the signature was not the problem).
+    return fresh && !tried.has(fresh) ? fresh : null;
+  };
+
+  // Every signature on a page was issued together, so once one has expired the page's
+  // refreshed copy is the better first choice for the rest — no wasted request each.
+  let url = walk.refreshed.get(page.page)?.get(activity.id) ?? activity.url;
+  // A URL that says it has already expired is not worth a request either — unless the
+  // feed offers nothing else, in which case the CDN gets the final word after all.
+  if (hasExpired(url)) {
+    tried.add(url);
+    url = (await alternative()) ?? url;
+  }
+
+  let refusal: unknown;
+  for (;;) {
+    tried.add(url);
+    try {
+      return { url, ...(await download({ url, destination: target, headers })) };
+    } catch (error) {
+      if (!isRefused(error)) throw error;
+      refusal = error;
+    }
+    const next = await alternative();
+    if (!next) throw refusal;
+    url = next;
+  }
+}
+
 export async function sync(
   client: BrightwheelClient,
   config: Config,
@@ -128,115 +243,149 @@ export async function sync(
   // computer must not be able to read them.
   await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
   const manifest = await Manifest.open(config.archiveDir, 'brightwheel');
+  const walked = walkedThrough(manifest);
 
   // Names already used in each folder, so collisions get a suffix rather than overwrite.
   const takenByFolder = new Map<string, Set<string>>();
   const seenFolders = new Set<string>();
 
-  for (const student of students) {
-    onProgress({
-      phase: 'listing',
-      student: student.fullName,
-      message: `Looking for ${student.fullName}'s photos`,
-      ...counts(result),
-    });
+  try {
+    for (const student of students) {
+      onProgress({
+        phase: 'listing',
+        student: student.fullName,
+        message: `Looking for ${student.fullName}'s photos`,
+        ...counts(result),
+      });
 
-    // Incremental: stop paging once we reach posts older than what we already hold.
-    let newest: Date | undefined;
-    if (config.incremental) {
-      for (const record of manifest.all) {
-        const captured = record.provenance?.capturedAt;
-        if (typeof captured === 'string' && record.provenance?.studentId === student.id) {
-          const d = new Date(captured);
-          if (!newest || d > newest) newest = d;
-        }
-      }
-    }
+      // Incremental: stop paging once we reach posts older than the last complete walk.
+      const through = walked[student.id];
+      const cutOff = config.incremental && through ? new Date(through) : undefined;
+      const walk: Walk = { client, student, listing: { stopBefore: cutOff }, refreshed: new Map() };
+      let newest = cutOff;
+      const failedBefore = result.failed;
 
-    for await (const page of client.activities(student.id, { stopBefore: newest })) {
-      for (const activity of page) {
-        if (manifest.has({ sourceId: `brightwheel:${activity.id}`, url: activity.url })) {
-          result.skipped += 1;
-          continue;
-        }
-
-        const rel = folderFor(config, student, activity.capturedAt);
-        const dir = join(config.archiveDir, rel);
-        if (!seenFolders.has(dir)) {
-          await mkdir(dir, { recursive: true, mode: ARCHIVE_DIR_MODE });
-          await writeWeekReadme(dir, activity.capturedAt, student.fullName);
-          seenFolders.add(dir);
-          const existing = await readdir(dir).catch(() => [] as string[]);
-          takenByFolder.set(dir, new Set(existing.map((f) => f.toLowerCase())));
-        }
-        const taken = takenByFolder.get(dir)!;
-
-        const { stem, ext } = nameFor(activity, extensionOf(activity.url, activity.kind));
-        const filename = uniqueName(stem, ext, taken);
-        const target = join(dir, filename);
-
+      for await (const page of client.activityPages(student.id, walk.listing)) {
+        const seen = { posts: page.posts ?? undefined, examined: page.examined };
         onProgress({
-          phase: 'downloading',
+          phase: 'listing',
           student: student.fullName,
-          message: `Saving ${filename}`,
+          message:
+            `Looked through ${page.examined}${page.posts === null ? '' : ` of ${page.posts}`} ` +
+            `updates for ${student.fullName}`,
           ...counts(result),
+          ...seen,
         });
 
-        try {
-          const dl = await download({
-            url: activity.url,
-            destination: target,
-            headers: client.mediaHeaders(),
-          });
-          taken.add(filename.toLowerCase());
+        for (const activity of page.items) {
+          if (!newest || activity.capturedAt > newest) newest = activity.capturedAt;
 
-          const sha256 = await hashFile(target);
-
-          const metadata = await applyMetadata({
-            filePath: target,
-            activity,
-            student,
-            tagChildName: config.tagChildName,
-            tagNote: config.tagNote,
-            stripLocation: config.stripLocation,
-            writeSidecar: config.writeSidecar,
-          });
-          if (!metadata.embedded && metadata.reason && result.warnings.length < 3) {
-            result.warnings.push(metadata.reason);
+          if (manifest.has({ sourceId: `brightwheel:${activity.id}`, url: activity.url })) {
+            result.skipped += 1;
+            continue;
           }
 
-          manifest.add({
-            path: join(rel, filename),
-            sourceId: `brightwheel:${activity.id}`,
-            transferId: activity.url,
-            bytes: dl.bytes,
-            sha256,
-            etag: dl.validators.etag ?? null,
-            lastModified: dl.validators.lastModified ?? null,
-            provenance: {
-              capturedAt: activity.capturedAt.toISOString(),
-              studentId: student.id,
-              studentName: student.fullName,
-              note: activity.note,
-              author: activity.author,
-              kind: activity.kind,
-            },
-          });
-          result.saved += 1;
+          const rel = folderFor(config, student, activity.capturedAt);
+          const dir = join(config.archiveDir, rel);
+          if (!seenFolders.has(dir)) {
+            await mkdir(dir, { recursive: true, mode: ARCHIVE_DIR_MODE });
+            await writeWeekReadme(dir, activity.capturedAt, student.fullName);
+            seenFolders.add(dir);
+            const existing = await readdir(dir).catch(() => [] as string[]);
+            takenByFolder.set(dir, new Set(existing.map((f) => f.toLowerCase())));
+          }
+          const taken = takenByFolder.get(dir)!;
 
-          // Persist as we go: a run interrupted after 400 photos should not redo them.
-          if (result.saved % 25 === 0) await manifest.save();
-        } catch (error) {
-          result.failed += 1;
-          const message = error instanceof Error ? error.message : String(error);
-          if (result.warnings.length < 8) result.warnings.push(`${filename}: ${message}`);
+          const { stem, ext } = nameFor(activity, extensionOf(activity.url, activity.kind));
+          const filename = uniqueName(stem, ext, taken);
+          const target = join(dir, filename);
+
+          onProgress({
+            phase: 'downloading',
+            student: student.fullName,
+            message: `Saving ${filename}`,
+            ...counts(result),
+            ...seen,
+          });
+
+          try {
+            const dl = await fetchMedia(walk, page, activity, target);
+            taken.add(filename.toLowerCase());
+
+            const sha256 = await hashFile(target);
+
+            const metadata = await applyMetadata({
+              filePath: target,
+              activity,
+              student,
+              tagChildName: config.tagChildName,
+              tagNote: config.tagNote,
+              stripLocation: config.stripLocation,
+              writeSidecar: config.writeSidecar,
+            });
+            if (!metadata.embedded && metadata.reason && result.warnings.length < 3) {
+              result.warnings.push(metadata.reason);
+            }
+
+            manifest.add({
+              path: join(rel, filename),
+              sourceId: `brightwheel:${activity.id}`,
+              transferId: dl.url,
+              bytes: dl.bytes,
+              sha256,
+              etag: dl.validators.etag ?? null,
+              lastModified: dl.validators.lastModified ?? null,
+              provenance: {
+                capturedAt: activity.capturedAt.toISOString(),
+                studentId: student.id,
+                studentName: student.fullName,
+                note: activity.note,
+                author: activity.author,
+                kind: activity.kind,
+              },
+            });
+            result.saved += 1;
+
+            // Persist as we go: a run interrupted after 400 photos should not redo them.
+            if (result.saved % 25 === 0) await manifest.save();
+          } catch (error) {
+            // A dead session or a broken API is the run's problem, not this item's: no later
+            // item can do better, and each further attempt is a request Brightwheel may
+            // count against the account. A refused download or a full disk is this item's.
+            if (error instanceof Error && (error.name === 'SessionExpiredError' || error.name === 'ApiShapeError')) {
+              throw error;
+            }
+            result.failed += 1;
+            const message = error instanceof Error ? error.message : String(error);
+            if (result.warnings.length < 8) result.warnings.push(`${filename}: ${message}`);
+          }
         }
       }
+
+      // Only a walk that reached the end with nothing left behind may move the cut-off; a
+      // failed item stays inside the window so that the next run really does retry it.
+      if (newest && result.failed === failedBefore) walked[student.id] = newest.toISOString();
+    }
+  } catch (error) {
+    // Say so on the progress stream as well, with the counts intact: a polling UI must see
+    // the real state rather than a bar that has merely stopped moving.
+    const reason = error instanceof Error ? error.message : String(error);
+    const kept =
+      result.saved > 0
+        ? ` The ${result.saved} item${result.saved === 1 ? ' saved before this is' : 's saved before this are'} kept; the next run carries on from there.`
+        : '';
+    onProgress({ phase: 'error', message: `${reason}${kept}`, ...counts(result) });
+    throw error;
+  } finally {
+    // Whatever happened above — a session that expired on page three, a disk that filled
+    // up — what was downloaded is recorded before anything else. Without this, a run that
+    // died halfway discarded up to 25 downloaded items and every later run fetched them again.
+    try {
+      await manifest.save();
+    } finally {
+      await closeMetadata();
     }
   }
-
-  await manifest.save();
-  await closeMetadata();
 
   onProgress({
     phase: 'done',
