@@ -262,3 +262,49 @@ test('the pre-rename environment variables are still honoured', async () => {
   assert.equal(config, dir, 'the old config variable still redirects');
   assert.equal(archive, photos, 'and so does the old photos variable — isolation must not depend on a rename');
 });
+
+// --- one wrong clock must not silently stop every later run -----------------------------
+
+test('a post dated in the future cannot become a cut-off that skips the rest of the feed', async () => {
+  const { mkdtemp, readFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { startMockBrightwheel, sync, BrightwheelClient, Secret, DEFAULT_CONFIG } = await import('../dist/index.js');
+
+  const dir = await mkdtemp(join(tmpdir(), 'cas-future-'));
+  // One post dated a year ahead, at the top of the feed, and a small page so that three
+  // pages is a small part of it. Without the clamp the first run writes that year-ahead
+  // date as the cut-off, and the second run stops three pages in having looked at nothing.
+  const mock = await startMockBrightwheel({ activitiesPerStudent: 24, futureDatedPosts: 1, maxPageSize: 3 });
+  try {
+    const config = { ...DEFAULT_CONFIG, archiveDir: dir, incremental: true, delayMs: 0, includeStudents: [] };
+    const client = () => new BrightwheelClient({ session: new Secret('test-session-value'), baseUrl: `${mock.url}/api/v1`, delayMs: 0 });
+
+    const first = await sync(client(), config, () => {}, { allowTemporaryDir: true });
+    assert.ok(first.saved > 20, `the first run saves the feed (saved ${first.saved}, failed ${first.failed}): ${first.warnings.join('; ')}`);
+    assert.match(
+      first.warnings.join(' '),
+      /dated in the future/,
+      'and says plainly that something on the account has its clock wrong',
+    );
+
+    // The cut-off it left behind must be a moment that has actually happened.
+    const manifest = JSON.parse(await readFile(join(dir, 'archive.json'), 'utf8'));
+    const cutOffs = Object.values(manifest.state?.walkedThrough ?? {});
+    assert.ok(cutOffs.length > 0, 'a complete walk recorded a cut-off');
+    for (const at of cutOffs) {
+      assert.ok(new Date(at).getTime() <= Date.now() + 1000, `the cut-off is not in the future (${at})`);
+    }
+
+    // The proof that matters: a second run over the same feed still examines it rather
+    // than stopping three pages in, and recognises everything it already has.
+    const before = mock.requests.filter((r) => r.path.endsWith('/activities')).length;
+    const second = await sync(client(), config, () => {}, { allowTemporaryDir: true });
+    const listings = mock.requests.filter((r) => r.path.endsWith('/activities')).length - before;
+    assert.equal(second.saved, 0, 'nothing new to save');
+    assert.ok(second.skipped > 20, `it really did look: ${second.skipped} already-had`);
+    assert.ok(listings > 3, `and it read past the three-page lookback (${listings} listing requests)`);
+  } finally {
+    await mock.close();
+  }
+});
