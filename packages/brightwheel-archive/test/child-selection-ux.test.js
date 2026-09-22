@@ -1,3 +1,7 @@
+// First, before anything that can read the config directory: points this file at a
+// throwaway one even when it is run on its own with `node --test`, which applies no
+// --import (see scripts/test-env.js).
+import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -20,6 +24,7 @@ const SESSION = 'test-session-value';
 const ROBIN = 'stu-aaa-111';
 const SAM = 'stu-bbb-222';
 
+before(assertIsolatedConfigDir);
 before(async () => { mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 4 }); });
 after(async () => { await mock?.close(); });
 
@@ -242,7 +247,11 @@ test('`run --child` filters that run only and does not touch the saved settings'
 
 test('`run --child` with a name that is not on the account stops before doing anything', async () => {
   const dir = await signedInConfigDir();
-  const { code, stdout } = await cli(['run', '--child', 'Nobody Here'], dir);
+  // --dir, so that a regression in the unknown-child guard fails safe: sync refuses a
+  // temporary folder, where without it the run would fall back to the stored default and
+  // archive into the developer's own ~/Brightwheel Photos.
+  const scratch = await mkdtemp(join(tmpdir(), 'bw-cli-photos-'));
+  const { code, stdout } = await cli(['run', '--child', 'Nobody Here', '--dir', scratch], dir);
   assert.equal(code, 1);
   assert.match(stdout, /No child called "Nobody Here"/);
   assert.match(stdout, /brightwheel-archive children/, 'points at the command that lists them');
