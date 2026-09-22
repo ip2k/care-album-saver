@@ -40,7 +40,7 @@ The first time, it asks to download the tool. Say yes. Then it prints a link lik
 ![The setup assistant's first step, with the five instructions for finding your Brightwheel session and the box you paste it into both highlighted](images/01-connect.png)
 
 > **Why the odd-looking link?** `127.0.0.1` means *this computer*. The page is not on the
-> internet — nobody else can open it. The `token` is a one-time password so that other
+> internet — nobody else can open it. The `token` is a password only this run of the program knows, so that other
 > programs on your computer cannot open it either.
 
 Leave that black window open while you work. Everything happens inside it, and closing it
@@ -193,7 +193,7 @@ Care Album Photos/
     └── 2026-W38/
         ├── README.md                              ← what this week is, in plain English
         ├── 2026-09-18_093214_7f3a9b21.jpg         ← the photo, date first so it sorts
-        └── 2026-09-18_093214_7f3a9b21.jpg.json    ← the date, the note, who posted it
+        └── 2026-09-18_093214_7f3a9b21.jpg.json    ← the date it was posted, the note, who posted it
 ```
 
 `2026-W38` means the 38th week of 2026. Weeks run Monday to Sunday. The folder's

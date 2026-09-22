@@ -28,7 +28,9 @@ import { PAGE } from './page.js';
  *  3. Cross-site requests are rejected via Sec-Fetch-Site and Origin. A page the parent is
  *     merely visiting can otherwise POST to http://127.0.0.1:PORT in the background.
  *
- *  4. Every request carries a one-time token printed by the CLI. Other local accounts and
+ *  4. Every request carries a token generated once per launch and printed by the CLI —
+ *     never passed to `open`/`xdg-open`/`start`, because a command line is readable by
+ *     every account on the machine, and never set as a cookie. Other local accounts and
  *     other processes on a shared computer cannot reach the UI without it.
  *
  * Two of the routes below — /api/choose-folder and /api/open-folder — make a process start
@@ -79,7 +81,6 @@ async function readBody(req: IncomingMessage, limit = 64 * 1024): Promise<string
 export interface WebUiOptions {
   port?: number;
   baseUrl?: string;
-  openBrowser?: boolean;
   /**
    * How the operating system's folder chooser and file manager are launched. The suite
    * passes a stand-in, because no test can click a real dialog and none should open windows
