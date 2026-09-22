@@ -140,7 +140,7 @@ test('POSIX: the Linux rules do not depend on the host being Linux', () => {
 });
 
 test('Docker: the documented /photos volume passes as the node user and as any --user', () => {
-  // The Dockerfile runs `--dir /photos` with BRIGHTWHEEL_ARCHIVE_CONFIG_DIR=/config. When
+  // The Dockerfile runs `--dir /photos` with CARE_ALBUM_CONFIG_DIR=/config. When
   // `docker run --user` names a uid with no passwd entry, Docker sets HOME to `/`, so the
   // check must not mistake /photos for something inside the home folder in that case.
   for (const home of ['/home/node', '/']) {
@@ -163,9 +163,9 @@ test('the file-mode tests skip on Windows with a printed reason, never silently'
   // buried in its TAP output rather than reported as this test failing.
   // Restored afterwards: this is the process every other test file in this run shares, and
   // leaving it pointed somewhere else is how one test quietly decides another's fate.
-  const previous = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = configDir;
-  t.after(() => { process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = previous; });
+  const previous = process.env.CARE_ALBUM_CONFIG_DIR;
+  process.env.CARE_ALBUM_CONFIG_DIR = configDir;
+  t.after(() => { process.env.CARE_ALBUM_CONFIG_DIR = previous; });
   assert.equal(assertIsolatedConfigDir(), configDir);
   // The runner marks its own children with NODE_TEST_CONTEXT, and a grandchild that
   // inherits it reports in the runner's internal protocol instead of TAP.
@@ -174,7 +174,7 @@ test('the file-mode tests skip on Windows with a printed reason, never silently'
     process.execPath,
     ['--test', '--test-reporter=tap', file],
     {
-      env: { ...env, BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM: 'win32', BRIGHTWHEEL_ARCHIVE_CONFIG_DIR: configDir },
+      env: { ...env, CARE_ALBUM_TEST_PLATFORM: 'win32', CARE_ALBUM_CONFIG_DIR: configDir },
       maxBuffer: 16 * 1024 * 1024,
     },
   );

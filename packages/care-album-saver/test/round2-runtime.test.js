@@ -330,7 +330,7 @@ test('`run` stops on Ctrl+C, says so in words, and exits as the success it is', 
   const configDir = await signedInConfigDir();
   try {
     const child = spawn(process.execPath, [CLI, 'run', '--dir', archive, '--base-url', `${mock.url}/api/v1`], {
-      env: { ...process.env, BRIGHTWHEEL_ARCHIVE_CONFIG_DIR: configDir },
+      env: { ...process.env, CARE_ALBUM_CONFIG_DIR: configDir },
     });
     let out = '';
     let interrupted = false;
@@ -366,7 +366,7 @@ test('a mid-run failure is printed once, not once as progress and again as a cra
     const { code, stdout } = await promisify(execFile)(
       process.execPath,
       [CLI, 'run', '--dir', archive, '--base-url', `${mock.url}/api/v1`],
-      { env: { ...process.env, BRIGHTWHEEL_ARCHIVE_CONFIG_DIR: configDir } },
+      { env: { ...process.env, CARE_ALBUM_CONFIG_DIR: configDir } },
     ).then(
       ({ stdout }) => ({ code: 0, stdout }),
       (error) => ({ code: error.code, stdout: error.stdout ?? '' }),
@@ -406,7 +406,7 @@ test('a run that fails on every photo prints its refusals with the signature alr
     const { stdout } = await promisify(execFile)(
       process.execPath,
       [CLI, 'run', '--dir', archive, '--base-url', `${mock.url}/api/v1`],
-      { env: { ...process.env, BRIGHTWHEEL_ARCHIVE_CONFIG_DIR: configDir } },
+      { env: { ...process.env, CARE_ALBUM_CONFIG_DIR: configDir } },
     ).catch((error) => ({ stdout: error.stdout ?? '' }));
 
     assert.match(stdout, /HTTP 403/, 'the refusals were reported');

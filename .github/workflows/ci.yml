@@ -42,9 +42,9 @@ jobs:
         # `where` reads two paths and prints them; no network, nothing written. It proves
         # the shebang-headed dist/cli.js loads under this Node and OS and that the config
         # directory resolves per platform — APPDATA on Windows, not a POSIX guess.
-        run: node packages/brightwheel-archive/dist/cli.js where
+        run: node packages/care-album-saver/dist/cli.js where
         env:
-          BRIGHTWHEEL_ARCHIVE_CONFIG_DIR: ${{ runner.temp }}/bw-config
+          CARE_ALBUM_CONFIG_DIR: ${{ runner.temp }}/bw-config
 
   screenshots:
     name: guide screenshots still capture

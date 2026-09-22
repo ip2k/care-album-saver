@@ -7,7 +7,7 @@
 # credentials that are specific to this project — a generic scanner has no idea what
 # a Brightwheel session looks like.
 
-title = "brightwheel-archive"
+title = "care-album-saver"
 
 [extend]
 useDefault = true

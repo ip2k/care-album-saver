@@ -3,7 +3,7 @@
  *
  * Tests start the real setup UI and the real config code paths. Without this, they read and
  * write the developer's ACTUAL config directory — on a Mac,
- * ~/Library/Application Support/brightwheel-archive — and the test suite overwrites a real
+ * ~/Library/Application Support/care-album-saver — and the test suite overwrites a real
  * Brightwheel session with the mock's "test-session-value". That is not hypothetical: it
  * happened on 2026-09-21, and again on 2026-09-22 when a reviewer ran one file with
  * `node --test <file>`, which does not apply the --import in package.json.
@@ -20,18 +20,24 @@ import { mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 
-if (!process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR) {
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'bw-test-config-'));
+if (!process.env.CARE_ALBUM_CONFIG_DIR) {
+  process.env.CARE_ALBUM_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'cas-test-config-'));
 }
+// Both spellings, always. The project was renamed on 2026-09-22, and isolation is the one
+// thing that must not wait for every last reader of the old name to be found: a module, a
+// script or a stale build that still reads BRIGHTWHEEL_ARCHIVE_CONFIG_DIR gets the same
+// throwaway directory rather than the developer's real one.
+process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = process.env.CARE_ALBUM_CONFIG_DIR;
 
 // The config directory was only half of it. DEFAULT_CONFIG.archiveDir is
 // defaultArchiveDir(), so a test — or an agent's throwaway script — that syncs without
 // naming a folder writes a full archive into ~/Brightwheel Photos. That happened three
 // times on 2026-09-22 while this very isolation was being written, which is the argument
 // for making the bad state unrepresentable rather than remembering to pass a path.
-if (!process.env.BRIGHTWHEEL_ARCHIVE_DIR) {
-  process.env.BRIGHTWHEEL_ARCHIVE_DIR = mkdtempSync(join(tmpdir(), 'bw-test-photos-'));
+if (!process.env.CARE_ALBUM_DIR) {
+  process.env.CARE_ALBUM_DIR = mkdtempSync(join(tmpdir(), 'cas-test-photos-'));
 }
+process.env.BRIGHTWHEEL_ARCHIVE_DIR = process.env.CARE_ALBUM_DIR;
 
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
@@ -66,7 +72,7 @@ function isInside(child, parent) {
  * Fail loudly rather than write a mock session over a real one.
  *
  * The import above cannot be the whole guard: it fills the variable in only when it is
- * unset, so a stray `BRIGHTWHEEL_ARCHIVE_CONFIG_DIR` already pointing at the real
+ * unset, so a stray `CARE_ALBUM_CONFIG_DIR` already pointing at the real
  * directory would sail straight through it.
  *
  * The rule is positive on purpose. It used to be a list of three places the directory must
@@ -76,7 +82,7 @@ function isInside(child, parent) {
  * have had that directory written over by a test run. So instead: a test config directory
  * must be inside the operating system's temp directory, which is where every test in this
  * repository makes one, or inside a directory whose owner has explicitly named it as test
- * scratch space in BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH. Anywhere else is refused, whether or
+ * scratch space in CARE_ALBUM_TEST_SCRATCH. Anywhere else is refused, whether or
  * not anyone has thought of it.
  */
 /**
@@ -85,18 +91,18 @@ function isInside(child, parent) {
  * config directory gets this for free.
  */
 function assertIsolatedArchiveDir() {
-  const dir = process.env.BRIGHTWHEEL_ARCHIVE_DIR;
+  const dir = process.env.CARE_ALBUM_DIR;
   if (!dir) {
     throw new Error(
-      'BRIGHTWHEEL_ARCHIVE_DIR is not set. Import scripts/test-env.js first: without it a ' +
+      'CARE_ALBUM_DIR is not set. Import scripts/test-env.js first: without it a ' +
         'sync built from DEFAULT_CONFIG archives into the real ~/Brightwheel Photos.',
     );
   }
-  const scratch = process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
+  const scratch = process.env.CARE_ALBUM_TEST_SCRATCH;
   const allowed = scratch ? [tmpdir(), scratch] : [tmpdir()];
   if (!isAbsolute(dir) || !allowed.some((root) => isInside(dir, root))) {
     throw new Error(
-      `BRIGHTWHEEL_ARCHIVE_DIR is ${dir}, which is not a throwaway test directory. A test ` +
+      `CARE_ALBUM_DIR is ${dir}, which is not a throwaway test directory. A test ` +
         'must not write photographs anywhere a person keeps theirs.',
     );
   }
@@ -104,23 +110,23 @@ function assertIsolatedArchiveDir() {
 }
 
 export function assertIsolatedConfigDir() {
-  const dir = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
+  const dir = process.env.CARE_ALBUM_CONFIG_DIR;
   if (!dir) {
-    throw new Error('BRIGHTWHEEL_ARCHIVE_CONFIG_DIR is not set: import scripts/test-env.js before anything else.');
+    throw new Error('CARE_ALBUM_CONFIG_DIR is not set: import scripts/test-env.js before anything else.');
   }
   if (!isAbsolute(dir)) {
-    throw new Error(`BRIGHTWHEEL_ARCHIVE_CONFIG_DIR is "${dir}", which is not a full path.`);
+    throw new Error(`CARE_ALBUM_CONFIG_DIR is "${dir}", which is not a full path.`);
   }
-  const scratch = process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
+  const scratch = process.env.CARE_ALBUM_TEST_SCRATCH;
   const allowed = scratch ? [tmpdir(), scratch] : [tmpdir()];
   if (allowed.some((root) => isInside(dir, root))) {
     assertIsolatedArchiveDir();
     return dir;
   }
   throw new Error(
-    `BRIGHTWHEEL_ARCHIVE_CONFIG_DIR is ${dir}, which is not a throwaway test directory. ` +
+    `CARE_ALBUM_CONFIG_DIR is ${dir}, which is not a throwaway test directory. ` +
       `A test config directory must be inside ${tmpdir()} (use mkdtemp), or inside a directory ` +
-      `named by BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH. Refusing, so that a real saved session is not ` +
+      `named by CARE_ALBUM_TEST_SCRATCH. Refusing, so that a real saved session is not ` +
       `overwritten with the mock's.`,
   );
 }
@@ -140,7 +146,7 @@ export function assertIsolatedConfigDir() {
  * cell — and a green tick there would read as "the metadata claims hold" while meaning
  * "nothing about metadata was examined". Runners set CI, so there a missing ExifTool fails
  * the file outright. A cell that genuinely cannot have it opts out with
- * BRIGHTWHEEL_ARCHIVE_OPTIONAL_EXIFTOOL=1, which is a deliberate act someone has to write
+ * CARE_ALBUM_OPTIONAL_EXIFTOOL=1, which is a deliberate act someone has to write
  * down, rather than a silence.
  *
  * Returns false when ExifTool is present (node:test reads `skip: false` as "do not skip"),
@@ -156,7 +162,7 @@ export async function exifToolSkipReason(load) {
     return false;
   } catch (error) {
     const reason = `exiftool-vendored did not load; it is an optional dependency: ${error.message}`;
-    if (process.env.CI && process.env.BRIGHTWHEEL_ARCHIVE_OPTIONAL_EXIFTOOL !== '1') {
+    if (process.env.CI && process.env.CARE_ALBUM_OPTIONAL_EXIFTOOL !== '1') {
       // On CI the optional dependency is expected to install, so a skip would be a green run
       // that proved nothing about what goes into a photo. Return false — "do not skip" — and
       // let each test fail where it reaches for ExifTool.
@@ -167,7 +173,7 @@ export async function exifToolSkipReason(load) {
       // that actually need ExifTool is the smaller, truer blast radius.
       process.stderr.write(
         `${reason}\nThis is CI, so the metadata tests will run and fail rather than skip. ` +
-          'Set BRIGHTWHEEL_ARCHIVE_OPTIONAL_EXIFTOOL=1 for a runner that deliberately has none.\n',
+          'Set CARE_ALBUM_OPTIONAL_EXIFTOOL=1 for a runner that deliberately has none.\n',
       );
       return false;
     }

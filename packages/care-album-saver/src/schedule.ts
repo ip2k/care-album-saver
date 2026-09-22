@@ -40,9 +40,9 @@ import { loadConfig, saveConfig, type ScheduleMechanism, type ScheduleRecord } f
  */
 
 /** The label, unit and task name. One job, one name, on every platform. */
-const LAUNCHD_LABEL = 'com.brightwheel-archive.daily';
-const SYSTEMD_UNIT = 'brightwheel-archive';
-const SCHTASKS_NAME = 'Brightwheel Archive daily';
+const LAUNCHD_LABEL = 'com.care-album-saver.daily';
+const SYSTEMD_UNIT = 'care-album-saver';
+const SCHTASKS_NAME = 'Care Album Saver daily';
 
 /**
  * The first line of the crontab block this tool owns.
@@ -51,7 +51,7 @@ const SCHTASKS_NAME = 'Brightwheel Archive daily';
  * So installing rewrites only the lines between this marker and the line after it, and
  * removing takes only those away. Anything unmarked is copied through untouched.
  */
-const CRON_MARKER = '# brightwheel-archive: the daily run. Delete these two lines to stop it.';
+const CRON_MARKER = '# care-album-saver: the daily run. Delete these two lines to stop it.';
 
 export interface CommandResult {
   /** Exit status. 127 stands in for "the program is not installed". */
@@ -164,7 +164,7 @@ export function nextOccurrence(time: TimeOfDay, from: Date = new Date()): Date {
  * session that expired three weeks ago looks exactly like one that is fine. It lives at
  * `<config dir>/last-run.json`, next to `config.json` and `session.json`, because that
  * directory is already outside the project tree, already owner-only, and already the place
- * `brightwheel-archive where` points at.
+ * `care-album-saver where` points at.
  *
  * Written with the same owner-only helper as the session, even though this file holds no
  * secret: it names children.
@@ -197,11 +197,11 @@ export async function loadLastRun(): Promise<LastRun | null> {
 function logDir(env: Resolved): string {
   switch (env.platform) {
     case 'darwin':
-      return join(env.home, 'Library', 'Logs', 'brightwheel-archive');
+      return join(env.home, 'Library', 'Logs', 'care-album-saver');
     case 'win32':
       return join(configDir(), 'logs');
     default:
-      return join(env.home, '.local', 'state', 'brightwheel-archive');
+      return join(env.home, '.local', 'state', 'care-album-saver');
   }
 }
 

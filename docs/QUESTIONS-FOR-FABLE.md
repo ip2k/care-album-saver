@@ -20,8 +20,8 @@ written, so where an entry says "since `ux/shell`" read "since 3cf4581".
 
 **Context:** MIT, public repo. A TypeScript CLI + local web UI that lets a parent archive
 their own child's photos from Brightwheel (a childcare app with no public API) onto their
-own computer. Zero runtime dependencies. Code is at `~/Developer/brightwheel-archive`;
-start with `SECURITY.md` and `packages/brightwheel-archive/src/{secrets,paths,web/server}.ts`.
+own computer. Zero runtime dependencies. Code is at `~/Developer/care-album-saver`;
+start with `SECURITY.md` and `packages/care-album-saver/src/{secrets,paths,web/server}.ts`.
 
 ---
 
@@ -98,7 +98,7 @@ displays it. The fix belongs at the source, not in the scrubber: refuse any char
 that is not an RFC 6265 cookie octet in `normaliseCookieInput` and in `loadSession`.
 Three smaller boundary leaks sit beside it: the setup server's progress stream and
 `lastResult` are served unscrubbed while the CLI scrubs the same lines; `login` echoes
-the paste (above); and `BRIGHTWHEEL_SESSION` stays in `process.env`, which a diagnostic
+the paste (above); and `CARE_ALBUM_SESSION` stays in `process.env`, which a diagnostic
 report includes verbatim. Also stale: `secrets.ts` says `scrub` protects a `bug-report`
 command that does not exist. The doc's four "unsure" items are clean: there is no worker
 in the tree, `fetch failed` carries no headers in its cause, and stack traces carry no
@@ -189,7 +189,7 @@ prove we agree with our own mock; the mock now carries the real record shape.
 ### B1. The API map: settled by the live service, with six things still open.
 Every endpoint, field name and pagination rule was first taken from six existing
 open-source scrapers. The live service has since confirmed, contradicted or left open
-each one. See `packages/brightwheel-archive/src/api/schema.ts`.
+each one. See `packages/care-album-saver/src/api/schema.ts`.
 
 **Settled against a real account:** `object_id` ids; the `.student` nesting;
 `media.image_url` and `video_info.downloadable_url` as the media fields;
@@ -208,7 +208,7 @@ whether `page` is 0- or 1-based (the run only proves page 0 is non-empty); wheth
 whether a higher-resolution original exists; how long a signature lives (B3); and
 whether a second nursery's records distinguish the two dates (B2).
 
-**There is a read-only command for most of this.** `brightwheel-archive verify`
+**There is a read-only command for most of this.** `care-album-saver verify`
 (`src/verify.ts`) makes three API reads — `/users/me`, the guardian's students, and one
 50-record page of `ac_photo` activities — plus one HEAD probe of a single media URL, sent
 without the session, and downloads nothing. It reports which fields are **present** and
@@ -352,11 +352,11 @@ for one package until a second consumer exists would have a point.
 
 **Fable: one package. The counter wins, and the publish story makes it urgent.**
 `media-ferry` is 763 lines with nine tests of its own; every commit to it after the first
-was made for `brightwheel-archive`; fourteen of its exports have no consumer; three
+was made for `care-album-saver`; fourteen of its exports have no consumer; three
 consumer tests import it by relative `dist` path; and `ux/scheduling` bypasses `Manifest`
 entirely because the library has no remove. The decisive point is what `pnpm pack`
 produces: it rewrites `workspace:*` to `media-ferry@0.1.0`, a name nobody has registered
-on npm (E404 on 2026-09-22) — so the README's `npx brightwheel-archive` instructions
+on npm (E404 on 2026-09-22) — so the README's `npx care-album-saver` instructions
 cannot work today, and until the name is claimed the dependency graph of a children's
 photo tool is open to squatting. Fold it into `src/ferry/`, keep the barrel so the module
 boundary survives as a directory, and delete the unused exports. Found on the way: `pnpm
@@ -472,6 +472,42 @@ Never put "only" in the README, the GUIDE, the page or `package.json`.
 
 ---
 
+### C7. What is this project called, and why not after the service it reads?
+
+**SETTLED by the owner on 2026-09-22: the project is Care Album Saver, and no name it
+owns contains "Brightwheel".** Two reasons, and either alone would be enough.
+
+- **A tool named after somebody else's service is the one that gets a letter.** This is a
+  free tool that helps a parent get their own child's photographs out of a service they
+  already pay for, and it should not hand anyone an easy reason to close it. Nominative
+  use — saying which service a parent signs in to — is exactly what a trade mark is for
+  and stays; a package, a command, a folder or a heading *named* Brightwheel is a claim
+  on the mark and goes.
+- **The project may grow to read more than one service.** A generic name costs nothing
+  now and saves a second rename later, when there would be archives and installs to
+  carry through it.
+
+What changed: the npm package and the command are `care-album-saver`, the workspace
+directory is `packages/care-album-saver`, the config folder is `care-album-saver`, the
+environment variables are `CARE_ALBUM_*`, and a fresh install saves into
+`~/Care Album Photos`. What did not change: every descriptive mention of Brightwheel in
+the code, the docs and the page — the API client, the mock, the cookie name, the gitleaks
+rule ids that describe that cookie, and the sentence on the setup page telling a parent
+which site to sign in to.
+
+**Nothing on an existing machine is moved.** The old config folder is still read when the
+new one does not exist, the old `BRIGHTWHEEL_ARCHIVE_*` and `BRIGHTWHEEL_SESSION`
+variables are still honoured, and an archive already in `~/Brightwheel Photos` stays the
+default while it is there. Three tests pin that, and `doctor` says when the old folder is
+the one in use. The one thing a rename cannot reach is the checkout directory and the
+git remote, which are the owner's to rename if they want to.
+
+**Still to decide:** whether `media-ferry` keeps its name (it is already generic), and
+whether a multi-source future means a source-adapter boundary in `src/api/` — worth its
+own entry when it stops being hypothetical.
+
+---
+
 ## D. Things we know are unfinished
 
 - **Windows has never been exercised, by CI or by a person.** There is no git remote and no
@@ -479,7 +515,7 @@ Never put "only" in the README, the GUIDE, the page or `package.json`.
   in `ci.yml` is *written* to build, run the whole suite and start `dist/cli.js where` on
   windows-latest with Node 20, 22, 24 and 26, and `checkArchiveDir` takes the platform,
   home directory, temp directory and environment as options so the Windows rules can be
-  run from a Mac (`BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test`). Checked on
+  run from a Mac (`CARE_ALBUM_TEST_PLATFORM=win32 pnpm test`). Checked on
   2026-09-22 for what will happen on the first run: pnpm 12 supports Node 18 and later,
   so the pnpm step is fine on every cell; `exiftool-vendored` declares `node >= 22`, so on
   the Node 20 cells it either fails to install or fails to import, and `getExifTool`'s

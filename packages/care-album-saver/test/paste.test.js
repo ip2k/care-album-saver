@@ -194,3 +194,71 @@ test('a value wrapped over lines reaches the server whole, and the server tries 
   assert.doesNotMatch(d.error, /does not look like|cannot hold|whole row/);
   assert.ok(!d.error.includes('NotARealSession'), 'and nothing of the value comes back');
 });
+
+// --- the rename, and what it must not break ---------------------------------------------
+
+test('a session saved before the rename is still found, and nothing is moved to find it', async () => {
+  // In a child process with its own HOME, so the real config directory is never consulted
+  // and nothing here can touch it. Both CARE_ALBUM_* names are removed from the child's
+  // environment: they take precedence by design, and would hide the fallback under test.
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { mkdtemp, mkdir, readdir } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const home = await mkdtemp(join(tmpdir(), 'cas-home-'));
+  const support = join(home, 'Library', 'Application Support');
+  const legacy = join(support, 'brightwheel-archive');
+  await mkdir(legacy, { recursive: true });
+  await mkdir(join(home, '.config', 'brightwheel-archive'), { recursive: true });
+
+  const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config') };
+  for (const k of Object.keys(env)) if (k.startsWith('CARE_ALBUM_') || k.startsWith('BRIGHTWHEEL_')) delete env[k];
+
+  const entry = new URL('../dist/index.js', import.meta.url).pathname;
+  const run = (code) => promisify(execFile)(process.execPath, ['-e', code], { env, encoding: 'utf8' });
+
+  const before = await run(`import(${JSON.stringify(entry)}).then(m => console.log(m.configDir()))`);
+  assert.equal(before.stdout.trim(), legacy, 'the old folder is used while it is the only one');
+
+  // Nothing is moved or created by asking: the old folder is read where it stands.
+  assert.deepEqual(await readdir(support), ['brightwheel-archive'], 'no new folder appeared beside it');
+
+  // Once the new folder exists, it wins — that is how a fresh install and an upgraded one
+  // converge without either being asked to migrate.
+  await mkdir(join(support, 'care-album-saver'), { recursive: true });
+  const after = await run(`import(${JSON.stringify(entry)}).then(m => console.log(m.configDir()))`);
+  assert.equal(after.stdout.trim(), join(support, 'care-album-saver'), 'the new folder wins once it is there');
+
+  // And a machine that has neither gets the new name, never the old one.
+  const fresh = await mkdtemp(join(tmpdir(), 'cas-home-'));
+  const freshEnv = { ...env, HOME: fresh, XDG_CONFIG_HOME: join(fresh, '.config') };
+  const clean = await promisify(execFile)(process.execPath, ['-e', `import(${JSON.stringify(entry)}).then(m => console.log(m.configDir()))`], { env: freshEnv, encoding: 'utf8' });
+  assert.match(clean.stdout.trim(), /care-album-saver$/, 'a first run never lands in the old name');
+});
+
+test('the pre-rename environment variables are still honoured', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const dir = await mkdtemp(join(tmpdir(), 'cas-legacy-env-'));
+  const photos = await mkdtemp(join(tmpdir(), 'cas-legacy-photos-'));
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (k.startsWith('CARE_ALBUM_')) delete env[k];
+  env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = dir;
+  env.BRIGHTWHEEL_ARCHIVE_DIR = photos;
+
+  const entry = new URL('../dist/index.js', import.meta.url).pathname;
+  const out = await promisify(execFile)(
+    process.execPath,
+    ['-e', `import(${JSON.stringify(entry)}).then(m => console.log(m.configDir() + '\\n' + m.defaultArchiveDir()))`],
+    { env, encoding: 'utf8' },
+  );
+  const [config, archive] = out.stdout.trim().split('\n');
+  assert.equal(config, dir, 'the old config variable still redirects');
+  assert.equal(archive, photos, 'and so does the old photos variable — isolation must not depend on a rename');
+});

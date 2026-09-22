@@ -31,7 +31,7 @@ export interface IsoWeek {
  *
  * So: the archiving machine's clock decides, and the caller is expected to say so in
  * writing where the archive can be read years later. A person who wants a different clock
- * sets `TZ` for the process (`TZ=America/Los_Angeles brightwheel-archive run`), which Node
+ * sets `TZ` for the process (`TZ=America/Los_Angeles care-album-saver run`), which Node
  * honours everywhere and which needs no setting of our own to get out of step.
  */
 export function isoWeek(date: Date): IsoWeek {

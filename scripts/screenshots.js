@@ -13,8 +13,8 @@ import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startMockBrightwheel } from '../packages/brightwheel-archive/dist/mock/server.js';
-import { startWebUi } from '../packages/brightwheel-archive/dist/web/server.js';
+import { startMockBrightwheel } from '../packages/care-album-saver/dist/mock/server.js';
+import { startWebUi } from '../packages/care-album-saver/dist/web/server.js';
 
 const OUT = join(fileURLToPath(new URL('../docs/images', import.meta.url)));
 const SESSION = 'test-session-value';
@@ -26,7 +26,7 @@ const VIEWPORT = { width: 1340, height: 940 };
  * machine generating the docs. This folder is inside node_modules, which is gitignored
  * and must exist for the script to run at all, and it is deleted at the end.
  */
-const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/brightwheel-archive-screenshots', import.meta.url));
+const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-screenshots', import.meta.url));
 
 /**
  * The path shown in the pictures. The real one contains the developer's username, which
@@ -259,7 +259,7 @@ async function shot(page, name, endAt) {
 
 const main = async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'bw-shots-'));
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = configDir;
+  process.env.CARE_ALBUM_CONFIG_DIR = configDir;
   await rm(PHOTOS, { recursive: true, force: true });
   await mkdir(PHOTOS, { recursive: true });
   // Stored before the UI starts, so there is never a moment when the default applies.

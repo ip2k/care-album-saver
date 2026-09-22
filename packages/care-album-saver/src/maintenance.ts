@@ -353,7 +353,7 @@ export async function repairManifest(config: Config): Promise<RepairResult> {
         ...(sidecar?.note !== undefined ? { note: sidecar.note } : {}),
         ...(sidecar?.postedBy !== undefined ? { author: sidecar.postedBy } : {}),
         ...(sidecar?.kind ? { kind: sidecar.kind } : {}),
-        recoveredBy: 'brightwheel-archive check-archive',
+        recoveredBy: 'care-album-saver check-archive',
       },
     });
     added += 1;

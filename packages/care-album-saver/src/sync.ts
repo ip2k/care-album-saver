@@ -163,7 +163,7 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     'the timezone it was taken in, so files saved from a computer set to another timezone',
     'can land in the next day — or the next week — along from these.',
     '',
-    'Saved by brightwheel-archive. These files are yours; nothing here phones home.',
+    'Saved by care-album-saver. These files are yours; nothing here phones home.',
     '',
   ].join('\n');
   await writeFile(join(dir, 'README.md'), body, 'utf8');

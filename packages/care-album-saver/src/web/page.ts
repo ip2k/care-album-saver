@@ -1236,7 +1236,7 @@ function paintSchedule() {
 function enterManageMode() {
   if (manageMode) return;
   manageMode = true;
-  document.title = 'Brightwheel Archive - Managing your archive';
+  document.title = 'Care Album Saver - Managing your archive';
   $('setup-inner').appendChild(document.querySelector('ol.steps-list'));
   $('setup-details').hidden = false;
   $('card-manage').hidden = false;
