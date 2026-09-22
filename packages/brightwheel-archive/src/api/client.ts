@@ -25,6 +25,54 @@ export interface ClientOptions {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+export interface ActivityListOptions {
+  pageSize?: number;
+  maxPages?: number;
+  stopBefore?: Date;
+  /**
+   * Server-side filter, e.g. 'ac_photo'. Brightwheel's feed carries check-ins, naps,
+   * meals and notes as well as media; filtering at the server means we do not page
+   * through — or parse — thousands of records we would only throw away.
+   */
+  actionType?: string;
+  /** Server-side date window. Turns an incremental run into one short request. */
+  since?: Date;
+  until?: Date;
+}
+
+/**
+ * One page of a student's feed, with enough context to ask for exactly this page again.
+ *
+ * The counts are posts of every kind — check-ins and naps as well as photos — because
+ * that is what the envelope counts and what the feed pages through. They are honest
+ * measures of how far a walk has got; they are not a photo count.
+ */
+export interface ActivityPage {
+  /** Zero-based page index, as sent in the request. */
+  page: number;
+  /** The media posts on this page, after client-side filtering. */
+  items: MediaActivity[];
+  /** Posts of every kind on the whole feed, per the envelope's `count`. Null if absent. */
+  posts: number | null;
+  /** Posts of every kind on this page, before filtering. Zero means the feed has ended. */
+  found: number;
+  /** Posts of every kind on this and every earlier page: how far through the feed we are. */
+  examined: number;
+}
+
+/**
+ * The envelope fields we read for progress, leniently. These are informational: an odd
+ * shape here must never fail a run that the strict parser in schema.ts was happy with.
+ */
+function readEnvelope(raw: unknown, page: number, pageSize: number, items: number) {
+  const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const list = o.activities ?? o.data ?? o.object;
+  const found = Array.isArray(list) ? list.length : items;
+  const offset = num(o.offset) ?? page * (num(o.page_size) ?? pageSize);
+  return { posts: num(o.count), found, examined: offset + found };
+}
+
 /**
  * A thin, deliberately boring client for Brightwheel's internal API.
  *
@@ -135,61 +183,69 @@ export class BrightwheelClient {
   }
 
   /**
-   * Every media post for a student, newest first, walking the paginated feed.
+   * One page of a student's feed.
    *
-   * This is what the website's infinite scroll is actually doing underneath. Reading the
-   * paginated endpoint directly means no headless browser, no scroll simulation, and no
-   * guessing about when the feed has ended.
+   * Separate from the walk so that a caller can ask for a page a second time. Signed
+   * media URLs come from here and are short-lived; a long run outlives them, and the only
+   * way to a fresh signature is the listing that issued the old one.
    */
-  async *activities(
-    studentId: string,
-    opts: {
-      pageSize?: number;
-      maxPages?: number;
-      stopBefore?: Date;
-      /**
-       * Server-side filter, e.g. 'ac_photo'. Brightwheel's feed carries check-ins, naps,
-       * meals and notes as well as media; filtering at the server means we do not page
-       * through — or parse — thousands of records we would only throw away.
-       */
-      actionType?: string;
-      /** Server-side date window. Turns an incremental run into one short request. */
-      since?: Date;
-      until?: Date;
-    } = {},
-  ): AsyncGenerator<MediaActivity[], void, void> {
+  async activitiesPage(studentId: string, page: number, opts: ActivityListOptions = {}): Promise<ActivityPage> {
     const pageSize = opts.pageSize ?? 100;
-    const maxPages = opts.maxPages ?? 500;
     // start_date / end_date are ISO-8601 UTC with milliseconds and a Z suffix, not a bare
     // calendar date — confirmed across ChaseBro/brightwheel-takeout and ss44/Keepsake.
     const iso = (d: Date) => d.toISOString().replace(/(\.\d{3})?Z$/, '.000Z');
 
+    const query = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+      include_parent_actions: 'false',
+    });
+    if (opts.actionType) query.set('action_type', opts.actionType);
+    if (opts.since) query.set('start_date', iso(opts.since));
+    if (opts.until) query.set('end_date', iso(opts.until));
+    const raw = await this.request(
+      `/students/${encodeURIComponent(studentId)}/activities?${query}`,
+      `activities page ${page}`,
+    );
+    const items = parseActivities(raw, studentId);
+    const check = validateExtraction(items, page);
+    this.log(`Page ${page}: ${check.message}`);
+
+    if (check.status === 'suspicious') {
+      throw new ApiShapeError(check.message, `activities page ${page}`);
+    }
+    return { page, items, ...readEnvelope(raw, page, pageSize, items.length) };
+  }
+
+  /**
+   * A student's feed, newest first, one page at a time.
+   *
+   * This is what the website's infinite scroll is actually doing underneath. Reading the
+   * paginated endpoint directly means no headless browser, no scroll simulation, and no
+   * guessing about when the feed has ended: it has ended when a page carries no posts of
+   * any kind. A page of nothing but check-ins is not the end — the photos may be on the
+   * next one — so a page can be yielded with no media on it, and a caller reads `found`
+   * and `examined` to keep its progress honest.
+   */
+  async *activityPages(studentId: string, opts: ActivityListOptions = {}): AsyncGenerator<ActivityPage, void, void> {
+    const maxPages = opts.maxPages ?? 500;
     for (let page = 0; page < maxPages; page++) {
-      const query = new URLSearchParams({
-        page: String(page),
-        page_size: String(pageSize),
-        include_parent_actions: 'false',
-      });
-      if (opts.actionType) query.set('action_type', opts.actionType);
-      if (opts.since) query.set('start_date', iso(opts.since));
-      if (opts.until) query.set('end_date', iso(opts.until));
-      const raw = await this.request(
-        `/students/${encodeURIComponent(studentId)}/activities?${query}`,
-        `activities page ${page}`,
-      );
-      const items = parseActivities(raw, studentId);
-      const check = validateExtraction(items, page);
-      this.log(`Page ${page}: ${check.message}`);
+      const result = await this.activitiesPage(studentId, page, opts);
+      if (result.found === 0) return;
 
-      if (check.status === 'suspicious') {
-        throw new ApiShapeError(check.message, `activities page ${page}`);
-      }
-      if (items.length === 0) return;
+      yield result;
 
-      yield items;
+      // Incremental runs stop once the feed is older than what we already have. Only a
+      // page with media on it can say so; a page of check-ins carries no capture times.
+      const { items } = result;
+      if (opts.stopBefore && items.length > 0 && items.every((i) => i.capturedAt < opts.stopBefore!)) return;
+    }
+  }
 
-      // Incremental runs stop once the feed is older than what we already have.
-      if (opts.stopBefore && items.every((i) => i.capturedAt < opts.stopBefore!)) return;
+  /** Every media post for a student, newest first. The page-level walk without the context. */
+  async *activities(studentId: string, opts: ActivityListOptions = {}): AsyncGenerator<MediaActivity[], void, void> {
+    for await (const page of this.activityPages(studentId, opts)) {
+      if (page.items.length > 0) yield page.items;
     }
   }
 
