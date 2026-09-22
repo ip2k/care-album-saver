@@ -46,6 +46,28 @@ export interface ManifestData {
   files: ManifestRecord[];
 }
 
+const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * A manifest exists but cannot be used, so the run refuses to go on.
+ *
+ * The message is written for the person holding the archive, not for a developer: it names
+ * the file, says nothing has been changed, and gives the one safe way forward. Rebuilding
+ * from scratch is a real option — it costs a second copy of every photo — so it is offered,
+ * but only after moving the existing file somewhere safe, never by overwriting it here.
+ */
+export class ManifestUnusableError extends Error {
+  constructor(public readonly path: string, reason: string) {
+    super(
+      `The list of what has already been saved (${path}) cannot be used: ${reason}. ` +
+        'Nothing has been changed and nothing has been downloaded. Move that file somewhere safe ' +
+        'and run again to rebuild the archive — which will download every photo a second time — ' +
+        'or ask for help before running again.',
+    );
+    this.name = 'ManifestUnusableError';
+  }
+}
+
 /**
  * The archive manifest: the tool's memory of what it has already saved.
  *
@@ -69,21 +91,62 @@ export class Manifest {
 
   private constructor(private readonly root: string, private readonly source: string) {}
 
+  /**
+   * Load the manifest for an archive, or start a new one.
+   *
+   * Two situations that look alike from here are kept strictly apart, because treating
+   * them alike destroys archives. "There is no manifest yet" is the ordinary first run and
+   * starts empty. "There is a manifest and it cannot be used" — unreadable, not JSON,
+   * truncated by a full disk, or written to a schema this build does not know — is refused
+   * outright, and nothing on disk is touched. Starting empty in that case would re-download
+   * the whole archive as `-2` duplicates, overwrite the only copy of the file that said
+   * what had already been saved, and throw away how far each child's feed had been walked
+   * — and then do it all again on the next run.
+   */
   static async open(root: string, source: string): Promise<Manifest> {
     const m = new Manifest(root, source);
+    const file = join(root, MANIFEST_FILENAME);
+
+    let raw: string;
     try {
-      const raw = await readFile(join(root, MANIFEST_FILENAME), 'utf8');
-      const data = JSON.parse(raw) as ManifestData;
-      // An unknown future schema is not something we can safely merge into. Start clean
-      // rather than corrupt an archive written by a newer version.
-      if (data.schema === MANIFEST_SCHEMA && Array.isArray(data.files)) {
-        for (const r of data.files) m.index(r);
-        if (data.state && typeof data.state === 'object' && !Array.isArray(data.state)) {
-          Object.assign(m.state, data.state);
-        }
-      }
-    } catch {
-      // No manifest yet, or it is unreadable. Either way we start from empty.
+      raw = await readFile(file, 'utf8');
+    } catch (error) {
+      // Only "it is not there" is an ordinary first run. A permission error or a directory
+      // in its place means a manifest may well exist and simply cannot be read.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return m;
+      throw new ManifestUnusableError(file, why(error));
+    }
+
+    let data: ManifestData;
+    try {
+      data = JSON.parse(raw) as ManifestData;
+    } catch (error) {
+      throw new ManifestUnusableError(file, `it is not readable as JSON (${why(error)})`);
+    }
+    if (typeof data !== 'object' || data === null || !Array.isArray(data.files)) {
+      throw new ManifestUnusableError(file, 'it does not contain a list of saved files');
+    }
+    if (typeof data.schema !== 'number' || !Number.isFinite(data.schema)) {
+      throw new ManifestUnusableError(file, 'it does not say which format it was written in');
+    }
+    if (data.schema > MANIFEST_SCHEMA) {
+      throw new ManifestUnusableError(
+        file,
+        `it was written by a newer version of this tool (format ${data.schema}; this one understands ${MANIFEST_SCHEMA}). ` +
+          'Updating the tool should be enough',
+      );
+    }
+    if (data.schema !== MANIFEST_SCHEMA) {
+      // No migration exists, and guessing at an older layout would mis-index the archive.
+      throw new ManifestUnusableError(
+        file,
+        `it was written in an older format (${data.schema}) that this version cannot read`,
+      );
+    }
+
+    for (const r of data.files) m.index(r);
+    if (data.state && typeof data.state === 'object' && !Array.isArray(data.state)) {
+      Object.assign(m.state, data.state);
     }
     return m;
   }

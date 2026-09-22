@@ -153,8 +153,12 @@ export function parseStudents(raw: unknown): Student[] {
  * 5pm would otherwise land every morning photo in the evening — and, at week boundaries,
  * in the wrong week folder entirely. Preferring event_date is the whole reason this tool
  * writes corrected timestamps instead of trusting the download.
+ *
+ * Returns null rather than throwing when none of those fields holds a date we can read.
+ * One entry must not decide the fate of the page by itself: the count of undated entries
+ * is what `validateExtraction` weighs, and that gate is where the refusal belongs.
  */
-function pickCaptureTime(a: Record<string, unknown>, context: string): Date {
+function pickCaptureTime(a: Record<string, unknown>): Date | null {
   for (const key of ['event_date', 'event_time', 'created_at', 'updated_at']) {
     const v = a[key];
     if (typeof v === 'string') {
@@ -162,17 +166,30 @@ function pickCaptureTime(a: Record<string, unknown>, context: string): Date {
       if (!Number.isNaN(d.getTime())) return d;
     }
   }
-  throw new ApiShapeError(`No usable timestamp on ${context}`, context);
+  return null;
 }
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|heif|avif)(\?|$)/i;
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi)(\?|$)/i;
 
+/** What one page of the feed yielded, and what it could not. */
+export interface ParsedActivities {
+  /** The media posts this tool can file: they carry media and a readable capture time. */
+  items: MediaActivity[];
+  /**
+   * How many entries carried media but no date this tool could read. Kept rather than
+   * thrown away because it is the signal that Brightwheel has renamed its date field, and
+   * a page of undated photos is indistinguishable from a page of no photos without it.
+   */
+  undated: number;
+}
+
 /** `GET /api/v1/students/{id}/activities` — returns only the entries that carry media. */
-export function parseActivities(raw: unknown, studentId: string): MediaActivity[] {
+export function parseActivities(raw: unknown, studentId: string): ParsedActivities {
   const o = asObject(raw, 'activities');
   const list = asArray(o.activities ?? o.data ?? o.object ?? [], 'activities list');
   const out: MediaActivity[] = [];
+  let undated = 0;
 
   for (let i = 0; i < list.length; i++) {
     const a = asObject(list[i], `activities[${i}]`);
@@ -194,17 +211,26 @@ export function parseActivities(raw: unknown, studentId: string): MediaActivity[
     const isVideo = Boolean(videoUrl) || a.action_type === 'ac_video' || VIDEO_EXT.test(media);
     if (!isVideo && !IMAGE_EXT.test(media) && !imageUrl) continue;
 
+    const capturedAt = pickCaptureTime(a);
+    if (!capturedAt) {
+      // A photo we cannot date is a photo we cannot file, and filing by capture time is
+      // the entire point of this tool. So it is counted, not quietly dropped and not
+      // stamped with a guess; `validateExtraction` decides what the count means.
+      undated += 1;
+      continue;
+    }
+
     out.push({
       id: String(a.object_id ?? req(a, 'id', `activities[${i}]`)),
       studentId,
-      capturedAt: pickCaptureTime(a, `activities[${i}]`),
+      capturedAt,
       note: str(a.note) ?? str(a.description) ?? null,
       url: media,
       kind: isVideo ? 'video' : 'image',
       author: a.actor ? str(asObject(a.actor, `activities[${i}].actor`).name) : null,
     });
   }
-  return out;
+  return { items: out, undated };
 }
 
 /**
@@ -213,6 +239,11 @@ export function parseActivities(raw: unknown, studentId: string): MediaActivity[
  * Adapted from the house scraping rules: never hand downstream code an extraction result
  * without checking it first. An empty page is legitimate (it is how pagination ends), but
  * an empty *first* page for an account that should have photos is a signal, not a result.
+ *
+ * `suspicious` is the one that earns this function its place. It fires when a page carried
+ * photos or videos that could not be dated — the shape of the failure Brightwheel renaming
+ * `event_date` would produce. Without the `undated` count those posts look exactly like no
+ * posts at all, and the caller would report "no new photos" every night for ever.
  */
 export interface ExtractionCheck {
   status: 'ok' | 'empty' | 'suspicious';
@@ -220,16 +251,20 @@ export interface ExtractionCheck {
   count: number;
 }
 
-export function validateExtraction(items: MediaActivity[], page: number): ExtractionCheck {
+export function validateExtraction(items: MediaActivity[], page: number, undated = 0): ExtractionCheck {
+  // Weighed first, and deliberately before the empty case: a page where every post was
+  // undated has no items, and reading that as "the feed has ended" is the silent failure.
+  if (undated > 0) {
+    return {
+      status: 'suspicious',
+      message:
+        `${undated} post${undated === 1 ? '' : 's'} on page ${page} carried a photo or video with ` +
+        `no date this tool could read. Brightwheel may have renamed the date field; filing them by ` +
+        `guesswork would put them in the wrong week, so the run stops instead.`,
+      count: items.length,
+    };
+  }
   if (items.length > 0) {
-    const bad = items.filter((i) => Number.isNaN(i.capturedAt.getTime()));
-    if (bad.length > 0) {
-      return {
-        status: 'suspicious',
-        message: `${bad.length} of ${items.length} items had an unreadable timestamp`,
-        count: items.length,
-      };
-    }
     return { status: 'ok', message: `${items.length} media items on page ${page}`, count: items.length };
   }
   return {

@@ -19,9 +19,20 @@ export interface IsoWeek {
 }
 
 /**
- * Compute the ISO week-numbering year and week for a date, in the *local* timezone of
- * the supplied Date. Callers should pass a Date already shifted into the timezone the
- * photo was taken in — see `localDateFrom`.
+ * Compute the ISO week-numbering year and week for a date, by the *local* clock of the
+ * machine this runs on (`getFullYear`, `getMonth`, `getDate` — all local).
+ *
+ * There is deliberately no timezone argument. A `Date` is an instant; which calendar day
+ * that instant belongs to is a question only a timezone can answer, and the source of these
+ * instants (Brightwheel's `event_date`) does not say which one the photo was taken in. A
+ * zone guessed here — from the machine, from the school's name, from anything — would file
+ * a late-afternoon photo under the next day while looking authoritative, which is worse
+ * than filing it by a clock the person can see and reason about.
+ *
+ * So: the archiving machine's clock decides, and the caller is expected to say so in
+ * writing where the archive can be read years later. A person who wants a different clock
+ * sets `TZ` for the process (`TZ=America/Los_Angeles brightwheel-archive run`), which Node
+ * honours everywhere and which needs no setting of our own to get out of step.
  */
 export function isoWeek(date: Date): IsoWeek {
   // Work on a UTC copy of the local Y/M/D so arithmetic is DST-proof.
