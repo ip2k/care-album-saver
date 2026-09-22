@@ -1,4 +1,5 @@
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { join, posix, sep } from 'node:path';
 import {
   DownloadError,
@@ -129,6 +130,60 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     '',
   ].join('\n');
   await writeFile(join(dir, 'README.md'), body, 'utf8');
+}
+
+/**
+ * Make the archive folder owner-only even when this tool did not create it.
+ *
+ * `mkdir(..., { mode })` applies the mode only to directories it actually creates. A parent
+ * who made "Brightwheel Photos" in Finder first, or who pointed the tool at a folder they
+ * already had, keeps whatever the operating system gave it — 0755 on a Mac, which every
+ * account on the computer can read. The README says the photo folders are owner-only, so
+ * without this the promise held only for the folder the tool happened to make itself.
+ *
+ * Tightening, and then saying so. A folder that other accounts can read may be a deliberate
+ * choice — the other parent has their own login on the same laptop — and silently undoing
+ * that would leave them wondering why sharing broke. So the change is made, because the
+ * default a parent never chose should not be the one that leaks, and it is reported, so the
+ * one who did choose it can put it back.
+ *
+ * Only the root, deliberately: the week folders inside it sit behind this one, and a folder
+ * nobody can enter is enough to keep its contents out of reach.
+ *
+ * Windows has no POSIX modes — files and folders there inherit the parent ACL — so there is
+ * nothing to assert, the same skip as `writeSecureFile` in paths.ts.
+ */
+async function ensureOwnerOnly(dir: string, warnings: string[]): Promise<void> {
+  if (platform() === 'win32') return;
+  let mode: number;
+  try {
+    mode = (await stat(dir)).mode & 0o777;
+  } catch {
+    // Unreadable or gone between mkdir and here. The run is about to fail on its own terms
+    // and with a better message than anything this could add.
+    return;
+  }
+  // Only bits outside "owner" count as too open. A folder the parent has made *stricter*
+  // than 0700 is left exactly as it is; widening it back would be the same mistake in the
+  // other direction.
+  if ((mode & ~ARCHIVE_DIR_MODE) === 0) return;
+  try {
+    await chmod(dir, ARCHIVE_DIR_MODE);
+    warnings.push(
+      `Other accounts on this computer could open the folder your photos are saved in, so ` +
+        `it has been changed to allow only yours: ${dir}. If you had opened it up on ` +
+        `purpose — to share the photos with someone else who uses this computer — you will ` +
+        `need to do that again.`,
+    );
+  } catch (error) {
+    // Not fatal: the photos still save. But a parent told the folder is private deserves to
+    // hear that, on this machine, it is not.
+    warnings.push(
+      `The folder your photos are saved in can be opened by other accounts on this ` +
+        `computer, and its permissions could not be changed: ${dir} ` +
+        `(${error instanceof Error ? error.message : String(error)}).`,
+    );
+  }
 }
 
 /**
@@ -282,11 +337,19 @@ export async function sync(
   if (!verdict.ok) throw new Error(verdict.error);
   if (verdict.warning) result.warnings.push(verdict.warning);
 
-  // 0700, not the default 0755. These are identified photographs of a child — every file
-  // carries the child's name in its metadata — so other accounts on a shared family
-  // computer must not be able to read them.
+  // 0700, not the default 0755. These are identified photographs of a child: the folder is
+  // named after them, the .json sidecar beside every file names them, and archive.json
+  // names them once per photo — all of which is true whatever the "label photos with names"
+  // switch says, because that switch governs only what goes *inside* the files. So other
+  // accounts on a shared family computer must not be able to read any of it.
   await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
-  const manifest = await Manifest.open(config.archiveDir, 'brightwheel');
+  // ...and the same again for a folder that was already there, which `mkdir` leaves alone.
+  await ensureOwnerOnly(config.archiveDir, result.warnings);
+
+  // The manifest gets the same treatment, spelled out here rather than left to media-ferry's
+  // default: it names every child, quotes every note and names whoever posted each photo, so
+  // it is as identifying as the photos it lists and belongs behind the same wall.
+  const manifest = await Manifest.open(config.archiveDir, 'brightwheel', { fileMode: 0o600 });
   const walked = walkedThrough(manifest);
 
   // Names already used in each folder, so collisions get a suffix rather than overwrite.
