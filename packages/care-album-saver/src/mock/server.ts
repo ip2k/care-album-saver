@@ -47,6 +47,14 @@ export interface MockOptions {
    */
   maxPageSize?: number;
   /**
+   * Posts at the top of the feed dated a YEAR IN THE FUTURE: a phone or a computer with
+   * its clock set wrong, which is the ordinary cause. They are why the incremental cut-off
+   * is clamped to the moment a walk began — without that clamp one of these becomes a
+   * floor no real post can beat, and every later run reads three pages, decides the feed
+   * is older than the cut-off and stops, saying it finished.
+   */
+  futureDatedPosts?: number;
+  /**
    * Posts without media — check-ins — at the top of the feed. With a small `maxPageSize`
    * this makes a whole page that carries no photos, which is not the end of the feed.
    */
@@ -153,6 +161,7 @@ function buildActivities(
   issuedAt = 0,
   checkIns = 0,
   backDated = 0,
+  futureDated = 0,
 ) {
   const rand = seeded(studentId);
   const out = [];
@@ -190,6 +199,22 @@ function buildActivities(
       created_at: when.toISOString(),
       note: null,
       media: null,
+      video_info: null,
+      actor: actorFor(i),
+      target: targetFor(studentId),
+    });
+  }
+  for (let i = 0; i < futureDated; i++) {
+    const when = new Date(start.getTime() + (365 + i) * 24 * 3600 * 1000);
+    const id = `act-${studentId.slice(-3)}-future-${i}`;
+    const url = signed(id, 'jpg');
+    out.push({
+      object_id: id,
+      action_type: 'ac_photo',
+      event_date: when.toISOString(),
+      created_at: when.toISOString(),
+      note: NOTES[i % NOTES.length],
+      media: { image_url: url, thumbnail_url: url },
       video_info: null,
       actor: actorFor(i),
       target: targetFor(studentId),
@@ -347,6 +372,7 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
         requests.length,
         options.leadingCheckIns,
         options.backDatedUploads,
+        options.futureDatedPosts,
       );
       // Honour the server-side filters the real API supports.
       const actionType = url.searchParams.get('action_type');
