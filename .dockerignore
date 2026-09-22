@@ -1,0 +1,15 @@
+# Keep the build context minimal. A `COPY . .` with a developer's session file in the
+# tree would bake that credential into an image layer — and deleting it in a later
+# layer does NOT remove it from the image history.
+.git
+node_modules
+dist
+*.har
+*.env
+.env*
+session.json
+config.json
+cookies.*
+docs
+Brightwheel*Photos/
+**/*.tsbuildinfo

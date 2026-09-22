@@ -1,0 +1,43 @@
+# Secret scanning for this repository.
+#
+# Run locally:  gitleaks detect --config .gitleaks.toml
+# Runs in CI on every pull request (see .github/workflows/security.yml).
+#
+# The built-in rules catch AWS keys, tokens and the like. The rules below add the
+# credentials that are specific to this project — a generic scanner has no idea what
+# a Brightwheel session looks like.
+
+title = "brightwheel-archive"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "brightwheel-session-cookie"
+description = "Brightwheel session cookie (_brightwheel_v2) — grants full access to a family's account"
+regex = '''_brightwheel_v2\s*[=:]\s*["']?[A-Za-z0-9%._\-+/]{20,}'''
+tags = ["cookie", "session", "brightwheel"]
+
+[[rules]]
+id = "brightwheel-session-json"
+description = "A saved session.json payload"
+regex = '''"cookie"\s*:\s*"[A-Za-z0-9%._\-+/]{20,}"'''
+tags = ["session"]
+
+[[rules]]
+id = "signed-media-url"
+description = "Signed CDN media URL — a bearer credential for one child's photo"
+regex = '''https?://[^\s"']+[?&](?:signature|X-Amz-Signature|X-Goog-Signature)=[A-Za-z0-9%._\-+/]{16,}'''
+tags = ["url", "media"]
+
+[allowlist]
+description = "Synthetic values used by the tests and the documentation screenshots"
+regexes = [
+  '''test-session-value''',
+  '''super-secret-cookie-value''',
+  '''signature=aaa|signature=zzz|signature=deadbeef''',
+]
+paths = [
+  '''packages/brightwheel-archive/src/mock/server\.ts''',
+  '''packages/.*/test/.*''',
+]

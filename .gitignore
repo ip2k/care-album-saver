@@ -1,0 +1,54 @@
+# NOTE: git does not support trailing comments on a pattern line. A line like
+#   *.har   # browser captures
+# is treated as the literal pattern "*.har   # browser captures" and matches nothing.
+# Every comment here therefore gets its own line. Verified by scripts/verify-ignores.sh.
+
+# ── Credentials and personal data ────────────────────────────────────────────
+# The tool never writes these into the project folder — they live in the OS config
+# directory. These rules exist anyway, because someone debugging a problem will
+# eventually put one here by hand, and that is the moment this file earns its keep.
+
+# Browser network captures. Contain live session cookies.
+*.har
+har/
+cookies.txt
+cookies.json
+session.json
+config.json
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ── Downloaded media ─────────────────────────────────────────────────────────
+# Never commit a child's photo. Not yours, not anybody's.
+Brightwheel*Photos/
+archive/
+downloads/
+*.jpg
+*.jpeg
+*.heic
+*.mp4
+*.mov
+*.png
+
+# Documentation screenshots are the one exception: they come from the mock server
+# and contain only synthetic, invented children.
+!docs/images/
+!docs/images/*.png
+
+# ── Browser automation state ─────────────────────────────────────────────────
+user-data-dir/
+playwright-state.json
+storageState.json
+.playwright/
+
+# ── Build and tooling ────────────────────────────────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.DS_Store
+*.log
