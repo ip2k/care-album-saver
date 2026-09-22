@@ -15,7 +15,7 @@ brightwheel-archive — save your own child's photos from Brightwheel
 
   brightwheel-archive setup        Open the setup assistant in your browser (easiest)
   brightwheel-archive login        Paste your Brightwheel session in the terminal
-  brightwheel-archive run          Save any new photos
+  brightwheel-archive run          Save any new photos (Ctrl+C stops after the current one)
   brightwheel-archive children     List the children on your account, with their ids
   brightwheel-archive doctor       Check that everything is working
   brightwheel-archive verify       Check the Brightwheel API shape (read-only, no photos)
@@ -34,6 +34,14 @@ Options
 Your session is stored in your user config folder, never in this project folder:
   ${configDir()}
 `;
+
+/**
+ * Whether the run's own progress stream has already told the parent that it failed.
+ *
+ * `sync` reports a mid-run failure as a progress event *and* throws it, so without this the
+ * same sentence was printed twice: once as a progress line, once by the catch below.
+ */
+let failureAnnounced = false;
 
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -73,7 +81,18 @@ async function main(): Promise<number> {
         `\n  Setup assistant is ready.\n\n  Open this link in your browser:\n\n    ${ui.url}\n\n` +
           `  This page is only reachable from this computer.\n  Press Ctrl+C when you are finished.\n\n`,
       );
-      await new Promise<void>((resolve) => process.on('SIGINT', () => resolve()));
+      // Ctrl+C closes the assistant, and closing it stops a run that is in progress —
+      // which waits for the photo being saved, so it is not instant. A parent who does not
+      // want to wait presses Ctrl+C again and that is the end of it.
+      await new Promise<void>((resolve) => {
+        let closing = false;
+        process.on('SIGINT', () => {
+          if (closing) process.exit(130);
+          closing = true;
+          stdout.write('\n  Closing the setup assistant…\n');
+          resolve();
+        });
+      });
       await ui.close();
       return 0;
     }
@@ -189,18 +208,43 @@ async function main(): Promise<number> {
         config.includeStudents = chosen;
         stdout.write(`  Only: ${children.filter((c) => chosen.includes(c.id)).map((c) => c.fullName).join(', ')}\n`);
       }
+      // Ctrl+C: finish the photo being saved, write the manifest, stop. Anything harsher
+      // throws away the download in flight and, worse, the record of the ones before it.
+      // A second Ctrl+C is a parent saying they meant it, and ends the process there.
+      const stop = new AbortController();
+      let stopping = false;
+      const onInterrupt = () => {
+        if (stopping) process.exit(130);
+        stopping = true;
+        stop.abort();
+        stdout.write('\n  Stopping after the current photo…\n');
+      };
+      process.on('SIGINT', onInterrupt);
+
       let lastLine = '';
-      const result = await sync(client, config, (p) => {
-        const line = `  ${p.message}`;
-        if (line !== lastLine) {
-          stdout.write(`${line}\n`);
-          lastLine = line;
-        }
-      });
+      let result;
+      try {
+        result = await sync(
+          client,
+          config,
+          (p) => {
+            const line = `  ${scrub(p.message)}`;
+            if (line === lastLine) return;
+            stdout.write(`${line}\n`);
+            lastLine = line;
+            // Said once, here, so the catch at the bottom does not say it again.
+            if (p.phase === 'error') failureAnnounced = true;
+          },
+          { signal: stop.signal },
+        );
+      } finally {
+        process.off('SIGINT', onInterrupt);
+      }
       stdout.write(
-        `\n  Done. ${result.saved} new, ${result.skipped} already had, ${result.failed} failed.\n` +
-          `  Photos are in: ${result.archiveDir}\n`,
+        `\n  ${result.stopped ? 'Stopped' : 'Done'}. ${result.saved} new, ${result.skipped} already had, ` +
+          `${result.failed} failed.\n  Photos are in: ${result.archiveDir}\n`,
       );
+      if (result.stopped) stdout.write('  Run the same command again to carry on where it left off.\n');
       for (const w of result.warnings) stdout.write(`  Note: ${scrub(w)}\n`);
       return result.failed > 0 ? 1 : 0;
     }
@@ -214,6 +258,9 @@ async function main(): Promise<number> {
 main()
   .then((code) => process.exit(code))
   .catch((error: unknown) => {
+    // A failure the run already printed is not printed a second time: the same thing said
+    // twice, in two shapes, reads as two separate things having gone wrong.
+    if (failureAnnounced) process.exit(1);
     const message = error instanceof Error ? error.message : String(error);
     stdout.write(`\n  ${scrub(message)}\n`);
     process.exit(1);

@@ -207,8 +207,13 @@ export async function writeJsonSidecar(input: MetadataInput): Promise<void> {
 }
 
 export interface MetadataResult {
+  /** The tags were written into the file itself. */
   embedded: boolean;
+  /** The JSON sidecar was written beside the file. Always true: it needs no external tool. */
   sidecar: boolean;
+  /** The .xmp sidecar was written, when one was asked for. Absent when it was not asked for. */
+  xmpSidecar?: boolean;
+  /** Why something above is false, in words for the parent. */
   reason?: string;
 }
 
@@ -275,30 +280,42 @@ export async function applyMetadata(input: MetadataInput): Promise<MetadataResul
   const tags = buildTags(input);
   if (input.stripLocation) {
     // Brightwheel has never been seen to include coordinates, but a teacher's phone might
-    // one day. Deleting a tag that is absent is a no-op, so this costs nothing.
+    // one day. Deleting a tag that is absent is a no-op, so this costs nothing. These names
+    // are deliberately ungrouped, unlike everything in the tables above: a bare name deletes
+    // the tag from every group it lives in (EXIF, XMP-exif, QuickTime), which is what a
+    // deletion wants, whereas a grouped name would leave the copies in the other groups.
     Object.assign(tags, { GPSLatitude: '', GPSLongitude: '', GPSPosition: '', GPSCoordinates: '' });
   }
 
+  const embed = await writeTags(tool, input.filePath, tags);
+  if (!embed.ok) return { embedded: false, sidecar: true, reason: embed.reason };
+  if (!input.writeSidecar) return { embedded: true, sidecar: true };
+
+  // An .xmp file can only hold XMP; the EXIF, IPTC and QuickTime fields have no home there.
+  const xmpOnly = Object.fromEntries(Object.entries(buildTags(input)).filter(([k]) => k.startsWith('XMP-')));
+  const aside = await writeTags(tool, `${input.filePath}.xmp`, xmpOnly);
+  // The file itself is done by now; a sidecar that failed does not undo that, and must not
+  // be reported as though it did — nor pass unmentioned.
+  return aside.ok
+    ? { embedded: true, sidecar: true, xmpSidecar: true }
+    : { embedded: true, sidecar: true, xmpSidecar: false, reason: `The .xmp sidecar was not written: ${aside.reason}` };
+}
+
+/** One ExifTool write, with its outcome read for what it is. */
+async function writeTags(
+  tool: ExifToolLike,
+  path: string,
+  tags: TagSet,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
-    const outcome = await tool.write(input.filePath, tags, ['-overwrite_original']);
+    const outcome = await tool.write(path, tags, ['-overwrite_original']);
     // ExifTool reports a file it could not change as a warning, not an error, and the
     // wrapper passes that through as "0 files updated". Treat it as the failure it is.
     const touched = (outcome.created ?? 0) + (outcome.updated ?? 0) + (outcome.unchanged ?? 0);
-    if (touched === 0) {
-      return { embedded: false, sidecar: true, reason: outcome.warnings?.join('; ') || 'ExifTool wrote nothing' };
-    }
-    if (input.writeSidecar) {
-      // An .xmp file can only hold XMP; the EXIF, IPTC and QuickTime fields have no home there.
-      const xmpOnly = Object.fromEntries(Object.entries(buildTags(input)).filter(([k]) => k.startsWith('XMP-')));
-      await tool.write(`${input.filePath}.xmp`, xmpOnly, ['-overwrite_original']);
-    }
-    return { embedded: true, sidecar: true };
+    if (touched === 0) return { ok: false, reason: outcome.warnings?.join('; ') || 'ExifTool wrote nothing' };
+    return { ok: true };
   } catch (error) {
-    return {
-      embedded: false,
-      sidecar: true,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
