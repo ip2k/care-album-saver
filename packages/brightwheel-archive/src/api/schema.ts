@@ -146,13 +146,27 @@ export function parseStudents(raw: unknown): Student[] {
 }
 
 /**
- * Pick the capture time from an activity.
+ * Pick the best date an activity carries.
  *
- * Order matters and is deliberate: `event_date` is when the photo was *taken*, while
- * `created_at` is when it was *uploaded*. A teacher photographing at 9am and uploading at
- * 5pm would otherwise land every morning photo in the evening — and, at week boundaries,
- * in the wrong week folder entirely. Preferring event_date is the whole reason this tool
- * writes corrected timestamps instead of trusting the download.
+ * This function used to be the heart of the project's claim: that `event_date` is when the
+ * photo was TAKEN and `created_at` when it was UPLOADED, so preferring the first recovered
+ * a capture time the website's own download loses. Checked against the live service on
+ * 2026-09-22, that is not so:
+ *
+ *   - `event_date` and `created_at` were identical on all 50 records sampled, and no other
+ *     field on the record carries a time (`verify` lists every field name, so this can be
+ *     re-checked rather than believed).
+ *   - The photographs themselves arrive with no EXIF at all — no DateTimeOriginal, no GPS.
+ *     Brightwheel strips it, or the posting app never wrote it. `verify --deep` checks.
+ *
+ * So the moment a photo was taken is not recoverable from Brightwheel, by this tool or by
+ * anything else reading the same API. What IS recoverable is when it was posted, which for
+ * a nursery is usually minutes later and nearly always the same day — and which is still a
+ * great deal better than the download time a browser gives the file.
+ *
+ * The order below is therefore kept, but for a smaller reason: if some other nursery's
+ * records do distinguish the two, `event_date` remains the likelier capture time, and
+ * preferring it costs nothing where they are equal. It is no longer load-bearing.
  *
  * Returns null rather than throwing when none of those fields holds a date we can read.
  * One entry must not decide the fate of the page by itself: the count of undated entries

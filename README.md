@@ -3,8 +3,9 @@
 **Save your own child's photos from Brightwheel onto your own computer, sorted into a folder for each week.**
 
 Your childcare provider posts photos of your child to Brightwheel. Those photos live on
-Brightwheel's servers. This tool copies them onto your computer, gives each one the correct
-date, labels it with your child's name, and files it in a folder for the week it was taken.
+Brightwheel's servers, and they arrive with nothing in them — no date, no name, nothing your
+photo app can sort by. This tool copies them onto your computer, gives each one the date it
+was posted, labels it with your child's name, and files it in a folder for that week.
 
 Run it once a day and you build up a complete, private archive of your child's time at
 nursery — one you keep, whatever happens to your account.
@@ -364,17 +365,35 @@ Windows reads on a Mac or Linux and back again. Do not delete it: without it the
 forgotten everything and downloads the lot a second time, alongside the copies you already
 have.
 
-### Why the dates need correcting
+### About the dates, honestly
 
-Brightwheel records both when a photo was *taken* and when the teacher *uploaded* it —
-often hours later. Downloading the file from the website gives you the upload time. A
-photo taken at 9am on Friday and uploaded at 7pm lands in the wrong evening, and at a
-week boundary, in the wrong week folder entirely. This tool always uses the capture time.
+**The photos Brightwheel gives you have no information in them at all.** Not the date, not
+the place, nothing — we checked, on a real account. Whatever your child's teacher's phone
+recorded when it took the picture is gone by the time the photo reaches you. So if you save
+a photo from the website, your computer stamps it with the moment you clicked, and a year of
+them lands in your photo app in one meaningless heap.
 
-That rests on one belief about Brightwheel's data we have not been able to confirm: that the
-field called `event_date` is the capture time and `created_at` is the upload time. Every
-open-source Brightwheel client we studied assumes it. `brightwheel-archive verify` is the
-command that checks it against your own account.
+This tool gives each photo the time it was **posted to Brightwheel**, which the app does
+tell us, and writes it into the file properly. For a nursery that is usually minutes after
+the picture was taken and nearly always the same day, so the photos sort correctly and land
+in the right week.
+
+What it cannot do — and we would rather say so than let you find out later — is recover the
+exact moment the shutter clicked. That information does not survive the trip through
+Brightwheel. An earlier version of this page claimed otherwise, on the strength of a field
+name every other open-source Brightwheel client also assumes means capture time. On the one
+real account this has been checked against, that field is identical to the upload time on
+every record.
+
+You can check your own account, which is the point of the tool being honest about this:
+
+```sh
+npx brightwheel-archive verify          # reads the API, downloads nothing
+npx brightwheel-archive verify --deep   # also reads three photos, then deletes them
+```
+
+The second one answers "does the date survive inside the photo on *my* nursery's account?"
+If it ever does, please open an issue — it would be worth supporting.
 
 ---
 
@@ -396,10 +415,9 @@ anything. It makes a handful of read-only requests — a few reads of the API, a
 that a photo link still answers — and downloads no photos. Mostly it reports which fields
 are present and what type each one is: never a child's name, never a note, never an id,
 never a date. A few plain values do appear, and they are listed here so that nothing in the
-report comes as a surprise — how many children and how many posts it counted, how many
-minutes apart the capture time and the upload time were on one post, the internet address
-photos are served from, and the names (not the contents) of the security parameters on a
-photo link. None of that identifies anybody, which is why the report is safe to paste into
+report comes as a surprise — how many children and how many posts it counted, whether the
+two dates on a post differ and by how many minutes, the internet address photos are served
+from, and the names (not the contents) of the security parameters on a photo link. None of that identifies anybody, which is why the report is safe to paste into
 a bug report.
 
 ### Before you use this: Brightwheel's terms

@@ -47,8 +47,13 @@ stores, and this tool is deliberately local-only with no cloud component.
   client of `/students/{id}/activities?page=N`. No Selenium, no scroll simulation.
 - **Config and session live outside the repo**, in the OS config dir. This is the
   structural answer to the fork-credential-leak problem; everything else is defence in depth.
-- **Capture time (`event_date`) beats upload time (`created_at`).** The entire point of
-  correcting timestamps. UNVERIFIED against the live API — see docs/QUESTIONS-FOR-FABLE.md.
+- **SETTLED, AGAINST US, 2026-09-22: there is no capture time to recover.** `event_date`
+  and `created_at` were identical on all 50 records of a real account, no other field on the
+  record carries a time, and the photographs arrive with no EXIF at all — no DateTimeOriginal,
+  no GPS (`verify --deep` checks this on any account). So the tool records when a photo was
+  POSTED, which is the best date that exists, and the README no longer claims otherwise.
+  `event_date` is still preferred over `created_at`, now only because it would be the
+  likelier capture time if some other nursery's records ever distinguished them.
 - **Not hosted in Archive Ferry.** That repo is private, k3s-bound, and its sibling
   adapters are adult-content sites. A children's-photo tool cannot ship from there.
 

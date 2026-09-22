@@ -27,6 +27,26 @@ in a report — a redacted reproduction is always enough.
 | Losing the record of what was saved when a run stops or fails | The manifest is written in a `finally`, so a stop, an expired session or a full disk still records every file already downloaded, and a manifest that cannot be written is reported on the progress stream rather than swallowed. A child's incremental cut-off advances only for a walk that reached the end with nothing left behind, so an interrupted run re-walks that feed rather than skipping past what it missed. |
 | The test suite overwriting the developer's own session | `pnpm test` preloads `scripts/test-env.js`, which points `BRIGHTWHEEL_ARCHIVE_CONFIG_DIR` at a throwaway directory; every test file that touches config imports it before the module under test and calls `assertIsolatedConfigDir()`, which throws if the variable names a real config location. This is a repair, not a precaution: during development the mock's session was written into the real config directory on 2026-09-21, and again on 2026-09-22 when a single file was run with `node --test`, which does not apply the preload. A test asserts the guard itself. |
 
+## What the API hands us that we do not want
+
+Confirmed against the live service on 2026-09-22, and worth writing down because it is not
+obvious from the endpoint names:
+
+| Response | Also contains |
+|---|---|
+| `GET /users/me` | `raw_passcode` (the physical pickup code), `invite_code`, `auth_phone_number`, `phone_1` |
+| `GET /students/{id}/activities` | `target.invite_code`, `target.raw_passcode`, `target.phone_1`, `target.phone_2`, `target.auth_phone_number`, `target.profile_photo.*`, and `actor.email` — a member of staff's address |
+
+None of it is persisted: the parser takes named fields and the sidecar is built from those,
+so a field we never read cannot reach disk. There is a test asserting that nothing written
+to disk contains the passcode. Two consequences worth keeping in mind:
+
+- **The session is a bigger credential than "can see photos."** It reaches a child's pickup
+  code. That is the argument for the session never leaving the API origin, and for the
+  media host being fetched without it.
+- **`verify` prints field names, not values**, for exactly this reason — the report is meant
+  to be safe to paste into a public issue, and half these field names would not be.
+
 ## Scope
 
 This tool reads only the authenticated user's own account. The endpoint for listing

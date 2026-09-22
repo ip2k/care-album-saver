@@ -289,6 +289,10 @@ test('sensitive account fields are never written to disk', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'bw-leak-'));
   await sync(client(), { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0 }, () => {}, { allowTemporaryDir: true });
 
+  // These reach us from TWO responses, not one: /users/me, and — confirmed live on
+  // 2026-09-22 — every activity record's `target`, which embeds the child's pickup code and
+  // phone numbers beside the photo. The mock carries them in both places so that this
+  // assertion covers the feed as well as the account.
   const forbidden = ['raw_passcode', 'INVITE-NEVER-STORE', '4821', '+15550000000', '+15550000001'];
   const files = [];
   const walk = async (d) => {

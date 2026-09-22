@@ -91,14 +91,37 @@ As of 2026-09-22 the owner has a signed-in session on the development machine, s
 stands between this section and an answer is someone running the command.
 
 ### B2. Is `event_date` really capture time?
-**Our lean:** yes, and we prefer it over `created_at` precisely because upload lag would
+**Our lean was:** yes, and we prefer it over `created_at` precisely because upload lag would
 misfile photos at week boundaries.
-**If wrong:** every timestamp we write is wrong, which is the tool's core value
-proposition. Worth confirming before anyone builds an archive on it.
-**Still open.** `verify` reports whether the two timestamps differ on one record, which is
-suggestive rather than proof, and inconclusive when that record happens to have been
-posted the moment it was taken. The honest test is a photo whose capture and upload are
-known to be days apart.
+
+**SETTLED on 2026-09-22, and the lean was wrong.** Against a real account:
+
+- `event_date` and `created_at` are **identical on all 50 records** sampled.
+- No other field on the record carries a time. `verify` now prints every field name on a
+  photo record, so this is checkable rather than assumable — the full list is `action_type`,
+  `actor.*`, `category_tags`, `created_at`, `details_blob`, `event_date`, `health_*`,
+  `is_archive_ready`, `learning_activity`, `likes`, `media.*`, `menu_item_tags`, `note`,
+  `object_id`, `observation_milestones`, `progress_tags`, `room.*`, `scale_tags`, `source`,
+  `staff_only`, `state`, `target.*`, `updated_at`, `video_info`.
+- **The photographs carry no EXIF at all** — no `DateTimeOriginal`, no `CreateDate`, no GPS.
+  `verify --deep` downloads three, reads them and deletes them; it found nothing on any.
+
+So the moment the shutter clicked is not recoverable, by this tool or by anything else
+reading the same API. What the tool records is when the photo was **posted**, which for a
+nursery is usually minutes later and nearly always the same day — and which is still much
+better than the download time a browser stamps on a manually saved file.
+
+**One caveat on the evidence:** this is one account at one nursery. If some other provider's
+records do distinguish the two fields, `event_date` remains the likelier capture time, which
+is why the preference order is kept. A second account's `verify` output would settle whether
+this is Brightwheel-wide or local. **New question, C6:** given the photos arrive with no
+metadata whatsoever, is the tool's real value that it is the only thing that ever puts any
+in them? The README now says so; it is worth a second opinion on whether that is the honest
+framing or a consolation prize.
+
+**What this cost:** the premise came from six existing open-source scrapers, all of which
+assume `event_date` is capture time. None of them appears to have checked either. That is
+the argument for `verify` existing at all, and for running it before believing a field name.
 
 ### B3. Do Brightwheel media URLs actually expire, and how fast?
 We assume signed URLs and strip signature params to keep identity stable. If they are
