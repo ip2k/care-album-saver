@@ -1,4 +1,5 @@
 import { DEFAULT_BASE_URL, SESSION_COOKIE } from './api/client.js';
+import { assertJsonResponse } from './api/schema.js';
 import { scrub } from './secrets.js';
 import type { Secret } from './secrets.js';
 
@@ -55,8 +56,20 @@ function check(obj: Record<string, unknown>, fields: string[]): FieldCheck[] {
 }
 
 /** Raw fetch helper so we can inspect envelopes the typed client would discard. */
+/**
+ * One read, with the failure named by a LABEL rather than by its URL.
+ *
+ * `label` is the whole point of this signature. The hand-rolled check this replaced put
+ * `path` into its error, and two of the three paths here carry an id — so a session that
+ * died between the first request and the second printed
+ * `Expected JSON from /guardians/<object_id>/students`, an identifier, in a report this
+ * command promises contains none. The shared `assertJsonResponse` raises SessionExpiredError
+ * for a login page (whose message carries nothing at all) and otherwise names only what it
+ * is given, which is why it is given a word and not a URL.
+ */
 async function raw(
   path: string,
+  label: string,
   session: Secret,
   baseUrl: string,
   fetchImpl: typeof fetch,
@@ -69,9 +82,7 @@ async function raw(
     },
   });
   const text = await response.text();
-  if (!(response.headers.get('content-type') ?? '').includes('json')) {
-    throw new Error(`Expected JSON from ${path}, got ${response.status} ${response.headers.get('content-type')}`);
-  }
+  assertJsonResponse(response, text, label);
   return JSON.parse(text) as Record<string, unknown>;
 }
 
@@ -84,7 +95,7 @@ export async function verify(
   const report: VerifyReport = { reachable: false, sessionValid: false, checks: [], findings: [], warnings: [] };
 
   // 1 — the account.
-  const me = await raw('/users/me', session, baseUrl, doFetch);
+  const me = await raw('/users/me', 'the account endpoint', session, baseUrl, doFetch);
   report.reachable = true;
   const meObj = (me.object as Record<string, unknown>) ?? me;
   report.sessionValid = Boolean(meObj.object_id ?? meObj.id);
@@ -105,6 +116,7 @@ export async function verify(
   // 2 — the children. Count only; no names.
   const students = await raw(
     `/guardians/${encodeURIComponent(guardianId)}/students?include[]=schools`,
+    'the children endpoint',
     session,
     baseUrl,
     doFetch,
@@ -145,6 +157,7 @@ export async function verify(
     });
     const acts = await raw(
       `/students/${encodeURIComponent(studentId)}/activities?${query}`,
+      'the activities endpoint',
       session,
       baseUrl,
       doFetch,

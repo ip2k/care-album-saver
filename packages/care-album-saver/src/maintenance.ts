@@ -405,6 +405,8 @@ export interface DuplicateReport {
   /** How many files would be removed in total. */
   files: number;
   bytes: number;
+  /** Files on disk that no manifest record mentions, which this search cannot compare. */
+  unrecorded: number;
   summary: string;
 }
 
@@ -476,7 +478,25 @@ export async function findDuplicates(config: Config): Promise<DuplicateReport> {
       ? 'No photo is saved twice. Nothing to tidy up.'
       : `${files} file${files === 1 ? ' is' : 's are'} an exact second copy of ${groups.length === 1 ? 'another photo' : 'photos'} you already have, ` +
         `taking up ${humanBytes(bytes)}. Nothing has been deleted — check the list below first.`;
-  return { groups, files, bytes, summary };
+
+  /**
+   * The blind spot, said out loud.
+   *
+   * This search compares the manifest against itself: two records, same hash, both files
+   * present. A file on disk that no record mentions is invisible to it — and that is
+   * precisely the thing it was written for, because the usual cause of a duplicate is a
+   * run force-quit after the download and before the manifest was saved. Until the list
+   * is repaired, "no duplicates" means "none that I have a record of", which is a
+   * different sentence and has to read like one.
+   */
+  const audit = await auditArchive(config).catch(() => null);
+  const blind = audit?.unrecorded.length ?? 0;
+  const caveat = blind === 0
+    ? ''
+    : ` ${blind} file${blind === 1 ? ' is' : 's are'} not on the tool's own list yet, and this search cannot see ` +
+      `${blind === 1 ? 'it' : 'them'} — the usual cause of a second copy is exactly that. Repair the list first, then look again.`;
+
+  return { groups, files, bytes, unrecorded: blind, summary: summary + caveat };
 }
 
 export interface RemovalResult {

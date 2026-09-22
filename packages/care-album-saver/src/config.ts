@@ -48,6 +48,12 @@ export interface ScheduleRecord {
    */
   location: string;
   installedAt: string;
+  /**
+   * The absolute path in this job that will not survive an upgrade — a Node under a
+   * version manager, or an entry point in an npx cache — or null when both look durable.
+   * Recorded at install so that "set up, never ran" can say which of its two causes it is.
+   */
+  fragilePath?: string | null;
 }
 
 export const DEFAULT_CONFIG: Config = {

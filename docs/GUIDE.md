@@ -53,8 +53,10 @@ stops the tool.
 This tool never asks for your password. Instead you sign in on Brightwheel's real website
 and copy one value across.
 
-1. Open a new browser tab, go to **schools.mybrightwheel.com**, and sign in as normal
-   (including the 6-digit code they send you).
+1. Open a new browser tab, go to [schools.mybrightwheel.com](https://schools.mybrightwheel.com/),
+   and sign in as normal (including the 6-digit code they send you). It is a link here for
+   the same reason it is one on the page: a mistyped sign-in address is how somebody ends up
+   typing their password into a stranger's site.
 2. Press **F12** on Windows, or **Option + Cmd + I** on a Mac. A panel opens.
 3. Click **Application** along the top, then **Cookies** on the left, then the
    `schools.mybrightwheel.com` entry.
@@ -66,6 +68,11 @@ The page writes those five steps for the browser you are reading it in, so if wh
 screen differs from the list above, follow the screen. Firefox and Safari call the panel
 **Storage** rather than **Application**, and Safari hides it until you turn it on: Safari
 menu → **Settings** → **Advanced** → tick **Show features for web developers**.
+
+**If that panel is unfamiliar, there are pictures.** The page has them behind
+**Show me pictures of these steps**, and the same drawings are in
+[COOKIE.md](COOKIE.md) — where to click, for Chrome or Edge, Safari and Firefox
+separately. This is the one step of the whole tool that cannot be done by reading alone.
 
 If it worked, the step turns green and your children appear, each with a tick box:
 
