@@ -396,9 +396,9 @@ export const PAGE = String.raw`<!doctype html>
           <span class="num" aria-hidden="true" id="num-3">3</span>
           <h2 id="h-run">Save the photos</h2>
         </div>
-        <p class="hint">The first time takes a while. After that it only looks for what is new, which is quick. You can close this page &mdash; it keeps going in the black window you started it from.</p>
+        <p class="hint">This is the one-time part: the first run fetches everything you already have, so it takes a while. Every run after it only looks for what is new, which takes a moment. You can close this page &mdash; it keeps going in the black window you started it from. Step 4 is what makes it happen without you.</p>
         <div class="body">
-          <p class="sr-only" id="run-state">Step 3 of 3. Waiting for step 1.</p>
+          <p class="sr-only" id="run-state">Step 3 of 4. Waiting for step 1.</p>
           <div class="run-actions">
             <button id="btn-run" type="button" disabled>Start saving</button>
             <button class="secondary" id="btn-stop" type="button" disabled>Stop</button>
@@ -415,7 +415,99 @@ export const PAGE = String.raw`<!doctype html>
         </div>
       </section>
     </li>
+
+    <li>
+      <section class="card" id="card-schedule" aria-labelledby="h-schedule">
+        <div class="step-head">
+          <span class="num" aria-hidden="true" id="num-4">4</span>
+          <h2 id="h-schedule">Keep it up to date on its own</h2>
+        </div>
+        <p class="hint">Steps 1 to 3 happen once. This one is what turns them into something that looks after itself, so that next month&rsquo;s photos arrive without you remembering to come back here.</p>
+        <div class="body">
+          <p class="sr-only" id="schedule-state">Step 4 of 4. Optional.</p>
+          <p class="why-ask">
+            <b>What a scheduled task is:</b> a note in your own computer&rsquo;s diary that says
+            &ldquo;run this at seven every evening&rdquo;. Your computer does it &mdash; not a
+            website, not a server somewhere &mdash; and it only happens while the computer is
+            switched on and you are logged in. If it is asleep or shut at that time the run is
+            not lost; it happens the next time the computer is awake.
+          </p>
+          <div class="field">
+            <label class="field-label" for="schedule-time">What time each day?</label>
+            <input type="time" id="schedule-time" value="19:00" aria-describedby="schedule-msg"
+              style="max-width:11rem;padding:.6875rem .8125rem;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font:.9375rem/1.5 inherit;background:var(--surface);color:var(--text);min-height:2.75rem">
+            <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Evening works well: the nursery day is over, so the day&rsquo;s photos are all there.</p>
+          </div>
+          <div class="run-actions">
+            <button id="btn-schedule-on" type="button">Save new photos every day</button>
+            <button class="secondary" id="btn-schedule-off" type="button" hidden>Stop saving them automatically</button>
+          </div>
+          <div id="schedule-msg" role="status" aria-live="polite"></div>
+          <p style="color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0">
+            <b>You do not have to.</b> Leave this off and nothing changes: whenever you want the
+            newest photos, start the tool again and press <b>Start saving</b> in step 3. It only
+            ever looks for what is new, so it is quick.
+          </p>
+        </div>
+      </section>
+    </li>
   </ol>
+
+  <!--
+    The management view. Same page, different rendering: when there is a saved session AND a
+    daily run already set up, this card is moved to the top and the four steps are folded
+    into the disclosure below it. A parent who comes back is almost never here to set
+    anything up — they are here because the session expired — so the wizard is not what
+    should greet them.
+  -->
+  <section class="card" id="card-manage" aria-labelledby="h-manage" data-state="complete" hidden>
+    <div class="step-head">
+      <span class="num" aria-hidden="true">&#10003;</span>
+      <h2 id="h-manage">This is already set up</h2>
+    </div>
+    <p class="hint">Nothing here needs doing. This is where you change it, check on it, or fix it.</p>
+    <div class="body">
+      <p id="m-connected" style="margin:0 0 var(--s2);font-size:.9375rem"></p>
+      <p id="m-daily" style="margin:0 0 var(--s2);font-size:.9375rem"></p>
+      <p id="m-last" style="margin:0 0 var(--s2);font-size:.9375rem"></p>
+      <p id="m-folder" style="margin:0 0 var(--s4);font-size:.9375rem"></p>
+
+      <div class="run-actions">
+        <button id="m-run" type="button">Save new photos now</button>
+        <button class="secondary" id="m-open" type="button">Open the photos folder</button>
+        <button class="secondary" id="m-session" type="button">Update my Brightwheel session</button>
+        <button class="secondary" id="m-time" type="button">Change the time</button>
+        <button class="secondary" id="m-off" type="button">Stop the daily run</button>
+      </div>
+      <div id="m-msg" role="status" aria-live="polite"></div>
+
+      <h3 style="font-size:1rem;font-weight:640;margin:var(--s6) 0 var(--s2)">Checking on the archive</h3>
+      <p style="color:var(--text-muted);font-size:.9375rem;margin:0 0 var(--s4)">Each of these answers a question and changes nothing on its own. If something needs fixing, it says so and asks first.</p>
+
+      <div class="field">
+        <button class="secondary" id="m-children" type="button">Has a child been added or left?</button>
+        <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Asks Brightwheel who is on your account now and compares that with the photos already saved.</p>
+        <div id="m-children-out" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="field">
+        <button class="secondary" id="m-check" type="button">Check the folder against the list</button>
+        <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">The tool keeps a list of everything it has saved. This compares that list with what is really in the folder, and reports anything on one side and not the other.</p>
+        <div id="m-check-out" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="field">
+        <button class="secondary" id="m-dupes" type="button">Find photos saved twice</button>
+        <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">A run that was force-quit can fetch the same photo again under a new name. This finds copies that are identical down to the last byte. It only ever shows them &mdash; nothing is deleted unless you say so.</p>
+        <div id="m-dupes-out" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+  </section>
+
+  <details id="setup-details" hidden>
+    <summary id="setup-summary">Change how it is set up</summary>
+    <div class="inner" id="setup-inner"></div>
+  </details>
   </main>
 
   <aside class="privacy" aria-labelledby="h-privacy">
@@ -612,9 +704,9 @@ function updateRunReady() {
   // The run is over, however it ended; Stop is ready for the next one.
   stopping = false;
   stopBtn.textContent = 'Stop';
-  if (!sessionOk) $('run-state').textContent = 'Step 3 of 3. Waiting for step 1.';
-  else if (none) $('run-state').textContent = 'Step 3 of 3. Cannot start until at least one child is ticked in step 2.';
-  else $('run-state').textContent = 'Step 3 of 3. Ready to start.';
+  if (!sessionOk) $('run-state').textContent = 'Step 3 of 4. Waiting for step 1.';
+  else if (none) $('run-state').textContent = 'Step 3 of 4. Cannot start until at least one child is ticked in step 2.';
+  else $('run-state').textContent = 'Step 3 of 4. Ready to start.';
 }
 
 /** Settings cannot change under a run that has already read them, so say so. */
@@ -640,12 +732,13 @@ async function refresh() {
   if (state.hasSession) {
     sessionOk = true;
     setStep($('card-connect'), $('num-1'), $('connect-state'), 'complete',
-      'Step 1 of 3, complete. Connected' + (state.email ? ' as ' + state.email : '') + '.');
+      'Step 1 of 4, complete. Connected' + (state.email ? ' as ' + state.email : '') + '.');
     show($('connect-msg'), 'ok', 'Connected' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') + '.');
-    setStep($('card-run'), $('num-3'), $('run-state'), 'active', 'Step 3 of 3. Ready to start.');
+    setStep($('card-run'), $('num-3'), $('run-state'), 'active', 'Step 3 of 4. Ready to start.');
     await loadChildren();
   }
   updateRunReady();
+  await loadSchedule();
   paint(state.progress, state.running, state.lastResult);
   // A run started before this page was opened (or before a reload) is still going in the
   // terminal. Without restarting the poll here the bar sits motionless, and HIG's
@@ -669,7 +762,7 @@ async function loadChildren() {
   for (const box of document.querySelectorAll('#kids input')) box.addEventListener('change', onChildToggled);
   describeSelection();
   setStep($('card-children'), $('num-2'), $('children-state'), 'complete',
-    'Step 2 of 3. Found ' + kids.length + ' child' + (kids.length === 1 ? '' : 'ren') + '. Tick the ones to save photos for.');
+    'Step 2 of 4. Found ' + kids.length + ' child' + (kids.length === 1 ? '' : 'ren') + '. Tick the ones to save photos for.');
 }
 
 function onChildToggled() {
@@ -821,7 +914,7 @@ function paint(p, running, result) {
   updateRunReady();
 
   if (p.phase === 'done') {
-    setStep($('card-run'), $('num-3'), $('run-state'), 'complete', 'Step 3 of 3, finished.');
+    setStep($('card-run'), $('num-3'), $('run-state'), 'complete', 'Step 3 of 4, finished.');
     bar.dataset.indeterminate = 'false';
     fill.style.width = '100%';
     // "Nothing new" is the normal outcome of a daily run. It must read as success, not
@@ -851,6 +944,364 @@ async function poll() {
   const s = await r.json();
   paint(s.progress, s.running, s.lastResult);
   if (s.running) setTimeout(poll, 700);
+}
+
+/* ------------------------------------------------------------------ step 4 and managing it
+
+   The page used to read "connect, choose, run once", which is the wrong shape for what this
+   tool is. The run that matters is not this one, it is the one in three weeks' time — and a
+   parent who has to remember to come back is a parent whose archive stops in March. Step 4
+   hands the job to the scheduler the operating system already has, and says plainly what
+   that does and does not do.
+
+   Coming back is then a different task from setting up, so it gets a different rendering of
+   this same page. Someone who opens the tool a month later is almost never here to choose a
+   folder layout; they are here because the session expired. The management view leads with
+   that, and folds the four steps into a disclosure underneath rather than deleting them —
+   everything in there still works, and "update my session" is one press from the top. */
+
+/** The last answer from /api/schedule. */
+let sched = null;
+/** What this computer would set up, before anything has been set up. */
+let proposed = null;
+/** Whether the page has been re-rendered as a management view. One way, per page load. */
+let manageMode = false;
+/** The duplicate report the delete button is allowed to act on, and nothing else. */
+let dupes = null;
+
+// Steps 1 and 2 announce their position in the markup, which was written when there were
+// three of them. Corrected here rather than there, because a screen reader must not be told
+// there are three steps when the fourth is the one that makes the tool worth having.
+for (const id of ['connect-state', 'children-state']) {
+  const el = $(id);
+  if (el) el.textContent = el.textContent.replace('of 3', 'of 4');
+}
+
+const smooth = () => (window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+const shortWhen = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+};
+const fullWhen = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+async function loadSchedule() {
+  let d;
+  try {
+    d = await (await api('/api/schedule')).json();
+  } catch {
+    // The tool has stopped. The run card already says so in its own words; a second
+    // complaint about the daily run would only add noise.
+    return;
+  }
+  if (!d || !d.ok) return;
+  sched = d.schedule;
+  proposed = d.proposed;
+  paintSchedule();
+  if (d.manage) enterManageMode();
+  paintManage();
+}
+
+function paintSchedule() {
+  if (!sched) return;
+  if (sched.time) $('schedule-time').value = sched.time;
+  $('btn-schedule-off').hidden = !sched.installed;
+  $('btn-schedule-on').textContent = sched.installed ? 'Change the time' : 'Save new photos every day';
+  const box = $('schedule-msg');
+  // Where the note would be, or is, written down. Said out loud in both states: something
+  // that starts itself every evening should not be a thing a parent cannot find again.
+  const where = sched.location || (proposed && proposed.location);
+  const found = where
+    ? '<br><span style="font-size:.875rem">' + (sched.installed ? 'Written down in ' : 'It would be written down in ') +
+      '<span class="path">' + esc(where) + '</span></span>'
+    : '';
+  if (!sched.installed) {
+    // Not a warning. Choosing not to schedule it is a perfectly good answer, and a yellow
+    // box would tell a parent they had got something wrong.
+    box.innerHTML =
+      '<p style="color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0">' +
+      'Not set up. Photos are saved only when you press Start saving.' + found + '</p>';
+    setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active', 'Step 4 of 4. Optional, and not set up.');
+    return;
+  }
+  if (sched.registered === false) {
+    show(box, 'warn', esc(sched.summary) + found);
+    setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active',
+      'Step 4 of 4. A daily run was set up but the computer no longer has it.');
+    return;
+  }
+  show(box, 'ok',
+    esc(sched.summary) + (sched.nextRun ? '<br>Next run: <b>' + esc(shortWhen(sched.nextRun)) + '</b>.' : '') + found);
+  setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'complete', 'Step 4 of 4, done. ' + sched.summary);
+}
+
+function enterManageMode() {
+  if (manageMode) return;
+  manageMode = true;
+  document.title = 'Brightwheel Archive - Managing your archive';
+  $('setup-inner').appendChild(document.querySelector('ol.steps-list'));
+  $('setup-details').hidden = false;
+  $('card-manage').hidden = false;
+  $('main').prepend($('card-manage'));
+}
+
+/** Open the folded-away wizard at one card, for the manage view's buttons. */
+function openSetup(cardId) {
+  $('setup-details').open = true;
+  const card = $(cardId);
+  if (card) card.scrollIntoView({ behavior: smooth(), block: 'start' });
+}
+
+function paintManage() {
+  if (!manageMode || !state) return;
+  $('m-connected').innerHTML =
+    'Connected to Brightwheel' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') +
+    (state.sessionSavedAt ? ', since ' + esc(fullWhen(state.sessionSavedAt)) : '') + '.';
+  // A next run is only true when the computer really still holds the job. Printing one
+  // beside "it is no longer there" would be the page contradicting itself in two lines.
+  const due = sched && sched.installed && sched.registered !== false && sched.nextRun;
+  $('m-daily').innerHTML = sched
+    ? esc(sched.summary) + (due ? ' Next run: <b>' + esc(shortWhen(sched.nextRun)) + '</b>.' : '')
+    : '';
+  const last = sched && sched.lastRun;
+  // Whether it worked is said in words, not only in the presence of a number.
+  $('m-last').innerHTML = last
+    ? 'Last run on its own: <b>' + esc(fullWhen(last.at)) + '</b> &mdash; ' +
+      (last.ok ? 'it worked' : 'it did not work') + '. ' + esc(last.message)
+    : 'It has not run on its own yet.';
+  // No full stop after the path: the pill carries its own padding, so one would sit on its
+  // own with a visible gap in front of it.
+  $('m-folder').innerHTML = 'Photos are in <span class="path">' + esc(state.config.archiveDir) + '</span>';
+  $('m-off').hidden = !(sched && sched.installed);
+  $('m-time').textContent = sched && sched.installed ? 'Change the time' : 'Set a daily time';
+}
+
+/** Ask the tool to change the daily run. Returns the refusal, or null when it worked. */
+async function postSchedule(path, body) {
+  try {
+    const d = await (await api(path, { method: 'POST', body: JSON.stringify(body || {}) })).json();
+    if (!d.ok) return d.error || 'That could not be changed.';
+    sched = d.schedule;
+    return null;
+  } catch {
+    return 'Could not reach the tool. Check it is still running in the window you started it from.';
+  }
+}
+
+$('btn-schedule-on').onclick = async () => {
+  const btn = $('btn-schedule-on');
+  btn.disabled = true;
+  btn.textContent = 'Setting it up…';
+  const error = await postSchedule('/api/schedule', { time: $('schedule-time').value });
+  btn.disabled = false;
+  // paintSchedule owns the button's label and the box, so it runs either way; the refusal
+  // then goes into the box it just rewrote.
+  paintSchedule();
+  paintManage();
+  if (error) show($('schedule-msg'), 'err', esc(error));
+  else if (!manageMode) {
+    $('schedule-msg').insertAdjacentHTML('beforeend',
+      '<p style="color:var(--text-muted);font-size:.875rem;margin:var(--s3) 0 0">' +
+      'Next time you open this tool it will show a page for managing this, rather than these four steps.</p>');
+  }
+};
+
+$('btn-schedule-off').onclick = async () => {
+  const btn = $('btn-schedule-off');
+  btn.disabled = true;
+  const error = await postSchedule('/api/schedule/off');
+  btn.disabled = false;
+  paintSchedule();
+  paintManage();
+  if (error) show($('schedule-msg'), 'err', esc(error));
+};
+
+// ---------------------------------------------------------------- the management view
+
+$('m-run').onclick = () => {
+  // Reuses step 3 rather than running behind the parent's back: the progress bar, the
+  // counts and the Stop button all live there, and a run with no visible progress is the
+  // thing HIG's progress guidance is written against.
+  openSetup('card-run');
+  $('btn-run').click();
+};
+
+$('m-session').onclick = () => {
+  openSetup('card-connect');
+  $('cookie').focus();
+};
+
+$('m-time').onclick = () => {
+  openSetup('card-schedule');
+  $('schedule-time').focus();
+};
+
+$('m-off').onclick = () => $('btn-schedule-off').click();
+
+$('m-open').onclick = async () => {
+  const btn = $('m-open');
+  btn.disabled = true;
+  try {
+    const d = await (await api('/api/open-folder', { method: 'POST', body: '{}' })).json();
+    if (!d.ok) show($('m-msg'), 'err', esc(d.error || 'The folder could not be opened.'));
+    else $('m-msg').textContent = '';
+  } catch {
+    show($('m-msg'), 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
+  }
+  btn.disabled = false;
+};
+
+// ---------------------------------------------------------------- looking after the archive
+
+async function maintenance(action, body) {
+  const r = await api('/api/maintenance/' + action, { method: 'POST', body: JSON.stringify(body || {}) });
+  return await r.json();
+}
+
+/** Buttons that do real work say so while they do it, and give their own label back after. */
+function busy(btn, label) {
+  btn.dataset.label = btn.textContent;
+  btn.textContent = label;
+  btn.disabled = true;
+}
+function idle(btn) {
+  if (btn.dataset.label) btn.textContent = btn.dataset.label;
+  btn.disabled = false;
+}
+
+$('m-children').onclick = async () => {
+  const btn = $('m-children');
+  const out = $('m-children-out');
+  busy(btn, 'Asking Brightwheel…');
+  try {
+    const d = await maintenance('children');
+    if (!d.ok) {
+      show(out, 'err', esc(d.error || 'That could not be checked.'));
+    } else {
+      const r = d.result;
+      let html = esc(r.summary);
+      if (r.notIncluded.length > 0) {
+        html += '<div style="margin-top:var(--s3)"><button class="secondary" id="m-include" type="button">' +
+          'Save photos for everyone on the account</button></div>';
+      }
+      show(out, r.added.length > 0 || r.removed.length > 0 ? 'warn' : 'ok', html);
+      const include = $('m-include');
+      if (include) {
+        include.onclick = async () => {
+          include.disabled = true;
+          const saved = await persist({ includeStudents: r.onAccount.map((c) => c.id) });
+          if (!saved) { include.disabled = false; return; }
+          await loadChildren();
+          show(out, 'ok', 'Everyone on the account is included now. Their photos arrive on the next run.');
+        };
+      }
+    }
+  } catch {
+    show(out, 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
+  }
+  idle(btn);
+};
+
+$('m-check').onclick = async () => {
+  const btn = $('m-check');
+  const out = $('m-check-out');
+  busy(btn, 'Checking…');
+  try {
+    const d = await maintenance('archive');
+    if (!d.ok) {
+      show(out, 'err', esc(d.error || 'The folder could not be checked.'));
+    } else {
+      const r = d.result;
+      let html = esc(r.summary);
+      const examples = r.unrecorded.slice(0, 6).concat(r.missing.slice(0, 6));
+      if (examples.length > 0) {
+        html += '<ul style="margin:var(--s3) 0 0;padding-left:1.1rem">' +
+          examples.map((f) => '<li><span class="path">' + esc(f) + '</span></li>').join('') + '</ul>';
+      }
+      if (r.repairable) {
+        html += '<div style="margin-top:var(--s3)"><button class="secondary" id="m-repair" type="button">' +
+          'Fix the list</button><p style="font-size:.875rem;margin:var(--s2) 0 0">This changes only the ' +
+          'tool&rsquo;s own list of what it has saved. No photo is moved, changed or deleted.</p></div>';
+      }
+      show(out, r.repairable ? 'warn' : 'ok', html);
+      const repair = $('m-repair');
+      if (repair) {
+        repair.onclick = async () => {
+          busy(repair, 'Fixing…');
+          const fixed = await maintenance('repair');
+          show(out, fixed.ok ? 'ok' : 'err', esc(fixed.ok ? fixed.result.summary : fixed.error));
+        };
+      }
+    }
+  } catch {
+    show(out, 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
+  }
+  idle(btn);
+};
+
+$('m-dupes').onclick = async () => {
+  const btn = $('m-dupes');
+  const out = $('m-dupes-out');
+  busy(btn, 'Looking…');
+  try {
+    const d = await maintenance('duplicates');
+    if (!d.ok) show(out, 'err', esc(d.error || 'That could not be checked.'));
+    else { dupes = d.result; renderDupes(); }
+  } catch {
+    show(out, 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
+  }
+  idle(btn);
+};
+
+/**
+ * Every file that would go, named, before anything is offered. A count on its own is not
+ * enough to agree to: these are photographs of a child, and the parent has to be able to
+ * see which copy stays and which one does not.
+ */
+function renderDupes() {
+  const out = $('m-dupes-out');
+  let html = esc(dupes.summary);
+  if (dupes.files > 0) {
+    html += '<ul style="margin:var(--s3) 0 0;padding-left:1.1rem">';
+    for (const g of dupes.groups) {
+      html += '<li style="margin-bottom:var(--s3)">keeping <span class="path">' + esc(g.keep) + '</span>';
+      for (const extra of g.extra) html += '<br>would delete <span class="path">' + esc(extra) + '</span>';
+      html += '</li>';
+    }
+    html += '</ul>';
+  }
+  html += '<div id="m-dupes-actions" style="margin-top:var(--s3)"></div>';
+  show(out, dupes.files > 0 ? 'warn' : 'ok', html);
+  if (dupes.files === 0) return;
+  $('m-dupes-actions').innerHTML =
+    '<button class="secondary" id="m-dupes-go" type="button">' +
+    (dupes.files === 1 ? 'Delete the extra copy' : 'Delete the ' + dupes.files + ' extra copies') + '</button>';
+  $('m-dupes-go').onclick = confirmDupes;
+}
+
+/** The second press. The list above stays on screen while it is asked. */
+function confirmDupes() {
+  const one = dupes.files === 1;
+  $('m-dupes-actions').innerHTML =
+    '<p style="margin:0 0 var(--s3)"><b>This deletes ' + dupes.files + ' file' + (one ? '' : 's') +
+    '</b> &mdash; exactly the ' + (one ? 'one' : 'ones') + ' marked &ldquo;would delete&rdquo; above, and nothing ' +
+    'else. ' + (one ? 'The photo it is a copy of stays where it is.' : 'The photos they are copies of stay where they are.') +
+    ' This cannot be undone.</p>' +
+    '<div class="run-actions"><button id="m-dupes-yes" type="button">Yes, delete them</button>' +
+    '<button class="secondary" id="m-dupes-no" type="button">Keep them</button></div>';
+  $('m-dupes-no').onclick = renderDupes;
+  $('m-dupes-yes').onclick = async () => {
+    const yes = $('m-dupes-yes');
+    busy(yes, 'Deleting…');
+    // The exact paths that were shown. The tool checks them again on its side and deletes
+    // nothing at all if any one of them is no longer a second copy of a photo that is there.
+    const paths = dupes.groups.reduce((all, g) => all.concat(g.extra), []);
+    const done = await maintenance('duplicates/remove', { paths });
+    dupes = null;
+    show($('m-dupes-out'), done.ok ? 'ok' : 'err', esc(done.ok ? done.result.summary : done.error));
+  };
 }
 
 refresh();
