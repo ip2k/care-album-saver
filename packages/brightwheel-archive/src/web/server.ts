@@ -2,8 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BrightwheelClient } from '../api/client.js';
 import type { Student } from '../api/schema.js';
-import { loadConfig, loadSession, normaliseCookieInput, saveConfig, saveSession, type Config } from '../config.js';
+import { loadConfig, loadSession, saveConfig, saveSession, type Config } from '../config.js';
 import { Secret, scrub } from '../secrets.js';
+import { cleanPastedPath, inspectCookiePaste, PASTE_CLIENT_SOURCE } from '../paste.js';
 import { sync, type SyncProgress } from '../sync.js';
 import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
@@ -207,6 +208,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     // accepted any path at all and the tool wrote a child's photos there.
     let warning: string | undefined;
     if (typeof patch.archiveDir === 'string') {
+      patch.archiveDir = cleanPastedPath(patch.archiveDir);
       const verdict = checkArchiveDir(patch.archiveDir);
       if (!verdict.ok) return { ok: false, error: verdict.error ?? 'That folder cannot be used.', field: 'archiveDir' };
       patch.archiveDir = verdict.resolved;
@@ -294,12 +296,15 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       }
 
       if (req.method === 'POST' && url.pathname === '/api/session') {
-        const { cookie } = JSON.parse(await readBody(req)) as { cookie?: string };
-        const secret = cookie ? normaliseCookieInput(cookie) : null;
-        if (!secret) {
-          json(400, { ok: false, error: "That does not look like a Brightwheel session. Look for the value named _brightwheel_v2." });
+        const { cookie } = JSON.parse(await readBody(req)) as { cookie?: unknown };
+        // The same check the page runs as the person types: it cleans what it can, refuses
+        // what is certainly something else, and its message never repeats the paste.
+        const verdict = inspectCookiePaste(typeof cookie === 'string' ? cookie : '');
+        if (!verdict.ok) {
+          json(400, { ok: false, error: verdict.message });
           return;
         }
+        const secret = new Secret(verdict.value);
         const client = new BrightwheelClient({ session: secret, baseUrl: options.baseUrl });
         const check = await client.verifySession();
         if (!check.ok) {

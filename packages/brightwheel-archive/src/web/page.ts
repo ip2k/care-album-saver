@@ -31,6 +31,7 @@
  *    disk (/design/human-interface-guidelines/feedback).
  */
 import { COOKIE_HELP, COOKIE_HELP_CSS, COOKIE_HELP_SCRIPT } from './cookie-help.js';
+import { PASTE_CLIENT_SOURCE } from '../paste.js';
 
 export const PAGE = String.raw`<!doctype html>
 <html lang="en">
@@ -194,6 +195,10 @@ export const PAGE = String.raw`<!doctype html>
     min-height: 2.75rem;
   }
   textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+  #cookie-check { min-height: 1.2em; margin: 6px 0 10px; }
+  #cookie-check .good { color: var(--ok, #2a7); }
+  #cookie-check .warn { color: var(--warn, #b70); }
+  #cookie-check .bad { color: var(--err, #c33); }
   [aria-invalid="true"] { border-color: var(--danger); border-width: 2px; }
 
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
@@ -347,7 +352,8 @@ ${COOKIE_HELP_CSS}
           </p>
           <div class="field">
             <label class="field-label" for="cookie">Paste the value here</label>
-            <textarea id="cookie" rows="3" aria-describedby="connect-hint connect-msg"></textarea>
+            <textarea id="cookie" rows="3" aria-describedby="connect-hint cookie-check connect-msg" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-1p-ignore data-lpignore="true"></textarea>
+            <div id="cookie-check" class="hint" aria-live="polite"></div>
           </div>
           <button id="btn-connect" type="button">Connect</button>
           <div id="connect-msg" role="alert" aria-live="assertive"></div>
@@ -858,17 +864,43 @@ function describeSelection() {
   }
 }
 
+${PASTE_CLIENT_SOURCE}
+
+// What the person pasted, judged as they paste it. Cleaned where that is safe (a value
+// wrapped over lines, a copied row, quotes), refused where it is certainly something else,
+// and the box rewritten to the cleaned value so what they see is what will be sent.
+let cookieVerdict = null;
+function checkCookieField(rewrite) {
+  const field = $('cookie');
+  const out = $('cookie-check');
+  const btn = $('btn-connect');
+  if (!field.value.trim()) { cookieVerdict = null; out.textContent = ''; field.removeAttribute('aria-invalid'); btn.disabled = false; return; }
+  const v = inspectCookiePaste(field.value);
+  cookieVerdict = v;
+  if (v.ok && rewrite && v.value !== field.value) field.value = v.value;
+  const notes = v.notes.length ? ' (' + v.notes.join('; ') + ')' : '';
+  out.innerHTML = '<span class="' + (v.level === 'err' ? 'bad' : v.level === 'warn' ? 'warn' : 'good') + '">' + esc(v.message) + '</span>' + esc(notes);
+  field.setAttribute('aria-invalid', v.ok ? 'false' : 'true');
+  btn.disabled = !v.ok;
+}
+$('cookie').addEventListener('input', () => checkCookieField(false));
+$('cookie').addEventListener('paste', () => setTimeout(() => checkCookieField(true), 0));
+$('cookie').addEventListener('blur', () => checkCookieField(true));
+
 $('btn-connect').onclick = async () => {
   const btn = $('btn-connect');
   const field = $('cookie');
+  checkCookieField(true);
+  if (cookieVerdict && !cookieVerdict.ok) { field.focus(); return; }
   btn.disabled = true; btn.textContent = 'Checking…';
   field.setAttribute('aria-invalid', 'false');
   show($('connect-msg'), 'warn', 'Checking with Brightwheel…');
   try {
-    const r = await api('/api/session', { method: 'POST', body: JSON.stringify({ cookie: field.value }) });
+    const r = await api('/api/session', { method: 'POST', body: JSON.stringify({ cookie: cookieVerdict ? cookieVerdict.value : field.value }) });
     const d = await r.json();
     if (d.ok) {
       field.value = '';
+      $('cookie-check').textContent = '';
       await refresh();
       // Move focus forward so a keyboard or screen-reader user is taken to what is next.
       $('btn-run').focus();
@@ -890,8 +922,8 @@ for (const k of ['tagChildName', 'tagNote', 'stripLocation', 'incremental', 'wri
   $(k).addEventListener('change', () => persist({ [k]: $(k).checked }));
 }
 $('organiseBy').addEventListener('change', () => persist({ organiseBy: $('organiseBy').value }));
-$('archiveDir').addEventListener('change', () => persist({ archiveDir: $('archiveDir').value }));
-$('btn-dir').onclick = () => persist({ archiveDir: $('archiveDir').value }, { focus: true });
+$('archiveDir').addEventListener('change', () => { $('archiveDir').value = cleanPastedPath($('archiveDir').value); persist({ archiveDir: $('archiveDir').value }); });
+$('btn-dir').onclick = () => { $('archiveDir').value = cleanPastedPath($('archiveDir').value); persist({ archiveDir: $('archiveDir').value }, { focus: true }); };
 
 /** The small line under the folder buttons. Its own space, never the settings message box,
     which belongs to saving and must not be overwritten by "a chooser is open". */
