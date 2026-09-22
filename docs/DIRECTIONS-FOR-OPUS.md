@@ -94,6 +94,14 @@ that opened". No TCC prompt is expected for `choose folder`.
 Each item names the lane in QUESTIONS that argued it. Sizes are S unless marked.
 
 **Now (correctness and privacy):**
+
+> **Done on 2026-09-22 (merge 'judge and clean what a parent pastes'):** items 1, 7 and the
+> `typeof cookie === 'string'` half of 2, via `src/paste.ts` — one classifier embedded in
+> the page, used by the server and `login`, with `test/paste.test.js`. Still open from
+> that group: the `readJson` helper and the scrubbed progress stream (2), the clamp (3),
+> and everything from 4 on. The page gained a live hint under the paste box, so the five
+> `docs/images/*.png` need the one regeneration 1.2 already asks for.
+
 1. **A2-1** Refuse non-cookie characters at the boundary. In `config.ts`
    `normaliseCookieInput` (both the prefixed and the bare form) and in `loadSession`,
    return null unless every character matches `/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/`
