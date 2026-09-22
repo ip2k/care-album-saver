@@ -26,6 +26,92 @@ export interface ClientOptions {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * How far an incremental walk keeps going after the feed appears to be older than the
+ * cut-off: this many pages in a row must be entirely older before it stops.
+ *
+ * One page is not enough, because the feed is ordered by *upload* time while the cut-off is
+ * a *capture* time, and teachers back-date. A batch of photos taken last week and uploaded
+ * this morning sits at the very top of the feed with capture times older than anything the
+ * last run saw. Stopping at that first page would end the walk on the batch and never reach
+ * the genuinely new posts underneath it — and because a walk that saw nothing new does not
+ * move the cut-off either, no later run would reach them, while the tool reported that
+ * everything was up to date. That is a photo lost for good, which is the one failure this
+ * project cannot accept.
+ *
+ * The trade is requests against photos. Each extra page is one more API request and one more
+ * politeness delay on every nightly run; three pages is roughly 300 posts at the default
+ * page size, which is larger than any plausible single back-dated batch and costs about a
+ * second. A larger number buys tolerance for a bigger batch at the same linear cost; a
+ * smaller one saves a request and silently loses photos.
+ */
+/** Posts per listing request. Brightwheel may return fewer; it never returns more. */
+const DEFAULT_PAGE_SIZE = 100;
+
+export const PAGES_PAST_THE_CUT_OFF = 3;
+
+export interface ActivityListOptions {
+  pageSize?: number;
+  /**
+   * Hard stop on how many pages one walk reads. A runaway loop against a parent's account
+   * is worse than an unfinished walk, so the limit stays — but reaching it is reported on
+   * the last page's `truncated`, because such a walk has not seen the end of the feed.
+   */
+  maxPages?: number;
+  stopBefore?: Date;
+  /**
+   * Server-side filter, e.g. 'ac_photo'. Brightwheel's feed carries check-ins, naps,
+   * meals and notes as well as media; filtering at the server means we do not page
+   * through — or parse — thousands of records we would only throw away.
+   */
+  actionType?: string;
+  /** Server-side date window. Turns an incremental run into one short request. */
+  since?: Date;
+  until?: Date;
+}
+
+/**
+ * One page of a student's feed, with enough context to ask for exactly this page again.
+ *
+ * The counts are posts of every kind — check-ins and naps as well as photos — because
+ * that is what the envelope counts and what the feed pages through. They are honest
+ * measures of how far a walk has got; they are not a photo count.
+ */
+export interface ActivityPage {
+  /** Zero-based page index, as sent in the request. */
+  page: number;
+  /** The media posts on this page, after client-side filtering. */
+  items: MediaActivity[];
+  /** Posts of every kind on the whole feed, per the envelope's `count`. Null if absent. */
+  posts: number | null;
+  /** Posts of every kind on this page, before filtering. Zero means the feed has ended. */
+  found: number;
+  /** Posts of every kind on this and every earlier page: how far through the feed we are. */
+  examined: number;
+  /**
+   * Set on the last page of a walk that ran into `maxPages` while the feed went on.
+   *
+   * Without it, a walk cut short by the page limit ends exactly like a walk that reached
+   * the end of the feed, and a caller that advances a cut-off at the end of a walk would
+   * step over every post it never looked at. Only the walk sets this; a single-page fetch
+   * says nothing about where the feed ends.
+   */
+  truncated?: boolean;
+}
+
+/**
+ * The envelope fields we read for progress, leniently. These are informational: an odd
+ * shape here must never fail a run that the strict parser in schema.ts was happy with.
+ */
+function readEnvelope(raw: unknown, page: number, pageSize: number, items: number) {
+  const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const list = o.activities ?? o.data ?? o.object;
+  const found = Array.isArray(list) ? list.length : items;
+  const offset = num(o.offset) ?? page * (num(o.page_size) ?? pageSize);
+  return { posts: num(o.count), found, examined: offset + found };
+}
+
+/**
  * A thin, deliberately boring client for Brightwheel's internal API.
  *
  * Politeness policy: one request at a time, a small delay between them, and exponential
@@ -55,17 +141,24 @@ export class BrightwheelClient {
     return {
       Cookie: `${SESSION_COOKIE}=${this.options.session.expose()}`,
       Accept: 'application/json',
-      'X-Client-Name': 'brightwheel-archive',
+      // The web client identifies itself as 'web'; an unrecognised value risks rejection.
+      'X-Client-Name': 'web',
       'User-Agent': 'brightwheel-archive (+https://github.com/)',
     };
   }
 
-  /** Headers suitable for fetching a media file from the CDN. */
+  /**
+   * Headers for fetching a media file.
+   *
+   * Deliberately WITHOUT the session cookie. Media lives on a CDN behind presigned URLs,
+   * and sending the Brightwheel cookie to it is actively harmful: the CDN rejects the
+   * request with a permission error. The URL's own signature is the authorisation.
+   *
+   * It is also the safer default — the session is an account-takeover credential, so it
+   * should reach exactly one origin (the API) and no other.
+   */
   mediaHeaders(): Record<string, string> {
-    return {
-      Cookie: `${SESSION_COOKIE}=${this.options.session.expose()}`,
-      'User-Agent': 'brightwheel-archive (+https://github.com/)',
-    };
+    return { 'User-Agent': 'brightwheel-archive (+https://github.com/)' };
   }
 
   private async request(path: string, context: string): Promise<unknown> {
@@ -128,42 +221,95 @@ export class BrightwheelClient {
   }
 
   /**
-   * Every media post for a student, newest first, walking the paginated feed.
+   * One page of a student's feed.
+   *
+   * Separate from the walk so that a caller can ask for a page a second time. Signed
+   * media URLs come from here and are short-lived; a long run outlives them, and the only
+   * way to a fresh signature is the listing that issued the old one.
+   */
+  async activitiesPage(studentId: string, page: number, opts: ActivityListOptions = {}): Promise<ActivityPage> {
+    const pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
+    // start_date / end_date are ISO-8601 UTC with milliseconds and a Z suffix, not a bare
+    // calendar date — confirmed across ChaseBro/brightwheel-takeout and ss44/Keepsake.
+    const iso = (d: Date) => d.toISOString().replace(/(\.\d{3})?Z$/, '.000Z');
+
+    const query = new URLSearchParams({
+      page: String(page),
+      page_size: String(pageSize),
+      include_parent_actions: 'false',
+    });
+    if (opts.actionType) query.set('action_type', opts.actionType);
+    if (opts.since) query.set('start_date', iso(opts.since));
+    if (opts.until) query.set('end_date', iso(opts.until));
+    const raw = await this.request(
+      `/students/${encodeURIComponent(studentId)}/activities?${query}`,
+      `activities page ${page}`,
+    );
+    const { items, undated } = parseActivities(raw, studentId);
+    const check = validateExtraction(items, page, undated);
+    this.log(`Page ${page}: ${check.message}`);
+
+    if (check.status === 'suspicious') {
+      throw new ApiShapeError(check.message, `activities page ${page}`);
+    }
+    return { page, items, ...readEnvelope(raw, page, pageSize, items.length) };
+  }
+
+  /**
+   * A student's feed, newest first, one page at a time.
    *
    * This is what the website's infinite scroll is actually doing underneath. Reading the
    * paginated endpoint directly means no headless browser, no scroll simulation, and no
-   * guessing about when the feed has ended.
+   * guessing about when the feed has ended: it has ended when a page carries no posts of
+   * any kind. A page of nothing but check-ins is not the end — the photos may be on the
+   * next one — so a page can be yielded with no media on it, and a caller reads `found`
+   * and `examined` to keep its progress honest.
    */
-  async *activities(
-    studentId: string,
-    opts: { pageSize?: number; maxPages?: number; stopBefore?: Date } = {},
-  ): AsyncGenerator<MediaActivity[], void, void> {
-    const pageSize = opts.pageSize ?? 100;
+  async *activityPages(studentId: string, opts: ActivityListOptions = {}): AsyncGenerator<ActivityPage, void, void> {
     const maxPages = opts.maxPages ?? 500;
+    /** Consecutive pages, so far, that carried media and nothing newer than the cut-off. */
+    let olderPages = 0;
 
+    // The largest page this walk has seen, which is the server's effective page size.
+    let biggestPage = 0;
     for (let page = 0; page < maxPages; page++) {
-      const query = new URLSearchParams({
-        page: String(page),
-        page_size: String(pageSize),
-        include_parent_actions: 'false',
-      });
-      const raw = await this.request(
-        `/students/${encodeURIComponent(studentId)}/activities?${query}`,
-        `activities page ${page}`,
-      );
-      const items = parseActivities(raw, studentId);
-      const check = validateExtraction(items, page);
-      this.log(`Page ${page}: ${check.message}`);
+      const result = await this.activitiesPage(studentId, page, opts);
+      if (result.found === 0) return;
 
-      if (check.status === 'suspicious') {
-        throw new ApiShapeError(check.message, `activities page ${page}`);
+      // Incremental runs stop once the feed is older than what we already have — but not
+      // at the first such page. Only a page with media on it votes at all: a page of
+      // check-ins carries no capture times, so it leaves the tally where it was rather
+      // than resetting it and stretching the walk.
+      const { items } = result;
+      if (opts.stopBefore && items.length > 0) {
+        olderPages = items.every((i) => i.capturedAt < opts.stopBefore!) ? olderPages + 1 : 0;
       }
-      if (items.length === 0) return;
+      const reachedCutOff = olderPages >= PAGES_PAST_THE_CUT_OFF;
 
-      yield items;
+      // Truncated means "the page limit stopped the walk", which is only true if there was
+      // more to fetch. Measure that against the largest page this walk has actually seen
+      // rather than the page size we asked for: Brightwheel may clamp page_size below the
+      // request, and comparing with the request would then call every page short. A last
+      // page smaller than the biggest one is the feed ending, which happens to land on the
+      // limit — warning about that would tell a parent on every run that their archive may
+      // be incomplete when it is not.
+      biggestPage = Math.max(biggestPage, result.found);
+      const lastAllowedPage = page === maxPages - 1;
+      yield { ...result, truncated: !reachedCutOff && lastAllowedPage && result.found >= biggestPage };
+      if (reachedCutOff) return;
+    }
+  }
 
-      // Incremental runs stop once the feed is older than what we already have.
-      if (opts.stopBefore && items.every((i) => i.capturedAt < opts.stopBefore!)) return;
+  /**
+   * Every media post for a student, newest first. The page-level walk without the context.
+   *
+   * Note what is dropped with that context: a caller here cannot tell a walk that reached
+   * the end of the feed from one `maxPages` cut short. Anything that records how far it
+   * got — `sync` does — must read the pages, not this.
+   */
+  async *activities(studentId: string, opts: ActivityListOptions = {}): AsyncGenerator<MediaActivity[], void, void> {
+    for await (const page of this.activityPages(studentId, opts)) {
+      if (page.items.length > 0) yield page.items;
     }
   }
 

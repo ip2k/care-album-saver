@@ -18,26 +18,33 @@ import { inspect } from 'node:util';
  * Reading the real value requires calling `.expose()`, which is greppable. An auditor can
  * run one search and see every place the plaintext is touched.
  */
-const VALUE = Symbol('secret.value');
-
 export class Secret {
-  private readonly [VALUE]: string;
+  /**
+   * A true ECMAScript private field, not a Symbol-keyed property.
+   *
+   * This matters and was measured. `util.inspect(secret, { customInspect: false })`
+   * bypasses the custom inspector below, and a Symbol-keyed property is still visible
+   * under `{ showHidden: true }`. A `#private` field is reachable from none of it:
+   * not `inspect` (with any options), not object spread, not `Object.keys`,
+   * not `JSON.stringify`, not `structuredClone`.
+   */
+  readonly #value: string;
 
   constructor(value: string) {
-    this[VALUE] = value;
+    this.#value = value;
   }
 
   /** Deliberately explicit. Grep for `.expose()` to audit every use of the plaintext. */
   expose(): string {
-    return this[VALUE];
+    return this.#value;
   }
 
   get length(): number {
-    return this[VALUE].length;
+    return this.#value.length;
   }
 
   get isEmpty(): boolean {
-    return this[VALUE].length === 0;
+    return this.#value.length === 0;
   }
 
   /**
@@ -46,14 +53,19 @@ export class Secret {
    */
   fingerprint(): string {
     let h = 0x811c9dc5;
-    for (let i = 0; i < this[VALUE].length; i++) {
-      h ^= this[VALUE].charCodeAt(i);
+    for (let i = 0; i < this.#value.length; i++) {
+      h ^= this.#value.charCodeAt(i);
       h = Math.imul(h, 0x01000193) >>> 0;
     }
     return h.toString(16).padStart(8, '0').slice(0, 8);
   }
 
   toString(): string {
+    return '[redacted]';
+  }
+
+  /** Closes numeric and template-literal coercion, which bypass toString in some paths. */
+  [Symbol.toPrimitive](): string {
     return '[redacted]';
   }
 

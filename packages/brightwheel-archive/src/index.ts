@@ -1,4 +1,4 @@
-export { BrightwheelClient, DEFAULT_BASE_URL, SESSION_COOKIE } from './api/client.js';
+export { BrightwheelClient, DEFAULT_BASE_URL, SESSION_COOKIE, PAGES_PAST_THE_CUT_OFF, type ActivityPage } from './api/client.js';
 export {
   ApiShapeError,
   SessionExpiredError,
@@ -24,3 +24,5 @@ export { sync, type SyncProgress, type SyncResult } from './sync.js';
 export { applyMetadata, buildTags, writeJsonSidecar } from './metadata.js';
 export { startWebUi, type WebUiHandle } from './web/server.js';
 export { startMockBrightwheel, type MockServer } from './mock/server.js';
+export { verify, formatReport, type VerifyReport } from './verify.js';
+export { checkArchiveDir, ARCHIVE_DIR_MODE, type PathVerdict } from './safety.js';

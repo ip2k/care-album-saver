@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BrightwheelClient } from '../api/client.js';
+import type { Student } from '../api/schema.js';
 import { loadConfig, loadSession, normaliseCookieInput, saveConfig, saveSession, type Config } from '../config.js';
 import { Secret, scrub } from '../secrets.js';
 import { sync, type SyncProgress } from '../sync.js';
+import { checkArchiveDir } from '../safety.js';
 import { PAGE } from './page.js';
 
 /**
@@ -75,6 +77,13 @@ export interface WebUiHandle {
   url: string;
   port: number;
   token: string;
+  /**
+   * Ask a running sync to stop, and wait until it has. It finishes the download in
+   * flight and records what it saved, so nothing already on disk is lost or fetched twice.
+   * Resolves at once when nothing is running.
+   */
+  stop: () => Promise<void>;
+  /** Stops any run first: a server that vanishes mid-download leaves the manifest unsaved. */
   close: () => Promise<void>;
 }
 
@@ -83,6 +92,90 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
   let progress: SyncProgress = { phase: 'starting', message: 'Ready', saved: 0, skipped: 0, failed: 0 };
   let running = false;
   let lastResult: unknown = null;
+  // The run in progress, if any: its abort handle and the promise that settles when sync
+  // has saved the manifest and returned. `stop()` needs both — aborting is not enough,
+  // because the caller (the CLI on Ctrl+C, close()) must not tear the process down while
+  // the in-flight download is still being written.
+  let current: { controller: AbortController; done: Promise<void> } | null = null;
+  // The children on the account, as last read from Brightwheel. Kept so that choosing a
+  // child in the page does not cost a round trip to Brightwheel per tick, and so that
+  // "every child is ticked" can be recognised and stored as "all" (an empty list), which
+  // is what keeps a child added to the account later from being silently left out.
+  let children: Student[] | null = null;
+  // Settings now save themselves as each control changes, so two quick ticks can arrive
+  // together. Each save is a read-modify-write of one file; run them one at a time or the
+  // second read can miss the first write and quietly undo it.
+  let configWrites: Promise<void> = Promise.resolve();
+
+  const withConfigLock = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = configWrites.then(work);
+    // A refused save must not jam the queue for the saves after it.
+    configWrites = result.then(() => {}, () => {});
+    return result;
+  };
+
+  const readChildren = async (client: BrightwheelClient): Promise<Student[]> => {
+    if (!children) {
+      const me = await client.me();
+      children = await client.students(me.id);
+    }
+    return children;
+  };
+
+  /**
+   * A stored selection that names nobody on the account any more. It happens: a child
+   * leaves the nursery and a sibling joins, or the parent connects a different account.
+   * It is stale, not a decision to save no one — that choice cannot be made here, because
+   * an empty selection is refused on save — so it is read as "all", which is what a fresh
+   * setup starts from and what the page will show ticked.
+   */
+  const selectionIsStale = (config: Config, list: Student[]): boolean =>
+    config.includeStudents.length > 0 && !list.some((s) => config.includeStudents.includes(s.id));
+
+  /** Which of the account's children the config selects. Empty config means all of them. */
+  const includedIds = (config: Config, list: Student[]): string[] =>
+    config.includeStudents.length === 0 || selectionIsStale(config, list)
+      ? list.map((s) => s.id)
+      : list.filter((s) => config.includeStudents.includes(s.id)).map((s) => s.id);
+
+  /**
+   * Check a child selection before it is stored.
+   *
+   * The page sends the ids that are ticked, never the empty-means-all shorthand, so that
+   * "nothing ticked" is expressible and can be refused here rather than turning into a
+   * confusing "no children found" the first time a run starts.
+   */
+  const checkIncludeStudents = async (
+    value: unknown,
+  ): Promise<{ ok: true; resolved: string[] } | { ok: false; error: string }> => {
+    if (!Array.isArray(value) || !value.every((v) => typeof v === 'string' && v.length > 0)) {
+      return { ok: false, error: 'Could not read which children were chosen. Reload the page and try again.' };
+    }
+    const chosen = [...new Set(value as string[])];
+    const session = await loadSession();
+    if (!session) {
+      // Before step 1 there is no list to have chosen from, so ids arriving now can only be
+      // stale or made up, and stored unchecked they would silently filter every later run.
+      // The one thing that is meaningful here is "all", the stored default.
+      if (chosen.length === 0) return { ok: true, resolved: [] };
+      return {
+        ok: false,
+        error: 'Connect to your Brightwheel account first (step 1). Children can only be chosen once the tool can see them.',
+      };
+    }
+    if (chosen.length === 0) {
+      return { ok: false, error: 'Tick at least one child. Photos are only saved for the children you tick.' };
+    }
+    const known = await readChildren(new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl }));
+    const knownIds = new Set(known.map((s) => s.id));
+    if (chosen.some((id) => !knownIds.has(id))) {
+      return {
+        ok: false,
+        error: 'One of the chosen children is no longer on this Brightwheel account. Reload the page and choose again.',
+      };
+    }
+    return { ok: true, resolved: known.every((s) => chosen.includes(s.id)) ? [] : chosen };
+  };
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Nothing here may ever be cached: the pages list children's names and photos.
@@ -155,15 +248,44 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         await saveSession(secret, check.email);
+        // A different account has different children.
+        children = null;
         json(200, { ok: true, email: check.email, fingerprint: secret.fingerprint() });
         return;
       }
 
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const patch = JSON.parse(await readBody(req)) as Partial<Config>;
-        const config = { ...(await loadConfig()), ...patch };
-        await saveConfig(config);
-        json(200, { ok: true, config });
+        // Never persist a destination without checking it. This endpoint previously
+        // accepted any path at all and the tool wrote a child's photos there.
+        let warning: string | undefined;
+        if (typeof patch.archiveDir === 'string') {
+          const verdict = checkArchiveDir(patch.archiveDir);
+          if (!verdict.ok) {
+            json(400, { ok: false, error: verdict.error, field: 'archiveDir' });
+            return;
+          }
+          patch.archiveDir = verdict.resolved;
+          warning = verdict.warning;
+        }
+        if (patch.includeStudents !== undefined) {
+          const verdict = await checkIncludeStudents(patch.includeStudents);
+          if (!verdict.ok) {
+            json(400, { ok: false, error: verdict.error, field: 'includeStudents' });
+            return;
+          }
+          patch.includeStudents = verdict.resolved;
+        }
+        const config = await withConfigLock(async () => {
+          const merged = { ...(await loadConfig()), ...patch };
+          // /api/children reads a stale selection as "all"; write it down as that the first
+          // time the file is touched, so the two never disagree. Only possible once the
+          // live list has been read — the cache is not refreshed for this.
+          if (children && selectionIsStale(merged, children)) merged.includeStudents = [];
+          await saveConfig(merged);
+          return merged;
+        });
+        json(200, { ok: true, config, warning });
         return;
       }
 
@@ -175,7 +297,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         }
         const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl });
         const me = await client.me();
-        json(200, { ok: true, children: await client.students(me.id) });
+        // Always re-read here rather than serving the cache: this is the call the page
+        // makes on load, and a child added to the account since should appear.
+        children = await client.students(me.id);
+        json(200, { ok: true, children, included: includedIds(await loadConfig(), children) });
         return;
       }
 
@@ -184,37 +309,72 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           json(409, { ok: false, error: 'Already running.' });
           return;
         }
-        const session = await loadSession();
+        // Claimed here, in the same turn as the check above and before the first await.
+        // Reading the session file is an await like any other, and two clicks of Start
+        // landing either side of it both used to pass a check made while `running` was
+        // still false. Two runs then wrote the same archive and the same manifest at once:
+        // the second one's save overwrites the first one's record of what it had saved, so
+        // photos on disk stop being listed as held and are downloaded again as duplicates.
+        running = true;
+        let session: Awaited<ReturnType<typeof loadSession>>;
+        try {
+          session = await loadSession();
+        } catch (error) {
+          // Nothing was started, so the claim has to come off or the UI is wedged for good.
+          running = false;
+          throw error;
+        }
         if (!session) {
+          running = false;
           json(400, { ok: false, error: 'Not signed in yet.' });
           return;
         }
-        running = true;
         lastResult = null;
-        const config = await loadConfig();
-        const client = new BrightwheelClient({
-          session: session.session,
-          baseUrl: options.baseUrl,
-          delayMs: config.delayMs,
-        });
-        json(202, { ok: true });
-        sync(client, config, (p) => {
-          progress = p;
-        })
-          .then((r) => {
-            lastResult = r;
-            running = false;
-          })
-          .catch((e: unknown) => {
+        const controller = new AbortController();
+
+        // Everything that can wait lives inside this function, so that `current` is
+        // published in the same synchronous turn as `running`. Reading the config file is
+        // an await like any other: a stop() or close() landing in that gap used to find
+        // nothing to abort, answer "nothing is running", and let the server be torn down
+        // with a run about to start and no manifest saved.
+        const done = (async () => {
+          try {
+            const config = await loadConfig();
+            const client = new BrightwheelClient({
+              session: session.session,
+              baseUrl: options.baseUrl,
+              delayMs: config.delayMs,
+            });
+            lastResult = await sync(client, config, (p) => {
+              progress = p;
+            }, { signal: controller.signal });
+          } catch (error: unknown) {
             progress = {
               phase: 'error',
-              message: scrub(e instanceof Error ? e.message : String(e)),
+              message: scrub(error instanceof Error ? error.message : String(error)),
               saved: progress.saved,
               skipped: progress.skipped,
               failed: progress.failed,
             };
+          } finally {
             running = false;
-          });
+            current = null;
+          }
+        })();
+        current = { controller, done };
+        json(202, { ok: true });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/stop') {
+        if (!current) {
+          json(409, { ok: false, error: 'Nothing is running.' });
+          return;
+        }
+        // Answer at once rather than after the run has wound down: the page is polling
+        // and will see the "stopped" phase arrive when the in-flight download is done.
+        current.controller.abort();
+        json(202, { ok: true });
         return;
       }
 
@@ -228,10 +388,21 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : 0;
 
+  const stop = async (): Promise<void> => {
+    if (!current) return;
+    current.controller.abort();
+    // `done` never rejects: the catch above turns a failure into a progress event.
+    await current.done;
+  };
+
   return {
     url: `http://127.0.0.1:${port}/?token=${token}`,
     port,
     token,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    stop,
+    close: async () => {
+      await stop();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }

@@ -39,6 +39,27 @@ downloads/
 !docs/images/
 !docs/images/*.png
 
+# ── Everything else an archive run writes ────────────────────────────────────
+# The rules above stop the photos. They do not stop the files written beside them, and
+# those name the child in plain text: the .json sidecar, the .xmp sidecar, the little
+# README in each week folder, and archive.json, which lists every child, every teacher's
+# note and who posted each photo. A parent who points the tool at a folder inside their
+# clone of this repository would otherwise commit all of it.
+#
+# The week folder is matched by shape — `2026-W38`, from media-ferry's weekFolder() — so
+# one rule covers whatever is inside it, whichever folder layout was chosen. Nothing in
+# this project is named that way, and the project's own README.md and docs/ are untouched
+# because these patterns name either a directory shape or a media sidecar suffix.
+[0-9][0-9][0-9][0-9]-W[0-9][0-9]/
+archive.json
+*.xmp
+*.jpg.json
+*.jpeg.json
+*.heic.json
+*.mp4.json
+*.mov.json
+*.png.json
+
 # ── Browser automation state ─────────────────────────────────────────────────
 user-data-dir/
 playwright-state.json
@@ -52,3 +73,6 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Claude Code worktrees used by parallel agents
+.claude/worktrees/

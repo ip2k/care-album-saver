@@ -31,13 +31,28 @@ regex = '''https?://[^\s"']+[?&](?:signature|X-Amz-Signature|X-Goog-Signature)=[
 tags = ["url", "media"]
 
 [allowlist]
-description = "Synthetic values used by the tests and the documentation screenshots"
+# Values, never paths.
+#
+# This used to exempt `packages/.*/test/.*` and the mock server wholesale, which meant the
+# two rules above — the ones that exist because a generic scanner cannot recognise a
+# Brightwheel session — were switched off across the whole test tree. The test tree is
+# exactly where a real session gets pasted: somebody debugging a failing test swaps the
+# invented cookie for their own for five minutes and commits it, and the scanner that was
+# added to catch that says nothing.
+#
+# So each invented literal is listed instead. Adding a test that needs a new synthetic
+# credential means adding its value here, which is a line a reviewer can see and question.
+# Never add a path back.
+description = "The synthetic credentials the tests and the mock server invent"
 regexes = [
+  # The mock server's session, and what every test passes as `validSession`.
   '''test-session-value''',
+  # The Secret class's own tests, which must print a value to prove it is not printed.
   '''super-secret-cookie-value''',
-  '''signature=aaa|signature=zzz|signature=deadbeef''',
-]
-paths = [
-  '''packages/brightwheel-archive/src/mock/server\.ts''',
-  '''packages/.*/test/.*''',
+  # Deliberately unreal signatures in the URL-identity and scrubbing tests. The word
+  # boundary matters: a bare `signature=x` would also allowlist a real signature that
+  # happens to start with an x.
+  '''signature=(aaa|zzz|deadbeef|x)\b''',
+  # The verify-report fixture, which needs a signature long enough to look like one.
+  '''signature=not-a-real-signature''',
 ]
