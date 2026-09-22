@@ -110,9 +110,9 @@ Open **Advanced options** for the folder, the layout and the rest.
 | Setting | Default | What it means |
 |---|---|---|
 | Save photos for | **All your children** | Untick a child to leave their photos out. A child who joins your account later is included automatically as long as everyone is ticked. |
-| Label photos with names | **On** | Writes three names inside the photo file: your child's, the nursery's, and whoever posted it. That is what lets Apple Photos, Immich and similar apps search by name — and it means those three names travel with the file if you ever share it. Turn it off and nothing inside the file says who or where. |
-| Keep the teacher's note | **On** | Saves the caption as the photo's description. |
-| Remove location information | **On** | Strips GPS coordinates so a shared photo cannot reveal where it was taken. |
+| Label photos with names | **On** | Writes inside the photo file: your child's name, the nursery's name, whoever posted it, and the teacher's note — which usually names all three in one sentence. That is what lets Apple Photos, Immich and similar apps search by name, and it means all of it travels with the file if you ever share it. Turn it off and nothing inside the file says who or where. |
+| Keep the teacher's note | **On** | Saves the caption as the photo's description. It only applies while **Label photos with names** is on, because a note names people. |
+| Remove location information | **On** | Strips GPS coordinates so a shared photo cannot reveal where it was taken. This one needs ExifTool: without it nothing inside the photo can be changed, so any coordinates stay — and the run tells you so. |
 | Folder layout | Child, then week | Or one folder per week with all children together, or one folder per week with a folder for each child inside it. |
 | Where to save the photos | `~/Brightwheel Photos` | **Avoid iCloud Drive, Dropbox or OneDrive folders** unless you want copies on their servers. |
 | Only look for new photos | **On** | Much faster. Turn off to re-check from the beginning. |

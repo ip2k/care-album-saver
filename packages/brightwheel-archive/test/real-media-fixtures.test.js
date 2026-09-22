@@ -32,11 +32,13 @@ let mock;
 let exiftool = null;
 /**
  * False when ExifTool is here, and the reason when it is not — passed to node:test's `skip`
- * option below rather than checked inside each test body. Every metadata test in this file
- * used to begin `if (exiftoolMissing) return t.skip(...)`, which reports as a PASS: a CI
- * cell whose optional dependency failed to install printed a fully green suite having
- * proved nothing at all about what goes into a photo. See scripts/test-env.js for why this
- * fails outright on CI instead of skipping.
+ * option below rather than decided inside each test body. Node does count an in-body
+ * `t.skip()` as skipped rather than as a pass, so the option is not what makes the skip
+ * visible; what it changes is that the reason is declared before the test runs and cannot
+ * be reached only on some paths. The real protection is elsewhere: a CI cell whose optional
+ * dependency failed to install would otherwise print a green-with-skips run having proved
+ * nothing about what goes into a photo, so scripts/test-env.js turns these skips into
+ * failures there.
  */
 const exiftoolMissing = await exifToolSkipReason(() => import('exiftool-vendored'));
 const SESSION = 'test-session-value';

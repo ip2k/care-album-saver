@@ -57,9 +57,11 @@ const soFar = (progress, phase) => progress.filter((p) => p.phase === phase).len
 
 /**
  * False when ExifTool is here, and the reason when it is not. Handed to node:test's `skip`
- * option below, never checked inside a test body: `if (missing) return t.skip(...)` reports
- * the test as a PASS, so a machine without the optional dependency printed a green run that
- * had examined none of the metadata. scripts/test-env.js also decides what CI does with it.
+ * option below rather than decided inside a test body, so the reason is declared up front
+ * rather than reached on one path and not another. (Node counts an in-body `t.skip()` as
+ * skipped too — the option is about clarity, not about the totals.) What stops a machine
+ * without the optional dependency from printing a green run that examined no metadata is
+ * scripts/test-env.js, which turns these skips into failures on CI.
  */
 const exiftoolMissing = await exifToolSkipReason(() => import('exiftool-vendored'));
 

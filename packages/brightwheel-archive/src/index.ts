@@ -1,4 +1,4 @@
-export { BrightwheelClient, DEFAULT_BASE_URL, SESSION_COOKIE } from './api/client.js';
+export { BrightwheelClient, DEFAULT_BASE_URL, SESSION_COOKIE, PAGES_PAST_THE_CUT_OFF, type ActivityPage } from './api/client.js';
 export {
   ApiShapeError,
   SessionExpiredError,

@@ -21,7 +21,7 @@ import type { Secret } from './secrets.js';
  * check — "does the media CDN reject the session cookie?" — is the one thing this tool
  * promises never to do, so it is not done and the report says so instead.
  *
- * It makes at most four requests — three to the API, one to the media host without the
+ * It makes four requests — three to the API, and one HEAD to the media host without the
  * session — and downloads no media.
  */
 

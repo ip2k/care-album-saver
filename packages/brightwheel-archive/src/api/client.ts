@@ -44,6 +44,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * second. A larger number buys tolerance for a bigger batch at the same linear cost; a
  * smaller one saves a request and silently loses photos.
  */
+/** Posts per listing request. Brightwheel may return fewer; it never returns more. */
+const DEFAULT_PAGE_SIZE = 100;
+
 export const PAGES_PAST_THE_CUT_OFF = 3;
 
 export interface ActivityListOptions {
@@ -225,7 +228,7 @@ export class BrightwheelClient {
    * way to a fresh signature is the listing that issued the old one.
    */
   async activitiesPage(studentId: string, page: number, opts: ActivityListOptions = {}): Promise<ActivityPage> {
-    const pageSize = opts.pageSize ?? 100;
+    const pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
     // start_date / end_date are ISO-8601 UTC with milliseconds and a Z suffix, not a bare
     // calendar date — confirmed across ChaseBro/brightwheel-takeout and ss44/Keepsake.
     const iso = (d: Date) => d.toISOString().replace(/(\.\d{3})?Z$/, '.000Z');
@@ -267,6 +270,8 @@ export class BrightwheelClient {
     /** Consecutive pages, so far, that carried media and nothing newer than the cut-off. */
     let olderPages = 0;
 
+    // The largest page this walk has seen, which is the server's effective page size.
+    let biggestPage = 0;
     for (let page = 0; page < maxPages; page++) {
       const result = await this.activitiesPage(studentId, page, opts);
       if (result.found === 0) return;
@@ -281,7 +286,16 @@ export class BrightwheelClient {
       }
       const reachedCutOff = olderPages >= PAGES_PAST_THE_CUT_OFF;
 
-      yield { ...result, truncated: !reachedCutOff && page === maxPages - 1 };
+      // Truncated means "the page limit stopped the walk", which is only true if there was
+      // more to fetch. Measure that against the largest page this walk has actually seen
+      // rather than the page size we asked for: Brightwheel may clamp page_size below the
+      // request, and comparing with the request would then call every page short. A last
+      // page smaller than the biggest one is the feed ending, which happens to land on the
+      // limit — warning about that would tell a parent on every run that their archive may
+      // be incomplete when it is not.
+      biggestPage = Math.max(biggestPage, result.found);
+      const lastAllowedPage = page === maxPages - 1;
+      yield { ...result, truncated: !reachedCutOff && lastAllowedPage && result.found >= biggestPage };
       if (reachedCutOff) return;
     }
   }

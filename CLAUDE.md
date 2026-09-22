@@ -71,12 +71,12 @@ stores, and this tool is deliberately local-only with no cloud component.
   than values — so running it, or capturing a HAR, is the top outstanding task. Do not tell
   a user this is production-ready until that is done. See docs/QUESTIONS-FOR-FABLE.md,
   section B, for what is settled and what is not.
-- **Open: `src/api/login.ts` is dead code.** The email/password/2FA sign-in it implements is
-  imported by nothing, has no flag, no command and no field in the setup page. The README
-  used to promise it to parents and no longer does — it now describes only the paste-a-
-  session flow, which is the only one that exists. The file is left in place: wiring it up
-  or deleting it is an owner decision, not a tidy-up. Whichever way it goes, the README's
-  "What about my password?" section is the thing to change with it.
+- **Settled 2026-09-22: there is one sign-in, and it is the pasted session.** `src/api/login.ts`
+  implemented an email/password/2FA flow that nothing imported and no flag, command or field
+  reached; the README promised it to parents anyway. The file is deleted and the promise is
+  gone. The argument for not reviving it is in QUESTIONS-FOR-FABLE A1: Brightwheel enforces
+  2FA, so unattended password login is impossible, and teaching a parent to type their real
+  password into other people's software is the habit phishing depends on.
 
 ## Repository hygiene
 
