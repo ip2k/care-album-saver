@@ -9,14 +9,29 @@ import { scrub } from './secrets.js';
 import { sync } from './sync.js';
 import { startWebUi } from './web/server.js';
 import { formatReport, verify } from './verify.js';
+import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from './maintenance.js';
+import * as schedule from './schedule.js';
 
 const HELP = `
 brightwheel-archive — save your own child's photos from Brightwheel
 
+Setting it up, once
   brightwheel-archive setup        Open the setup assistant in your browser (easiest)
   brightwheel-archive login        Paste your Brightwheel session in the terminal
-  brightwheel-archive run          Save any new photos (Ctrl+C stops after the current one)
+
+Every day after that
+  brightwheel-archive schedule     Show whether photos are being saved automatically
+    on --at 19:00                  Save new photos every day at that time
+    off                            Stop saving them automatically
+  brightwheel-archive run          Save any new photos now (Ctrl+C stops after the current one)
+
+Looking after the archive
   brightwheel-archive children     List the children on your account, with their ids
+  brightwheel-archive recheck      Ask Brightwheel who is on the account now
+  brightwheel-archive check        Compare the folder with the tool's own list of it
+    --repair                       ...and fix the list, without downloading anything
+  brightwheel-archive duplicates   Find photos saved twice (shows them; deletes nothing)
+    --remove                       ...and offer to delete the extra copies
   brightwheel-archive doctor       Check that everything is working
   brightwheel-archive verify       Check the Brightwheel API shape (read-only, no photos)
     --deep                         ...and read three photos to find the real capture time
@@ -28,6 +43,7 @@ Options
   --no-name-tag      Do not write any name into the photo metadata
   --child <id|name>  Only this child, for this run (repeat for several; your saved
                      settings are not changed)
+  --at <HH:MM>       Time of day for the daily run (24-hour clock)
   --port <number>    Port for the setup assistant
   --base-url <url>   Point at a different API (used by the tests)
   --help             Show this message
@@ -55,6 +71,13 @@ async function main(): Promise<number> {
       port: { type: 'string' },
       'base-url': { type: 'string' },
       deep: { type: 'boolean' },
+      at: { type: 'string' },
+      repair: { type: 'boolean' },
+      remove: { type: 'boolean' },
+      // Set by the job the scheduler runs, never by a person. It is what tells the run to
+      // write down how it went, so that a session which expired three weeks ago does not
+      // look exactly like one that is fine.
+      scheduled: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -73,7 +96,110 @@ async function main(): Promise<number> {
 
   switch (command) {
     case 'where': {
-      stdout.write(`Photos:   ${config.archiveDir}\nSettings: ${configPath()}\nSession:  ${sessionPath()}\n`);
+      stdout.write(
+        `Photos:   ${config.archiveDir}\nSettings: ${configPath()}\nSession:  ${sessionPath()}\n` +
+          `Last run: ${schedule.lastRunPath()}\n`,
+      );
+      return 0;
+    }
+
+    case 'schedule': {
+      const what = positionals[1];
+      if (what === 'on') {
+        // The default is the evening: the nursery day is over, the photos for the day are
+        // posted, and the computer is more likely to be on than at three in the morning.
+        const result = await schedule.install(values.at ?? '19:00');
+        stdout.write(`\n  ${result.summary}\n  It is written down in: ${result.location}\n\n`);
+        return 0;
+      }
+      if (what === 'off') {
+        const result = await schedule.remove();
+        stdout.write(`\n  ${result.summary}\n\n`);
+        return 0;
+      }
+      if (what !== undefined) {
+        stdout.write(`  Unknown option "${what}". Use: brightwheel-archive schedule [on --at HH:MM | off]\n`);
+        return 1;
+      }
+      const state = await schedule.status();
+      stdout.write(`\n  ${state.summary}\n`);
+      if (state.installed) {
+        stdout.write(`  Next run:  ${state.nextRun ? new Date(state.nextRun).toLocaleString() : 'unknown'}\n`);
+        stdout.write(`  Set up in: ${state.location}\n`);
+      }
+      if (state.lastRun) {
+        const last = state.lastRun;
+        stdout.write(
+          `  Last run:  ${new Date(last.at).toLocaleString()} — ${last.ok ? 'worked' : 'did not work'}. ${scrub(last.message)}\n`,
+        );
+      } else {
+        stdout.write('  Last run:  it has not run on its own yet.\n');
+      }
+      stdout.write('\n');
+      return 0;
+    }
+
+    case 'recheck': {
+      const session = await loadSession();
+      if (!session) {
+        stdout.write('  Not signed in. Run: brightwheel-archive login\n');
+        return 1;
+      }
+      const client = new BrightwheelClient({ session: session.session, baseUrl });
+      const check = await checkChildren(client, config);
+      stdout.write(`\n  ${check.summary}\n`);
+      if (check.notIncluded.length > 0) {
+        stdout.write(
+          `\n  To include everyone, open the setup assistant, or run with --child for a one-off:\n` +
+            `    brightwheel-archive run ${check.notIncluded.map((c) => `--child "${c.name}"`).join(' ')}\n`,
+        );
+      }
+      stdout.write('\n');
+      return 0;
+    }
+
+    case 'check': {
+      const audit = await auditArchive(config);
+      stdout.write(`\n  ${audit.archiveDir}\n  ${audit.summary}\n`);
+      for (const file of audit.unrecorded.slice(0, 10)) stdout.write(`    not on the list: ${file}\n`);
+      for (const file of audit.missing.slice(0, 10)) stdout.write(`    listed but gone: ${file}\n`);
+      if (!values.repair) {
+        if (audit.repairable) stdout.write('\n  Nothing has been changed. Run again with --repair to fix the list.\n');
+        stdout.write('\n');
+        return 0;
+      }
+      const repair = await repairManifest(config);
+      stdout.write(`\n  ${repair.summary}\n\n`);
+      return 0;
+    }
+
+    case 'duplicates': {
+      const report = await findDuplicates(config);
+      stdout.write(`\n  ${report.summary}\n`);
+      for (const group of report.groups) {
+        stdout.write(`\n    keeping: ${group.keep}\n`);
+        for (const extra of group.extra) stdout.write(`    copy of it: ${extra}\n`);
+      }
+      if (report.files === 0 || !values.remove) {
+        if (report.files > 0) stdout.write('\n  Nothing has been deleted. Run again with --remove to delete the copies.\n');
+        stdout.write('\n');
+        return 0;
+      }
+      // Shown in full above, and then asked about. A photograph of a child is not deleted
+      // on the strength of a flag alone.
+      const rl = createInterface({ input: stdin, output: stdout });
+      const answer = await rl.question(
+        `\n  Delete ${report.files === 1 ? 'that extra copy' : `those ${report.files} extra copies`}? Type yes to confirm: `,
+      );
+      rl.close();
+      if (answer.trim().toLowerCase() !== 'yes') {
+        stdout.write('\n  Nothing was deleted.\n\n');
+        return 0;
+      }
+      const result = await removeDuplicates(config, {
+        confirm: report.groups.flatMap((g) => g.extra),
+      });
+      stdout.write(`\n  ${result.summary}\n\n`);
       return 0;
     }
 
@@ -240,8 +366,40 @@ async function main(): Promise<number> {
           },
           { signal: stop.signal },
         );
+      } catch (error) {
+        // A scheduled run fails at seven in the evening with nobody watching. Unless the
+        // failure is written down, the tool has no way to answer "is this still working?"
+        // — and an expired session looks exactly like an archive that is up to date.
+        if (values.scheduled) {
+          await schedule.recordRun({
+            at: new Date().toISOString(),
+            ok: false,
+            saved: 0,
+            failed: 0,
+            message: scrub(error instanceof Error ? error.message : String(error)),
+            trigger: 'schedule',
+          });
+        }
+        throw error;
       } finally {
         process.off('SIGINT', onInterrupt);
+      }
+      if (values.scheduled) {
+        await schedule.recordRun({
+          at: new Date().toISOString(),
+          // A run cut short has not brought the archive up to date, whatever it managed
+          // before it stopped, so it is not recorded as a clean night.
+          ok: result.failed === 0 && !result.stopped,
+          saved: result.saved,
+          failed: result.failed,
+          message: result.stopped
+            ? `Stopped part-way; ${result.saved} item${result.saved === 1 ? '' : 's'} saved before that are kept.`
+            : result.saved === 0 && result.failed === 0
+              ? 'There were no new photos to save.'
+              : `${result.saved} new item${result.saved === 1 ? '' : 's'} saved` +
+                (result.failed > 0 ? `, ${result.failed} could not be fetched.` : '.'),
+          trigger: 'schedule',
+        });
       }
       stdout.write(
         `\n  ${result.stopped ? 'Stopped' : 'Done'}. ${result.saved} new, ${result.skipped} already had, ` +

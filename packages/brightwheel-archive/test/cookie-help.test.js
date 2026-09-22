@@ -58,11 +58,21 @@ test('the pictures are collapsed until they are asked for', () => {
  * both of them find, silently, and neither would fail loudly enough for anyone to notice.
  */
 test('no disclosure is added before step 2 Advanced options', () => {
+  // The invariant is about document ORDER, not about the count: two scripts reach for
+  // `document.querySelector('details')` and must keep finding step 2's Advanced options.
+  // A disclosure added later in the page (step 4's management view has one) is harmless;
+  // one added in step 1 would silently steal both selections. The count was asserted here
+  // first and is deliberately not any more — it failed the moment another step grew a
+  // disclosure, which is a stricter rule than the thing it was protecting.
   const details = [...PAGE.matchAll(/<details[\s>]/g)].map((m) => m.index);
-  assert.equal(details.length, 1, 'there is still exactly one <details> in the page');
+  assert.ok(details.length >= 1, 'step 2 Advanced options is still a disclosure');
   assert.ok(
     details[0] > PAGE.indexOf('id="card-children"'),
     'the first <details> is still step 2 Advanced options, which two scripts select by that assumption',
+  );
+  assert.ok(
+    details[0] < PAGE.indexOf('id="card-run"'),
+    'and it is still inside step 2, not something further down the page',
   );
 });
 
