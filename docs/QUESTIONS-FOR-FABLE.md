@@ -14,8 +14,9 @@ The work that follows from the answers is in [DIRECTIONS-FOR-OPUS.md](DIRECTIONS
 ordered, with file pointers; nothing here is an instruction, that file is. Where a
 statement below was checked by running something, it says so. Where it rests on one
 account at one nursery, it says that too. The review covered `main` at fcdd99e and the
-four unmerged branches `ux/shell`, `ux/cookie-help`, `ux/native-dialogs` and
-`ux/scheduling`, all cut from c6d6c2d.
+four branches `ux/shell`, `ux/cookie-help`, `ux/native-dialogs` and `ux/scheduling`, all
+cut from c6d6c2d; an Opus session merged all four into `main` while the review was being
+written, so where an entry says "since `ux/shell`" read "since 3cf4581".
 
 **Context:** MIT, public repo. A TypeScript CLI + local web UI that lets a parent archive
 their own child's photos from Brightwheel (a childcare app with no public API) onto their
