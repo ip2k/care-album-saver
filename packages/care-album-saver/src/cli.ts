@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline/promises';
+import { Writable } from 'node:stream';
 import { stdin, stdout } from 'node:process';
 import { BrightwheelClient } from './api/client.js';
 import { loadConfig, loadSession, saveConfig, saveSession } from './config.js';
@@ -227,14 +228,31 @@ async function main(): Promise<number> {
     }
 
     case 'login': {
-      const rl = createInterface({ input: stdin, output: stdout });
+      // The pasted value is never echoed. A session in terminal scrollback is the exact
+      // thing the Secret class exists to keep out of a screenshot or a pasted log, and
+      // asking for one in a prompt that prints it back undoes that in the first second of
+      // using the tool. The prompt itself still prints; only what is typed is swallowed,
+      // which is the idiom every password prompt on Node uses.
+      let muted = false;
+      const output = new Writable({
+        write(chunk, _encoding, done) {
+          if (!muted) stdout.write(chunk);
+          done();
+        },
+      });
+      const rl = createInterface({ input: stdin, output, terminal: true });
       stdout.write(
         `\n  Sign in at https://schools.mybrightwheel.com in your browser.\n` +
-          `  Then open developer tools (F12), go to Application > Cookies,\n` +
-          `  and copy the value of the cookie named _brightwheel_v2.\n\n`,
+          `  Then open developer tools (F12) — Application or Storage, then Cookies —\n` +
+          `  and copy the value of the cookie named _brightwheel_v2.\n` +
+          `  There are pictures of these steps in docs/COOKIE.md.\n\n`,
       );
-      const pasted = await rl.question('  Paste it here: ');
+      const question = rl.question('  Paste it here (it will not be shown): ');
+      muted = true;
+      const pasted = await question;
+      muted = false;
       rl.close();
+      stdout.write('\n');
       const verdict = inspectCookiePaste(pasted);
       if (!verdict.ok) {
         stdout.write(`\n  ${verdict.message} Nothing was saved.\n`);
