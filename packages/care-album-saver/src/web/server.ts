@@ -615,17 +615,6 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         }
       }
 
-      if (req.method === 'POST' && url.pathname === '/api/open-folder') {
-        const config = await loadConfig();
-        try {
-          await openFolder(config.archiveDir);
-          json(200, { ok: true, archiveDir: config.archiveDir });
-        } catch (error) {
-          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
-        }
-        return;
-      }
-
       res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
     } catch (error) {
       json(500, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
