@@ -18,6 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends libimage-exifto
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
+# The mount points must exist and belong to `node` before the volumes are declared. A
+# VOLUME path that is absent from the image is created at container start as root:root,
+# which the unprivileged user below cannot write — so a named volume would fail on the
+# first mkdir. A host folder bind-mounted here keeps the host's ownership instead, so on
+# a Linux host the container must run as that owner: `docker run --user "$(id -u):$(id -g)"`.
+# The `node` user is uid 1000; a host user who is also 1000 needs nothing extra, and
+# Docker Desktop on macOS and Windows maps bind mounts to whoever asks.
+RUN mkdir -p /config /photos && chown node:node /config /photos
 # Run as an unprivileged user. The `node` user ships with the base image.
 USER node
 ENV BRIGHTWHEEL_ARCHIVE_CONFIG_DIR=/config

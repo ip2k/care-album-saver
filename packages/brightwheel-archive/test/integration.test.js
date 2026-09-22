@@ -13,6 +13,17 @@ import {
 let mock;
 const SESSION = 'test-session-value';
 
+/**
+ * Windows has no POSIX file modes: a file simply inherits its parent folder's ACL. The
+ * tests that assert 0600/0700 are skipped there with a reason that appears in the output,
+ * because a silent pass would hide a regression on the platforms where the mode is the
+ * whole protection. BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 lets a Mac or Linux machine
+ * rehearse the skip path before the change ever meets a real Windows runner.
+ */
+const testPlatform = process.env.BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM || platform();
+const posixOnly =
+  testPlatform === 'win32' ? 'POSIX file modes do not exist on Windows; files inherit the parent ACL' : false;
+
 before(async () => { mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 12 }); });
 after(async () => { await mock?.close(); });
 
@@ -171,7 +182,7 @@ test('the manifest never records a local timestamp as a validator', async () => 
 
 // ---------------------------------------------------------------- files on disk
 
-test('files holding secrets are created owner-only', { skip: platform() === 'win32' }, async () => {
+test('files holding secrets are created owner-only', { skip: posixOnly }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'bw-perm-'));
   const file = join(dir, 'session.json');
   await writeSecureFile(file, '{"cookie":"x"}');
@@ -375,8 +386,12 @@ test('the setup page is structurally sound and accessible', async () => {
 
 test('temporary folders are refused — the OS deletes them', () => {
   // This is the bug that put 632 files of a real child's photos in /tmp/pwned, where
-  // macOS would have quietly deleted them after three days.
-  for (const bad of ['/tmp/pwned', '/tmp/anything', '/private/tmp/x', '/var/tmp/y', tmpdir()]) {
+  // macOS would have quietly deleted them after three days. The system temp folders are
+  // spelled per platform; tmpdir() is what every platform agrees on.
+  const systemTemps = platform() === 'win32'
+    ? [join(process.env.SystemRoot || 'C:\\Windows', 'Temp', 'x')]
+    : ['/tmp/pwned', '/tmp/anything', '/private/tmp/x', '/var/tmp/y'];
+  for (const bad of [join(tmpdir(), 'pwned'), tmpdir(), ...systemTemps]) {
     const v = checkArchiveDir(bad);
     assert.equal(v.ok, false, `${bad} should be refused`);
     assert.match(v.error, /temporary folder/i);
@@ -385,7 +400,12 @@ test('temporary folders are refused — the OS deletes them', () => {
 });
 
 test('system locations and over-broad targets are refused', () => {
-  for (const bad of ['/System/Library', '/usr/local/x', '/etc', '/']) {
+  // `/etc` resolves to `C:\etc` on Windows, an ordinary folder, so each platform is
+  // given its own system locations and its own spelling of the drive root.
+  const system = platform() === 'win32'
+    ? [join(process.env.SystemRoot || 'C:\\Windows', 'System32'), 'C:\\Program Files\\x', 'C:\\Program Files (x86)\\y', 'C:\\']
+    : ['/System/Library', '/usr/local/x', '/etc', '/'];
+  for (const bad of system) {
     assert.equal(checkArchiveDir(bad).ok, false, `${bad} should be refused`);
   }
   assert.equal(checkArchiveDir(homedir()).ok, false, 'the whole home folder is too broad');
@@ -412,7 +432,7 @@ test('cloud-synced folders are allowed but warned about, never silently', () => 
   assert.equal(plain.warning, undefined);
 });
 
-test('the archive and every folder in it are created owner-only', { skip: platform() === 'win32' }, async () => {
+test('the archive and every folder in it are created owner-only', { skip: posixOnly }, async () => {
   // Every file carries the child's name in its metadata, so these are identified
   // photographs. Other accounts on a shared family computer must not be able to read them.
   const dir = await mkdtemp(join(tmpdir(), 'bw-mode-'));
@@ -441,7 +461,7 @@ test('the web config endpoint refuses a temporary destination', async () => {
     const res = await fetch(`http://127.0.0.1:${ui.port}/api/config?token=${ui.token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ archiveDir: '/tmp/pwned' }),
+      body: JSON.stringify({ archiveDir: join(tmpdir(), 'pwned') }),
     });
     assert.equal(res.status, 400, 'must not accept a temp path');
     const body = await res.json();
@@ -450,7 +470,7 @@ test('the web config endpoint refuses a temporary destination', async () => {
 
     // And it must not have been written to disk.
     const state = await (await fetch(`http://127.0.0.1:${ui.port}/api/state?token=${ui.token}`)).json();
-    assert.notEqual(state.config.archiveDir, '/tmp/pwned');
+    assert.notEqual(state.config.archiveDir, join(tmpdir(), 'pwned'));
   } finally {
     await ui.close();
   }
