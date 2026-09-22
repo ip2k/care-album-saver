@@ -54,8 +54,9 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 93 tests passing, no network required (`pnpm test`). CI runs the same suite on Ubuntu,
-  macOS and Windows against Node 20, 22, 24 and 26.
+- 94 tests passing, no network required (`pnpm test`). CI runs the same suite on Ubuntu,
+  macOS and Windows against Node 20, 22, 24 and 26. The win32 rehearsal
+  (`BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test`) is 94 tests, 92 passed, 2 skipped.
 - **Proven by test, against real bytes:** what is written into a photo and into a video,
   read back out with ExifTool, and that the pixels and the video frame are unaltered; that
   every file is still saved, with a JSON sidecar, when ExifTool is absent; that a run which
@@ -70,12 +71,25 @@ stores, and this tool is deliberately local-only with no cloud component.
   than values — so running it, or capturing a HAR, is the top outstanding task. Do not tell
   a user this is production-ready until that is done. See docs/QUESTIONS-FOR-FABLE.md,
   section B, for what is settled and what is not.
+- **Open: `src/api/login.ts` is dead code.** The email/password/2FA sign-in it implements is
+  imported by nothing, has no flag, no command and no field in the setup page. The README
+  used to promise it to parents and no longer does — it now describes only the paste-a-
+  session flow, which is the only one that exists. The file is left in place: wiring it up
+  or deleting it is an owner decision, not a tidy-up. Whichever way it goes, the README's
+  "What about my password?" section is the thing to change with it.
 
 ## Repository hygiene
 
-Last audited for dead code: 2026-09-21, at ~2,400 source lines, initial commit (26f8b5b).
-At 15a07ad the tree is 4,934 source lines, so the audit is not yet due.
-Next audit due at roughly 15,000 lines.
+Last audited for dead code: 2026-09-21, at the initial commit (26f8b5b), where the counting
+method below gives **2,593** source lines. (The original note said "~2,400"; see the method
+paragraph for why the two differ.)
+
+The global rule is an audit every ~10,000 lines added since the last mark, so the next one
+is due at roughly **12,600** lines. An earlier edit here wrote 15,000, which did not follow
+from any recorded mark; 2,593 + 10,000 is where it actually falls.
+
+At 9f2eea2 the tree is **4,945** source lines — 2,352 added since the mark, so the audit is
+not yet due.
 
 Counting method, since the original figure does not say: `wc -l` over every `.ts` file
 under `packages/*/src`, excluding tests, scripts and the generated `dist/`. That method
