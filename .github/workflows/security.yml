@@ -24,9 +24,15 @@ jobs:
       - name: Verify .gitignore actually blocks credentials
         run: ./scripts/verify-ignores.sh
       - name: Scan for credentials
-        uses: gitleaks/gitleaks-action@v2
+        # v3, not v2: v2 runs on GitHub's node20 action runtime, which is being retired —
+        # the job would go red for its runtime rather than for anything it found.
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
+          # Without a token the action's calls to the pull-request API are unauthenticated
+          # and rate-limited from a shared runner address. The findings still reach the job
+          # summary either way; this only stops an unrelated failure.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   audit:
     name: dependency audit
