@@ -337,8 +337,8 @@ export const PAGE = String.raw`<!doctype html>
 
           <div class="opt">
             <input type="checkbox" id="tagChildName" checked>
-            <label for="tagChildName">Label photos with your child&rsquo;s name
-              <span class="why">Lets Apple Photos, Immich and similar apps search by name. The name is stored inside the photo file, so it travels with the file if you ever share it.</span>
+            <label for="tagChildName">Label photos with names
+              <span class="why">Your child&rsquo;s name, the nursery&rsquo;s name and the name of whoever posted the photo, stored inside the file. That is what lets Apple Photos, Immich and similar apps search by name &mdash; and it means those names travel with the file if you ever share it. Turn this off and nothing inside the file says who or where; the details are still kept in the small .json file beside it, which stays behind when you share the photo.</span>
             </label>
           </div>
           <div class="opt">

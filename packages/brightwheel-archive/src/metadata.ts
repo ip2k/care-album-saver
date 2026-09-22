@@ -116,8 +116,16 @@ function imageTags(input: MetadataInput): TagSet {
     tags['EXIF:UserComment'] = activity.note;
   }
 
-  if (activity.author) tags['XMP-dc:creator'] = [activity.author];
-  if (student.schoolName) tags['XMP-iptcExt:LocationCreatedSublocation'] = student.schoolName;
+  // Under the same switch, deliberately. The nursery's name and the teacher's name
+  // identify a child's whereabouts and a third party as surely as the child's own name
+  // does, and they travel in the file the same way. A switch a parent reads as "do not
+  // make this photo self-identifying" that still wrote the nursery into every file would
+  // be a promise the file does not keep. Both remain in the .json sidecar beside the
+  // photo, which stays behind when the photo is shared.
+  if (input.tagChildName) {
+    if (activity.author) tags['XMP-dc:creator'] = [activity.author];
+    if (student.schoolName) tags['XMP-iptcExt:LocationCreatedSublocation'] = student.schoolName;
+  }
 
   return tags;
 }
@@ -174,11 +182,14 @@ function videoTags(input: MetadataInput): TagSet {
     tags['Keys:Description'] = activity.note;
   }
 
-  if (activity.author) {
-    tags['XMP-dc:creator'] = [activity.author];
-    tags['Keys:Author'] = activity.author;
+  // Governed by the same switch as the child's name, for the reason given in imageTags.
+  if (input.tagChildName) {
+    if (activity.author) {
+      tags['XMP-dc:creator'] = [activity.author];
+      tags['Keys:Author'] = activity.author;
+    }
+    if (student.schoolName) tags['XMP-iptcExt:LocationCreatedSublocation'] = student.schoolName;
   }
-  if (student.schoolName) tags['XMP-iptcExt:LocationCreatedSublocation'] = student.schoolName;
 
   return tags;
 }

@@ -91,11 +91,12 @@ Honesty matters more here than reassurance, so:
   (`~/Brightwheel Photos`) avoids this, but if you change it, check where you are pointing.
 - **Photos may contain other children.** A group photo from your child's class has other
   families' children in it. Please treat those photos the way you would want yours treated.
-- **Labelling photos with your child's name writes that name into the file itself.** That
-  is what makes them searchable in Apple Photos and similar apps — but it also means the
-  name travels with the file if you ever share it. You can turn this off. The nursery's
-  name is written into a separate field whenever Brightwheel gives us one, and that part is
-  not covered by the switch.
+- **Labelling photos with names writes those names into the file itself.** Your child's
+  name, the nursery's name and the name of whoever posted the photo. That is what makes
+  them searchable in Apple Photos and similar apps — but it also means those names travel
+  with the file if you ever share it. You can turn this off with one switch, and then
+  nothing inside the file says who or where. The details are still recorded in the small
+  `.json` file beside each photo, which stays behind when you share the photo itself.
 - **On Windows, the files are not owner-only.** On a Mac or Linux this tool writes the
   session file so that only your account can open it, and creates the photo folders the
   same way. Windows has no equivalent file setting: the session and the photos inherit the
@@ -205,7 +206,7 @@ print the exact folder to mount as `/config`.
 | `--dir <path>` | `~/Brightwheel Photos` | Where to save |
 | `--all` | off | Re-check everything, not just new photos |
 | `--child <id or name>` | every child | Only this child, for this one run. Repeat it for several. |
-| `--no-name-tag` | off | Do not write your child's name into the photo |
+| `--no-name-tag` | off | Do not write any name into the photo |
 | `--port <n>` | chosen for you | Port for the setup assistant |
 | `--base-url <url>` | Brightwheel's own | Point at a different API. Used by the tests. |
 
@@ -280,11 +281,11 @@ writes all of the common ones. Your files land on the right day in whichever app
 | `EXIF:OffsetTimeOriginal`, `OffsetTimeDigitized` | The timezone offset, so that local time is unambiguous |
 | `IPTC:DateCreated`, `TimeCreated`, `DigitalCreationDate`, `DigitalCreationTime` | The same moment, with the offset, for older galleries |
 | `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
-| `XMP-iptcExt:PersonInImage` | Your child's name |
-| `IPTC:Keywords`, `XMP-dc:subject` | Your child's name and `Brightwheel`, as searchable tags |
+| `XMP-iptcExt:PersonInImage` | Your child's name — only with the names switch on |
+| `IPTC:Keywords`, `XMP-dc:subject` | Your child's name and `Brightwheel`, as searchable tags — only with the names switch on |
 | `XMP-dc:description`, `IPTC:Caption-Abstract`, `EXIF:UserComment` | The teacher's note |
-| `XMP-dc:creator` | Who posted it |
-| `XMP-iptcExt:LocationCreatedSublocation` | The nursery's name, when Brightwheel gives one |
+| `XMP-dc:creator` | Who posted it — only with the names switch on |
+| `XMP-iptcExt:LocationCreatedSublocation` | The nursery's name, when Brightwheel gives one — only with the names switch on |
 
 ### Videos
 
@@ -300,10 +301,10 @@ actually read:
 | `QuickTime:TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate` | The same instant, in the track and media headers |
 | `Keys:CreationDate` | The same moment as local time with its offset — the field Apple Photos prefers |
 | `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
-| `XMP-iptcExt:PersonInImage`, `XMP-dc:subject`, `Keys:Keywords` | Your child's name |
+| `XMP-iptcExt:PersonInImage`, `XMP-dc:subject`, `Keys:Keywords` | Your child's name — only with the names switch on |
 | `XMP-dc:description`, `Keys:Description` | The teacher's note |
-| `XMP-dc:creator`, `Keys:Author` | Who posted it |
-| `XMP-iptcExt:LocationCreatedSublocation` | The nursery's name, when Brightwheel gives one |
+| `XMP-dc:creator`, `Keys:Author` | Who posted it — only with the names switch on |
+| `XMP-iptcExt:LocationCreatedSublocation` | The nursery's name, when Brightwheel gives one — only with the names switch on |
 
 So a video's headers hold UTC while its week folder is named for the local day. Both are
 right — each follows its own convention — and a player that reads the header converts it
