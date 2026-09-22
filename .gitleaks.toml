@@ -27,7 +27,11 @@ tags = ["session"]
 [[rules]]
 id = "signed-media-url"
 description = "Signed CDN media URL — a bearer credential for one child's photo"
-regex = '''https?://[^\s"']+[?&](?:signature|X-Amz-Signature|X-Goog-Signature)=[A-Za-z0-9%._\-+/]{16,}'''
+# Case-insensitive, and `~` is in the value class: the live CDN is CloudFront, whose
+# parameter is spelled `Signature=` and whose base64 variant uses `-`, `_` and `~`. The
+# rule as first written matched only lowercase `signature=`, so it recognised the mock's
+# URLs and none of the real ones — the exact shape it exists to catch.
+regex = '''(?i)https?://[^\s"']+[?&](?:signature|x-amz-signature|x-goog-signature)=[A-Za-z0-9%._~\-+/]{16,}'''
 tags = ["url", "media"]
 
 [allowlist]
@@ -52,9 +56,9 @@ regexes = [
   # Deliberately unreal signatures in the URL-identity and scrubbing tests. The word
   # boundary matters: a bare `signature=x` would also allowlist a real signature that
   # happens to start with an x.
-  '''signature=(aaa|zzz|deadbeef|x)\b''',
+  '''(?i)signature=(aaa|zzz|deadbeef|x)\b''',
   # The verify-report fixture, which needs a signature long enough to look like one.
-  '''signature=not-a-real-signature''',
+  '''(?i)signature=not-a-real-signature''',
   # The paste-shape tests, which need values long enough to look like a session.
   '''NotARealSession''',
 ]
