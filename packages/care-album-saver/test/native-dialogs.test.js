@@ -46,8 +46,8 @@ after(async () => { await mock?.close(); });
  * runs the tests in a file one at a time.
  */
 async function freshConfigDir() {
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-native-'));
-  delete process.env.BRIGHTWHEEL_SESSION;
+  process.env.CARE_ALBUM_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-native-'));
+  delete process.env.CARE_ALBUM_SESSION;
   return assertIsolatedConfigDir();
 }
 
@@ -374,7 +374,7 @@ test('a folder named like a command is one argument, not a command line', async 
   assert.equal(opener.calls.length, 0);
 
   // And for a folder that does exist, the whole name travels as one argv element.
-  const real = process.env.BRIGHTWHEEL_ARCHIVE_DIR;
+  const real = process.env.CARE_ALBUM_DIR;
   const live = recorder({ open: { code: 0 } });
   assert.deepEqual(await openFolder(real, { platform: 'darwin', spawn: live.spawn }), { ok: true });
   assert.deepEqual(live.calls[0].args, [real]);
@@ -398,7 +398,7 @@ test('openFolder refuses a path that could be read as a flag', async () => {
 test('the choosers and openers of every platform are argument arrays', async () => {
   // Windows Explorer exits 1 even when it opened the window, so its exit code is not read.
   const windows = recorder({ 'explorer.exe': { code: 1, stderr: '' } });
-  const real = process.env.BRIGHTWHEEL_ARCHIVE_DIR;
+  const real = process.env.CARE_ALBUM_DIR;
   assert.deepEqual(await openFolder(real, { platform: 'win32', spawn: windows.spawn }), { ok: true });
   assert.deepEqual(windows.calls[0], { file: 'explorer.exe', args: [real], timeoutMs: windows.calls[0].timeoutMs });
 

@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { BrightwheelClient } from './api/client.js';
 import { loadConfig, loadSession, saveConfig, saveSession } from './config.js';
-import { configDir, configPath, sessionPath } from './paths.js';
+import { configDir, legacyConfigDir, configPath, sessionPath } from './paths.js';
 import { Secret, scrub } from './secrets.js';
 import { inspectCookiePaste } from './paste.js';
 import { sync } from './sync.js';
@@ -14,29 +14,29 @@ import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairMa
 import * as schedule from './schedule.js';
 
 const HELP = `
-brightwheel-archive — save your own child's photos from Brightwheel
+care-album-saver — save your own child's photos from Brightwheel
 
 Setting it up, once
-  brightwheel-archive setup        Open the setup assistant in your browser (easiest)
-  brightwheel-archive login        Paste your Brightwheel session in the terminal
+  care-album-saver setup        Open the setup assistant in your browser (easiest)
+  care-album-saver login        Paste your Brightwheel session in the terminal
 
 Every day after that
-  brightwheel-archive schedule     Show whether photos are being saved automatically
+  care-album-saver schedule     Show whether photos are being saved automatically
     on --at 19:00                  Save new photos every day at that time
     off                            Stop saving them automatically
-  brightwheel-archive run          Save any new photos now (Ctrl+C stops after the current one)
+  care-album-saver run          Save any new photos now (Ctrl+C stops after the current one)
 
 Looking after the archive
-  brightwheel-archive children     List the children on your account, with their ids
-  brightwheel-archive recheck      Ask Brightwheel who is on the account now
-  brightwheel-archive check        Compare the folder with the tool's own list of it
+  care-album-saver children     List the children on your account, with their ids
+  care-album-saver recheck      Ask Brightwheel who is on the account now
+  care-album-saver check        Compare the folder with the tool's own list of it
     --repair                       ...and fix the list, without downloading anything
-  brightwheel-archive duplicates   Find photos saved twice (shows them; deletes nothing)
+  care-album-saver duplicates   Find photos saved twice (shows them; deletes nothing)
     --remove                       ...and offer to delete the extra copies
-  brightwheel-archive doctor       Check that everything is working
-  brightwheel-archive verify       Check the Brightwheel API shape (read-only, no photos)
+  care-album-saver doctor       Check that everything is working
+  care-album-saver verify       Check the Brightwheel API shape (read-only, no photos)
     --deep                         ...and read three photos to find the real capture time
-  brightwheel-archive where        Show where files are kept
+  care-album-saver where        Show where files are kept
 
 Options
   --dir <path>       Where to save photos (default: ~/Brightwheel Photos)
@@ -119,7 +119,7 @@ async function main(): Promise<number> {
         return 0;
       }
       if (what !== undefined) {
-        stdout.write(`  Unknown option "${what}". Use: brightwheel-archive schedule [on --at HH:MM | off]\n`);
+        stdout.write(`  Unknown option "${what}". Use: care-album-saver schedule [on --at HH:MM | off]\n`);
         return 1;
       }
       const state = await schedule.status();
@@ -143,7 +143,7 @@ async function main(): Promise<number> {
     case 'recheck': {
       const session = await loadSession();
       if (!session) {
-        stdout.write('  Not signed in. Run: brightwheel-archive login\n');
+        stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
       const client = new BrightwheelClient({ session: session.session, baseUrl });
@@ -152,7 +152,7 @@ async function main(): Promise<number> {
       if (check.notIncluded.length > 0) {
         stdout.write(
           `\n  To include everyone, open the setup assistant, or run with --child for a one-off:\n` +
-            `    brightwheel-archive run ${check.notIncluded.map((c) => `--child "${c.name}"`).join(' ')}\n`,
+            `    care-album-saver run ${check.notIncluded.map((c) => `--child "${c.name}"`).join(' ')}\n`,
         );
       }
       stdout.write('\n');
@@ -251,14 +251,14 @@ async function main(): Promise<number> {
       }
       await saveSession(secret, check.email);
       await saveConfig(config);
-      stdout.write(`\n  Signed in${check.email ? ` as ${check.email}` : ''}. Now run: brightwheel-archive run\n`);
+      stdout.write(`\n  Signed in${check.email ? ` as ${check.email}` : ''}. Now run: care-album-saver run\n`);
       return 0;
     }
 
     case 'children': {
       const session = await loadSession();
       if (!session) {
-        stdout.write('  Not signed in. Run: brightwheel-archive login\n');
+        stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
       const client = new BrightwheelClient({ session: session.session, baseUrl });
@@ -270,13 +270,19 @@ async function main(): Promise<number> {
           `  ${child.fullName.padEnd(width)}  id: ${child.id}${child.schoolName ? `  (${child.schoolName})` : ''}\n`,
         );
       }
-      stdout.write(`\n  To save photos for some of them only: brightwheel-archive run --child <id or name>\n`);
+      stdout.write(`\n  To save photos for some of them only: care-album-saver run --child <id or name>\n`);
       return 0;
     }
 
     case 'doctor': {
       const session = await loadSession();
       stdout.write(`  Config folder: ${configDir()}\n`);
+      // Say it plainly when the tool is still reading the folder it used before the
+      // rename, rather than leaving someone to wonder why the new name is nowhere on disk.
+      const legacy = legacyConfigDir();
+      if (legacy && legacy === configDir()) {
+        stdout.write(`                 (the folder this tool used when it was called brightwheel-archive; still read, nothing was moved)\n`);
+      }
       stdout.write(`  Photos folder: ${config.archiveDir}\n`);
       stdout.write(`  Session saved: ${session ? `yes (${session.session.fingerprint()})` : 'no'}\n`);
       if (!session) return 1;
@@ -300,7 +306,7 @@ async function main(): Promise<number> {
     case 'verify': {
       const session = await loadSession();
       if (!session) {
-        stdout.write('  Not signed in. Run: brightwheel-archive setup\n');
+        stdout.write('  Not signed in. Run: care-album-saver setup\n');
         return 1;
       }
       try {
@@ -317,7 +323,7 @@ async function main(): Promise<number> {
     case 'run': {
       const session = await loadSession();
       if (!session) {
-        stdout.write('  Not signed in. Run: brightwheel-archive login\n');
+        stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
       const client = new BrightwheelClient({
@@ -335,7 +341,7 @@ async function main(): Promise<number> {
           const needle = wanted.trim().toLowerCase();
           const match = children.find((c) => c.id === wanted.trim() || c.fullName.toLowerCase() === needle);
           if (!match) {
-            stdout.write(`  No child called "${wanted}" on this account. Run: brightwheel-archive children\n`);
+            stdout.write(`  No child called "${wanted}" on this account. Run: care-album-saver children\n`);
             return 1;
           }
           if (!chosen.includes(match.id)) chosen.push(match.id);

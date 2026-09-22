@@ -200,7 +200,7 @@ async function cli(args, configDir) {
   const bin = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
   try {
     const { stdout } = await promisify(execFile)(process.execPath, [bin, ...args, '--base-url', `${mock.url}/api/v1`], {
-      env: { ...process.env, BRIGHTWHEEL_ARCHIVE_CONFIG_DIR: configDir },
+      env: { ...process.env, CARE_ALBUM_CONFIG_DIR: configDir },
     });
     return { code: 0, stdout };
   } catch (error) {
@@ -254,6 +254,6 @@ test('`run --child` with a name that is not on the account stops before doing an
   const { code, stdout } = await cli(['run', '--child', 'Nobody Here', '--dir', scratch], dir);
   assert.equal(code, 1);
   assert.match(stdout, /No child called "Nobody Here"/);
-  assert.match(stdout, /brightwheel-archive children/, 'points at the command that lists them');
+  assert.match(stdout, /care-album-saver children/, 'points at the command that lists them');
   assert.doesNotMatch(stdout, /Looking for/, 'no run started');
 });

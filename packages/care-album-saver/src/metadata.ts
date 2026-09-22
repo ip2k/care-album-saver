@@ -232,7 +232,7 @@ export async function writeJsonSidecar(input: MetadataInput): Promise<void> {
     postedBy: activity.author,
     kind: activity.kind,
     savedAt: new Date().toISOString(),
-    savedBy: 'brightwheel-archive',
+    savedBy: 'care-album-saver',
   };
   await writeFile(`${input.filePath}.json`, JSON.stringify(sidecar, null, 2), 'utf8');
 }

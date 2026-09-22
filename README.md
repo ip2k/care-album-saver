@@ -1,4 +1,4 @@
-# Brightwheel Archive
+# Care Album Saver
 
 **Save your own child's photos from Brightwheel onto your own computer, sorted into a folder for each week.**
 
@@ -11,7 +11,7 @@ Run it once a day and you build up a complete, private archive of your child's t
 nursery — one you keep, whatever happens to your account.
 
 ```
-Brightwheel Photos/
+Care Album Photos/
 ├── archive.json           ← the tool's list of what it has already saved
 ├── Robin Maple/
 │   ├── 2026-W37/          ← 7–13 September 2026
@@ -88,7 +88,7 @@ Honesty matters more here than reassurance, so:
 - **If you save into a cloud-synced folder** — iCloud Drive, Dropbox, OneDrive, Google
   Drive — then that service will copy every photo to their servers. On a Mac, Desktop and
   Documents are often synced to iCloud without you turning it on. The default location
-  (`~/Brightwheel Photos`) avoids this, but if you change it, check where you are pointing.
+  (`~/Care Album Photos`) avoids this, but if you change it, check where you are pointing.
 - **Photos may contain other children.** A group photo from your child's class has other
   families' children in it. Please treat those photos the way you would want yours treated.
 - **Labelling photos with names writes those names into the file itself.** Your child's
@@ -116,8 +116,8 @@ committing your own session by accident and publishing it. The project is built 
 this is hard:
 
 - **Your session is never stored in the project folder.** It lives in your operating
-  system's settings folder — `~/Library/Application Support/brightwheel-archive` on a Mac,
-  `~/.config/brightwheel-archive` on Linux, `%APPDATA%\brightwheel-archive` on Windows.
+  system's settings folder — `~/Library/Application Support/care-album-saver` on a Mac,
+  `~/.config/care-album-saver` on Linux, `%APPDATA%\care-album-saver` on Windows.
   There is nothing in the repository to commit, because nothing is there.
 - **The session is an unprintable object in the code.** Printing it, logging it, or
   putting it in an error message produces `[redacted]`, not the value. You have to call
@@ -147,7 +147,7 @@ website, which invalidates it immediately. Do that first, before trying to rewri
 The setup assistant walks you through everything. **[Full illustrated guide →](docs/GUIDE.md)**
 
 ```sh
-npx brightwheel-archive setup
+npx care-album-saver setup
 ```
 
 Then open the link it prints. Three steps: connect your account, tick the children you want
@@ -162,7 +162,7 @@ you change it, so there is nothing to remember to press, and while a run is goin
 Once you have connected once, you never need to again until the session expires:
 
 ```sh
-npx brightwheel-archive run        # save any new photos
+npx care-album-saver run        # save any new photos
 ```
 
 ### Running it every day
@@ -170,7 +170,7 @@ npx brightwheel-archive run        # save any new photos
 **macOS / Linux** — add to `crontab -e`:
 
 ```
-0 19 * * *  /usr/local/bin/npx brightwheel-archive run
+0 19 * * *  /usr/local/bin/npx care-album-saver run
 ```
 
 Use the full path to `npx`, not a bare `npx`. A scheduled job looks for programs in only a
@@ -184,13 +184,13 @@ it prints — with Homebrew it is often `/opt/homebrew/bin/npx`.
 from this repository. The session and the photos are mounted in, never baked into the image:
 
 ```sh
-docker build -t brightwheel-archive .
+docker build -t care-album-saver .
 
 docker run --rm \
   --user "$(id -u):$(id -g)" \
-  -v ~/.config/brightwheel-archive:/config \
+  -v ~/.config/care-album-saver:/config \
   -v ~/Brightwheel\ Photos:/photos \
-  brightwheel-archive run --dir /photos
+  care-album-saver run --dir /photos
 ```
 
 `--dir /photos` is what sends the photos to the folder you mounted. Naming a command at the
@@ -203,11 +203,11 @@ which only your account can open — and write into the mounted photos folder. W
 container runs as its own user and can only write folders that user owns. Docker Desktop on
 a Mac or Windows maps bind mounts itself, so the flag does no harm there.
 
-`~/.config/brightwheel-archive` is the Linux location. On a Mac the session is in
-`~/Library/Application Support/brightwheel-archive`. Run `brightwheel-archive where` to
+`~/.config/care-album-saver` is the Linux location. On a Mac the session is in
+`~/Library/Application Support/care-album-saver`. Run `care-album-saver where` to
 print the exact folder to mount as `/config`.
 
-There is also a `BRIGHTWHEEL_SESSION` environment variable, which the tool reads instead of
+There is also a `CARE_ALBUM_SESSION` environment variable, which the tool reads instead of
 the session file when it is set. **Mount the file rather than use it.** An environment
 variable is visible in process listings, lands in shell history, and is copied into crash
 dumps; a mounted file is none of those things.
@@ -228,17 +228,20 @@ dumps; a mounted file is none of those things.
 
 | Option | Default | |
 |---|---|---|
-| `--dir <path>` | `~/Brightwheel Photos` | Where to save |
+| `--dir <path>` | `~/Care Album Photos` | Where to save |
 | `--all` | off | Re-check everything, not just new photos |
 | `--child <id or name>` | every child | Only this child, for this one run. Repeat it for several. |
 | `--no-name-tag` | off | Do not write any name into the photo |
 | `--port <n>` | chosen for you | Port for the setup assistant |
 | `--base-url <url>` | Brightwheel's own | Point at a different API. Used by the tests. |
 
-On Windows the default folder is `%USERPROFILE%\Brightwheel Photos`. Once you have chosen a
+On Windows the default folder is `%USERPROFILE%\Care Album Photos`. If you set this tool up while it
+was called `brightwheel-archive`, it keeps using the folder and the settings you already
+have — nothing is moved or renamed on your disk, and `care-album-saver doctor` prints the
+paths it is actually using. Once you have chosen a
 folder in the setup page, that is the default instead.
 
-`--child` takes either the id that `brightwheel-archive children` prints, or the child's
+`--child` takes either the id that `care-album-saver children` prints, or the child's
 full name, where capitals do not matter. It changes one run only — the choice you made in
 the setup page is not touched. `--help` prints this same list in the terminal.
 
@@ -342,7 +345,7 @@ kinds: for a photo, the compressed scan — the part of the file that is the pic
 compared byte for byte against what the server sent; for a video, the `mdat` box that holds
 the frames is compared the same way, and — on a machine that has `ffprobe` — the rewritten
 container is then read back to prove it still plays. Both checks live in
-`packages/brightwheel-archive/test/real-media-fixtures.test.js`, in the tests named "photo
+`packages/care-album-saver/test/real-media-fixtures.test.js`, in the tests named "photo
 metadata round-trips…" and "video metadata round-trips…".
 
 Every file also gets a `.json` file beside it, in plain text, so the archive is readable in
@@ -388,8 +391,8 @@ every record.
 You can check your own account, which is the point of the tool being honest about this:
 
 ```sh
-npx brightwheel-archive verify          # reads the API, downloads nothing
-npx brightwheel-archive verify --deep   # also reads three photos, then deletes them
+npx care-album-saver verify          # reads the API, downloads nothing
+npx care-album-saver verify --deep   # also reads three photos, then deletes them
 ```
 
 The second one answers "does the date survive inside the photo on *my* nursery's account?"
@@ -410,7 +413,7 @@ for that endpoint, so the field names were pieced together from six other open-s
 Brightwheel clients. We believe they are right. We have not proved it, and until somebody
 has, please do not treat this as finished software.
 
-`brightwheel-archive verify` is how you check it on your own account without archiving
+`care-album-saver verify` is how you check it on your own account without archiving
 anything. It makes a handful of read-only requests — a few reads of the API, and a check
 that a photo link still answers — and downloads no photos. Mostly it reports which fields
 are present and what type each one is: never a child's name, never a note, never an id,
@@ -455,7 +458,7 @@ your child's data, ask the school.
 
 | Package | |
 |---|---|
-| [`brightwheel-archive`](packages/brightwheel-archive) | The tool itself: API client, metadata, week folders, CLI and setup assistant. |
+| [`care-album-saver`](packages/care-album-saver) | The tool itself: API client, metadata, week folders, CLI and setup assistant. |
 | [`media-ferry`](packages/media-ferry) | Reusable and service-agnostic: resumable downloads, stable identity for signed URLs, content hashing, safe filenames, ISO weeks. Useful in any archiving project. |
 
 **The tool itself has zero required runtime dependencies.** The only entry under
@@ -486,13 +489,13 @@ pnpm test                        # 121 tests, no network needed
 One test file on its own:
 
 ```sh
-node --test --import ./scripts/test-env.js packages/brightwheel-archive/test/sync-resilience.test.js
+node --test --import ./scripts/test-env.js packages/care-album-saver/test/sync-resilience.test.js
 ```
 
 CI runs the same suite on Ubuntu, macOS and Windows against Node 20, 22, 24 and 26 — twelve
 combinations (`.github/workflows/ci.yml`). Two of the tests assert owner-only file
 permissions, which Windows does not have; there they are reported as skipped with the reason
-printed, never quietly passed. `BRIGHTWHEEL_ARCHIVE_TEST_PLATFORM=win32 pnpm test` rehearses
+printed, never quietly passed. `CARE_ALBUM_TEST_PLATFORM=win32 pnpm test` rehearses
 that on a Mac or Linux machine — 121 tests, 119 passed, 2 skipped.
 
 The guide's images come from `node scripts/screenshots.js`, which drives the real setup page

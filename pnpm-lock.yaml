@@ -18,7 +18,7 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  packages/brightwheel-archive:
+  packages/care-album-saver:
     dependencies:
       media-ferry:
         specifier: workspace:*

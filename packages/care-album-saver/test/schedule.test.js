@@ -32,7 +32,7 @@ before(assertIsolatedConfigDir);
  * nothing has been scheduled on before.
  */
 async function freshConfigDir() {
-  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-sched-config-'));
+  process.env.CARE_ALBUM_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'bw-sched-config-'));
   return assertIsolatedConfigDir();
 }
 
@@ -61,7 +61,7 @@ const macEnv = (home, run) => ({
   home,
   run,
   nodePath: '/opt/tools/bin/node',
-  cliPath: '/opt/tools/lib/brightwheel-archive/cli.js',
+  cliPath: '/opt/tools/lib/care-album-saver/cli.js',
   uid: 501,
 });
 
@@ -99,14 +99,14 @@ test('on a Mac the daily run is a LaunchAgent, loaded with an argument array', a
 
   const state = await schedule.install('19:30', macEnv(home, os.run));
 
-  const plist = join(home, 'Library', 'LaunchAgents', 'com.brightwheel-archive.daily.plist');
+  const plist = join(home, 'Library', 'LaunchAgents', 'com.care-album-saver.daily.plist');
   assert.ok(await exists(plist), 'the plist must be written into ~/Library/LaunchAgents');
   const xml = await readFile(plist, 'utf8');
 
   // The job itself: node, this tool's own entry point, and the run that records its outcome.
-  assert.match(xml, /<key>Label<\/key>\s*\n?\s*<string>com\.brightwheel-archive\.daily<\/string>/);
+  assert.match(xml, /<key>Label<\/key>\s*\n?\s*<string>com\.care-album-saver\.daily<\/string>/);
   assert.match(xml, /<string>\/opt\/tools\/bin\/node<\/string>/);
-  assert.match(xml, /<string>\/opt\/tools\/lib\/brightwheel-archive\/cli\.js<\/string>/);
+  assert.match(xml, /<string>\/opt\/tools\/lib\/care-album-saver\/cli\.js<\/string>/);
   assert.match(xml, /<string>run<\/string>/);
   assert.match(xml, /<string>--scheduled<\/string>/);
   // Not npx. A scheduled job has almost no PATH, and on Windows `npx` is `npx.cmd`; the
@@ -123,10 +123,10 @@ test('on a Mac the daily run is a LaunchAgent, loaded with an argument array', a
     [
       // Unloaded first: launchctl refuses to bootstrap a label it already holds, so without
       // this a change of time would write a plist nothing ever read.
-      ['launchctl', ['bootout', 'gui/501/com.brightwheel-archive.daily']],
+      ['launchctl', ['bootout', 'gui/501/com.care-album-saver.daily']],
       ['launchctl', ['bootstrap', 'gui/501', plist]],
       // status() asks the operating system whether it really has the job.
-      ['launchctl', ['print', 'gui/501/com.brightwheel-archive.daily']],
+      ['launchctl', ['print', 'gui/501/com.care-album-saver.daily']],
     ],
   );
 
@@ -154,7 +154,7 @@ test('installing twice changes the time instead of leaving two daily runs', asyn
   await schedule.install('19:30', env);
   const second = await schedule.install('06:15', env);
 
-  const plist = join(home, 'Library', 'LaunchAgents', 'com.brightwheel-archive.daily.plist');
+  const plist = join(home, 'Library', 'LaunchAgents', 'com.care-album-saver.daily.plist');
   const xml = await readFile(plist, 'utf8');
   assert.match(xml, /<key>Hour<\/key><integer>6<\/integer>/);
   assert.match(xml, /<key>Minute<\/key><integer>15<\/integer>/);
@@ -176,7 +176,7 @@ test('removing the daily run takes the plist away, and removing it twice is not 
   const os = recorder();
   const env = macEnv(home, os.run);
   await schedule.install('19:30', env);
-  const plist = join(home, 'Library', 'LaunchAgents', 'com.brightwheel-archive.daily.plist');
+  const plist = join(home, 'Library', 'LaunchAgents', 'com.care-album-saver.daily.plist');
 
   const after = await schedule.remove(env);
   assert.equal(await exists(plist), false, 'the plist must be gone');
@@ -216,8 +216,8 @@ test('on Linux with systemd the daily run is a user timer', async () => {
   assert.equal(state.mechanism, 'systemd');
 
   const unitDir = join(home, '.config', 'systemd', 'user');
-  const service = await readFile(join(unitDir, 'brightwheel-archive.service'), 'utf8');
-  const timer = await readFile(join(unitDir, 'brightwheel-archive.timer'), 'utf8');
+  const service = await readFile(join(unitDir, 'care-album-saver.service'), 'utf8');
+  const timer = await readFile(join(unitDir, 'care-album-saver.timer'), 'utf8');
   assert.match(service, /^ExecStart="\/usr\/bin\/node" "\/opt\/bw\/cli\.js" run --scheduled$/m);
   assert.match(timer, /^OnCalendar=\*-\*-\* 19:00:00$/m);
   // A run missed because the machine was off should happen when it comes back, not be
@@ -228,12 +228,12 @@ test('on Linux with systemd the daily run is a user timer', async () => {
   const commands = os.calls.map((c) => [c.file, c.args.join(' ')]);
   assert.deepEqual(commands[0], ['systemctl', '--user --version'], 'systemd is looked for before it is used');
   assert.ok(commands.some(([f, a]) => f === 'systemctl' && a === '--user daemon-reload'));
-  assert.ok(commands.some(([f, a]) => f === 'systemctl' && a === '--user enable --now brightwheel-archive.timer'));
+  assert.ok(commands.some(([f, a]) => f === 'systemctl' && a === '--user enable --now care-album-saver.timer'));
 
   const gone = await schedule.remove(env);
   assert.equal(gone.installed, false);
-  assert.equal(await exists(join(unitDir, 'brightwheel-archive.timer')), false);
-  assert.equal(await exists(join(unitDir, 'brightwheel-archive.service')), false);
+  assert.equal(await exists(join(unitDir, 'care-album-saver.timer')), false);
+  assert.equal(await exists(join(unitDir, 'care-album-saver.service')), false);
 });
 
 test('on Linux without systemd it falls back to cron, and keeps the crontab that is there', async () => {
@@ -257,16 +257,16 @@ test('on Linux without systemd it falls back to cron, and keeps the crontab that
   assert.equal(state.mechanism, 'cron');
   assert.ok(crontab.includes(theirs.trim()), 'their own job must survive untouched');
   assert.match(crontab, /^45 19 \* \* \* "\/usr\/bin\/node" "\/opt\/bw\/cli\.js" run --scheduled >> ".*daily\.log" 2>&1$/m);
-  assert.equal(crontab.match(/brightwheel-archive: the daily run/g).length, 1);
+  assert.equal(crontab.match(/care-album-saver: the daily run/g).length, 1);
 
   // Changing the time rewrites the one block rather than adding a second.
   await schedule.install('06:00', env);
-  assert.equal(crontab.match(/brightwheel-archive: the daily run/g).length, 1, 'exactly one block, always');
+  assert.equal(crontab.match(/care-album-saver: the daily run/g).length, 1, 'exactly one block, always');
   assert.match(crontab, /^0 6 \* \* \* /m);
   assert.ok(crontab.includes(theirs.trim()));
 
   await schedule.remove(env);
-  assert.ok(!crontab.includes('brightwheel-archive'), 'ours is gone');
+  assert.ok(!crontab.includes('care-album-saver'), 'ours is gone');
   assert.ok(crontab.includes('/usr/local/bin/backup.sh'), 'and theirs is not');
 });
 
@@ -293,7 +293,7 @@ test('on Windows the daily run is a scheduled task, created with /F so there is 
   assert.deepEqual(create.args, [
     '/Create',
     '/TN',
-    'Brightwheel Archive daily',
+    'Care Album Saver daily',
     '/TR',
     '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\alex\\bw\\cli.js" run --scheduled',
     '/SC',
@@ -308,7 +308,7 @@ test('on Windows the daily run is a scheduled task, created with /F so there is 
 
   await schedule.remove(env);
   const del = os.calls.find((c) => c.args[0] === '/Delete');
-  assert.deepEqual(del.args, ['/Delete', '/TN', 'Brightwheel Archive daily', '/F']);
+  assert.deepEqual(del.args, ['/Delete', '/TN', 'Care Album Saver daily', '/F']);
 });
 
 // ---------------------------------------------------------------- the rule that matters
