@@ -169,6 +169,29 @@ function pickCaptureTime(a: Record<string, unknown>): Date | null {
   return null;
 }
 
+/**
+ * Who posted the photo.
+ *
+ * `actor.name` does not exist. It came from another project's fixtures, and because nothing
+ * had ever run against the real service, every archive this tool wrote recorded no author
+ * at all. Verified live on 2026-09-22: the real record carries `actor.first_name`,
+ * `actor.last_name`, `actor.object_id`, `actor.email` and `actor.role`.
+ *
+ * `name` is still read first, so a future API that grows one is handled, and a mock or
+ * fixture written against the old shape keeps working.
+ *
+ * The email is deliberately NOT read. It belongs to a member of staff who never agreed to
+ * be in a parent's photo archive, and a name is all the provenance an archive needs.
+ */
+function pickAuthor(actor: unknown, context: string): string | null {
+  if (!actor || typeof actor !== 'object' || Array.isArray(actor)) return null;
+  const o = asObject(actor, context);
+  const whole = str(o.name);
+  if (whole) return whole;
+  const parts = [str(o.first_name), str(o.last_name)].filter(Boolean);
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|heif|avif)(\?|$)/i;
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi)(\?|$)/i;
 
@@ -227,7 +250,7 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
       note: str(a.note) ?? str(a.description) ?? null,
       url: media,
       kind: isVideo ? 'video' : 'image',
-      author: a.actor ? str(asObject(a.actor, `activities[${i}].actor`).name) : null,
+      author: pickAuthor(a.actor, `activities[${i}].actor`),
     });
   }
   return { items: out, undated };

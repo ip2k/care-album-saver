@@ -19,6 +19,7 @@ brightwheel-archive — save your own child's photos from Brightwheel
   brightwheel-archive children     List the children on your account, with their ids
   brightwheel-archive doctor       Check that everything is working
   brightwheel-archive verify       Check the Brightwheel API shape (read-only, no photos)
+    --deep                         ...and read three photos to find the real capture time
   brightwheel-archive where        Show where files are kept
 
 Options
@@ -53,6 +54,7 @@ async function main(): Promise<number> {
       child: { type: 'string', multiple: true },
       port: { type: 'string' },
       'base-url': { type: 'string' },
+      deep: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -169,7 +171,7 @@ async function main(): Promise<number> {
         return 1;
       }
       try {
-        const report = await verify(session.session, { baseUrl });
+        const report = await verify(session.session, { baseUrl, deep: values.deep });
         stdout.write(formatReport(report));
         stdout.write('  This output is safe to share.\n\n');
         return report.sessionValid ? 0 : 1;
