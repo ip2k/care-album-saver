@@ -120,14 +120,19 @@ test('pagination walks to the end and stops', async () => {
   assert.equal(pages.reduce((a, b) => a + b, 0), 12);
 });
 
-test('capture time is preferred over upload time', async () => {
-  // The mock posts every photo six hours after it was taken. If we used created_at,
-  // morning photos would file under the evening — and at week edges, the wrong week.
-  const [page] = [];
+test('event_date is preferred over created_at where the two differ', async () => {
+  // This test used to be called "capture time is preferred over upload time", and it was
+  // the project's founding claim. Checked against the live service on 2026-09-22, the two
+  // fields are identical on every record and the photographs carry no capture time at all,
+  // so there is no capture time to prefer — see docs/QUESTIONS-FOR-FABLE.md B2.
+  //
+  // The preference is kept, and so is this test, for a smaller reason: if some other
+  // provider's records ever do distinguish them, event_date is the likelier of the two, and
+  // the mock still models that case even though the real service does not exhibit it.
   for await (const p of client().activities('stu-aaa-111', { pageSize: 50 })) {
     const first = p[0];
-    const uploaded = new Date(first.capturedAt.getTime() + 6 * 3600 * 1000);
-    assert.ok(first.capturedAt < uploaded);
+    const uploaded = new Date(first.postedAt.getTime() + 6 * 3600 * 1000);
+    assert.ok(first.postedAt < uploaded, 'the earlier of the two fields is the one kept');
     break;
   }
 });
@@ -157,7 +162,7 @@ test('a full sync saves, organises, tags and does not re-download', async () => 
   const meta = JSON.parse(await readFile(join(dir, 'Robin-Maple', week, sidecar), 'utf8'));
   assert.equal(meta.child.name, 'Robin Maple');
   assert.equal(meta.source, 'brightwheel');
-  assert.ok(meta.capturedAt);
+  assert.ok(meta.postedAt);
   assert.ok(files.includes('README.md'), 'each week folder explains itself');
 
   // Filenames start with the date so they sort chronologically in any file browser.

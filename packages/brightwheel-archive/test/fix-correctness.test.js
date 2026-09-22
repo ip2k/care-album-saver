@@ -74,9 +74,9 @@ test('an incremental walk does not stop at a back-dated batch', async () => {
 
     const first = pages[0].items;
     assert.equal(first.length, 3, 'page 0 is the back-dated batch');
-    assert.ok(first.every((i) => i.capturedAt < cutOff), 'and every one of them is older than the cut-off');
+    assert.ok(first.every((i) => i.postedAt < cutOff), 'and every one of them is older than the cut-off');
 
-    const newer = pages.flatMap((p) => p.items).filter((i) => i.capturedAt > cutOff);
+    const newer = pages.flatMap((p) => p.items).filter((i) => i.postedAt > cutOff);
     assert.equal(newer.length, 6, 'the six photos below the batch were still reached');
     assert.ok(pages.length > 1, `the walk read ${pages.length} page(s)`);
   } finally {

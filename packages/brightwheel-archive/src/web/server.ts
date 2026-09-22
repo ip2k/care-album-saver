@@ -390,8 +390,19 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
        */
       if (req.method === 'POST' && url.pathname === '/api/open-folder') {
         const config = await loadConfig();
-        const opened = await openFolder(config.archiveDir, options.native);
-        json(200, opened.ok ? { ok: true, path: config.archiveDir } : { ok: false, error: scrub(opened.error), path: config.archiveDir });
+        // Re-validated here, not trusted. The stored destination passed checkArchiveDir when
+        // it was saved, but a config.json edited by hand — or written by an older build, or
+        // by a future bug in this endpoint's neighbour — is not required to have. Without
+        // this, "open my photos folder" opens whatever absolute path is in that file: /etc
+        // and an application bundle both worked when a checker tried it. The rule is that
+        // this endpoint can only ever open a folder the tool would agree to archive into.
+        const verdict = checkArchiveDir(config.archiveDir);
+        if (!verdict.ok) {
+          json(400, { ok: false, error: verdict.error, path: config.archiveDir });
+          return;
+        }
+        const opened = await openFolder(verdict.resolved, options.native);
+        json(200, opened.ok ? { ok: true, path: verdict.resolved } : { ok: false, error: scrub(opened.error), path: verdict.resolved });
         return;
       }
 
@@ -513,7 +524,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         try {
-          json(200, { ok: true, schedule: await schedule.install(time) });
+          // Through the same queue as every other write to config.json. Installing a
+          // schedule is a read-modify-write of that file like any settings change, and the
+          // settings save themselves on each control change — so without this, ticking a box
+          // while the schedule is being written loses one of the two.
+          json(200, { ok: true, schedule: await withConfigLock(() => schedule.install(time)) });
         } catch (error) {
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }
@@ -522,7 +537,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'POST' && url.pathname === '/api/schedule/off') {
         try {
-          json(200, { ok: true, schedule: await schedule.remove() });
+          json(200, { ok: true, schedule: await withConfigLock(() => schedule.remove()) });
         } catch (error) {
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }

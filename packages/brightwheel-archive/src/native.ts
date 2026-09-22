@@ -194,7 +194,15 @@ export async function chooseFolder(options: NativeOptions = {}): Promise<FolderC
       // Windows prints nothing when the dialog is dismissed, and still exits 0.
       return picked ? { ok: true, path: picked } : { ok: false, cancelled: true };
     }
-    if (chooser.cancelCodes.includes(result.code) || CANCEL_TEXT.test(result.stderr)) {
+    // "Cancelled" and "broken" share exit code 1 on every Linux chooser: zenity exits 1
+    // whether the person pressed Cancel or it could not reach a display at all. What tells
+    // them apart is that a failure complains on stderr and a dismissal says nothing. Reading
+    // a bare code as a dismissal told a parent "No folder was chosen" on a machine where the
+    // dialog never appeared, and stopped the loop before kdialog was tried.
+    if (chooser.cancelCodes.includes(result.code) && !firstLine(result.stderr)) {
+      return { ok: false, cancelled: true };
+    }
+    if (CANCEL_TEXT.test(result.stderr)) {
       return { ok: false, cancelled: true };
     }
     // A chooser that is installed but broken is worth trying past — a desktop with a

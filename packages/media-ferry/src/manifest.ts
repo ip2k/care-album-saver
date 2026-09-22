@@ -263,7 +263,7 @@ export class Manifest {
       updatedAt: new Date().toISOString(),
       notes:
         'downloadedAt is when this tool fetched the file. Capture time lives in ' +
-        'provenance.capturedAt and in the file EXIF/XMP metadata. etag and lastModified ' +
+        'provenance.postedAt and in the file EXIF/XMP metadata. etag and lastModified ' +
         'are verbatim HTTP response headers; null means the server did not supply one. ' +
         'Local filesystem timestamps are never used as validators.',
       state: this.state,

@@ -214,7 +214,7 @@ const NAMED = {
   activity: {
     id: 'act-1',
     studentId: 'stu-x',
-    capturedAt: new Date('2026-09-18T09:15:00'),
+    postedAt: new Date('2026-09-18T09:15:00'),
     note: 'Water play in the garden.',
     url: 'https://example.invalid/a.jpg',
     kind: 'image',

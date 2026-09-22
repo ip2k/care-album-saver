@@ -97,7 +97,7 @@ export interface MediaActivity {
   id: string;
   studentId: string | null;
   /** The moment the photo was taken, as reported by Brightwheel. */
-  capturedAt: Date;
+  postedAt: Date;
   /** Note or caption written by the teacher, if any. */
   note: string | null;
   /** Full-size media URL. Usually signed and short-lived. */
@@ -248,8 +248,8 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
     const isVideo = Boolean(videoUrl) || a.action_type === 'ac_video' || VIDEO_EXT.test(media);
     if (!isVideo && !IMAGE_EXT.test(media) && !imageUrl) continue;
 
-    const capturedAt = pickCaptureTime(a);
-    if (!capturedAt) {
+    const postedAt = pickCaptureTime(a);
+    if (!postedAt) {
       // A photo we cannot date is a photo we cannot file, and filing by capture time is
       // the entire point of this tool. So it is counted, not quietly dropped and not
       // stamped with a guess; `validateExtraction` decides what the count means.
@@ -260,7 +260,7 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
     out.push({
       id: String(a.object_id ?? req(a, 'id', `activities[${i}]`)),
       studentId,
-      capturedAt,
+      postedAt,
       note: str(a.note) ?? str(a.description) ?? null,
       url: media,
       kind: isVideo ? 'video' : 'image',

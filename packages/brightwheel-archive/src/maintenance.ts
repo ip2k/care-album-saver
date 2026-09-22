@@ -341,7 +341,13 @@ export async function repairManifest(config: Config): Promise<RepairResult> {
       // arrive": the run that downloaded it never got as far as writing it down.
       downloadedAt: info.mtime.toISOString(),
       provenance: {
-        ...(sidecar?.capturedAt ? { capturedAt: sidecar.capturedAt } : {}),
+        // `capturedAt` is what sidecars written before 2026-09-22 call it. The name was
+        // wrong — the field has always held the moment the photo was POSTED, and after
+        // checking the live service we know there is no capture time to hold — so both
+        // spellings are read and only the true one is written.
+        ...(sidecar?.postedAt ?? sidecar?.capturedAt
+          ? { postedAt: sidecar.postedAt ?? sidecar.capturedAt }
+          : {}),
         ...(sidecar?.child?.id ? { studentId: sidecar.child.id } : {}),
         ...(sidecar?.child?.name ? { studentName: sidecar.child.name } : {}),
         ...(sidecar?.note !== undefined ? { note: sidecar.note } : {}),
@@ -364,6 +370,8 @@ export async function repairManifest(config: Config): Promise<RepairResult> {
 
 interface Sidecar {
   brightwheelActivityId?: string;
+  postedAt?: string;
+  /** What `postedAt` was called before 2026-09-22. Read, never written. */
   capturedAt?: string;
   child?: { id?: string; name?: string };
   note?: string | null;
