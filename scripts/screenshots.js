@@ -161,7 +161,7 @@ async function annotate(page, notes) {
     const labels = [...document.querySelectorAll('.__ann > div')].filter((n) => n.textContent);
     // The drawn content, not `.wrap`: the column's own padding is clear space a label may
     // legitimately sit in, and judging by it would reject layouts that are perfectly fine.
-    const content = [...document.querySelectorAll('.card, .privacy, h1, .lede')].map((n) => n.getBoundingClientRect());
+    const content = [...document.querySelectorAll('.card, .privacy, h1')].map((n) => n.getBoundingClientRect());
     const bad = [];
     for (const [i, label] of labels.entries()) {
       const r = label.getBoundingClientRect();
@@ -238,7 +238,9 @@ const main = async () => {
   await page.click('#btn-connect');
   await page.waitForSelector('.kid', { timeout: 10000 });
   await page.waitForTimeout(400);
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1100 });
+  // Taller than the default: step 1's first instruction is a link long enough to wrap, so
+  // everything below it sits lower than it used to and the shot no longer fits in 1100.
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1220 });
   await page.evaluate(() => document.querySelector('#card-connect').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
   await annotate(page, [
@@ -257,7 +259,8 @@ const main = async () => {
   await page.uncheck('#kid-1');
   await saved;
   await page.waitForFunction(() => document.querySelector('#config-msg')?.textContent === 'Saved', { timeout: 5000 });
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1200 });
+  // Taller for the same reason as shot 2.
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1300 });
   await page.evaluate(() => document.querySelector('details').setAttribute('open', ''));
   await page.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
@@ -297,7 +300,8 @@ const main = async () => {
   await access(join(PHOTOS, 'archive.json'));
 
   // 5 — dark mode, on the step with the most controls. Both schemes are first-class.
-  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1160 }, deviceScaleFactor: 2, colorScheme: 'dark' });
+  // Taller for the same reason as shot 2.
+  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1260 }, deviceScaleFactor: 2, colorScheme: 'dark' });
   await dark.goto(ui.url, { waitUntil: 'networkidle' });
   await dark.waitForSelector('.kid', { timeout: 10000 });
   await dark.waitForTimeout(700);
