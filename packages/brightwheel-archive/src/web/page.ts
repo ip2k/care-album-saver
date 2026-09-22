@@ -242,12 +242,19 @@ export const PAGE = String.raw`<!doctype html>
   }
   details .inner { padding-top: var(--s4); }
 
+  /* Start and Stop sit together, with a real gap: two buttons touching read as one
+     control, and the destructive-sounding one must not be a slip of the mouse away. */
+  .run-actions { display: flex; flex-wrap: wrap; gap: var(--s3); }
+
   .bar { height: .625rem; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 99px; overflow: hidden; margin: var(--s4) 0 var(--s3); }
   .bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
   /* Indeterminate: we do not know the total, so we must not imply a percentage. */
   .bar[data-indeterminate="true"] > i {
     width: 35%; animation: slide 1.4s ease-in-out infinite;
   }
+  /* Stopped part-way: hold the indicator still where it was. Snapping it to 0% or 100%
+     would both be untrue, and a bar still moving says the run is still going. */
+  .bar[data-stopped="true"] > i { animation-play-state: paused; background: var(--text-muted); }
   @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(286%); } }
 
   .stats { display: flex; flex-wrap: wrap; gap: var(--s6); margin-top: var(--s5); }
@@ -392,7 +399,10 @@ export const PAGE = String.raw`<!doctype html>
         <p class="hint">The first time takes a while. After that it only looks for what is new, which is quick. You can close this page &mdash; it keeps going in the black window you started it from.</p>
         <div class="body">
           <p class="sr-only" id="run-state">Step 3 of 3. Waiting for step 1.</p>
-          <button id="btn-run" type="button" disabled>Start saving</button>
+          <div class="run-actions">
+            <button id="btn-run" type="button" disabled>Start saving</button>
+            <button class="secondary" id="btn-stop" type="button" disabled>Stop</button>
+          </div>
           <div class="bar" id="bar" role="progressbar" aria-labelledby="run-msg" aria-valuemin="0" aria-valuemax="100"><i id="bar-fill"></i></div>
           <p id="run-msg" style="font-size:.9375rem;color:var(--text-muted);margin:0">Not started yet.</p>
           <p class="sr-only" id="run-live" role="status" aria-live="polite"></p>
@@ -468,6 +478,10 @@ let isRunning = false;
 let kids = [];
 /** The folder as last accepted by the tool, so re-saving the same value costs nothing. */
 let savedDir = '';
+/** Whether a refused folder is still marked and explained on screen. */
+let dirError = false;
+/** Whether Stop has been pressed and the run has not wound down yet. */
+let stopping = false;
 
 const selectedIds = () =>
   [...document.querySelectorAll('#kids input[type=checkbox]')].filter((b) => b.checked).map((b) => b.dataset.id);
@@ -512,9 +526,16 @@ async function save(patch, opts) {
     showSaveError(d, opts);
     return false;
   }
-  $('archiveDir').setAttribute('aria-invalid', 'false');
-  $('archiveDir').value = d.config.archiveDir;
+  // Only the save that carried the folder may rewrite the field or clear the mark on it.
+  // Otherwise ticking a checkbox after a refused folder silently replaced what the person
+  // had typed with the stored path and wiped the refusal explaining why it was not kept.
+  if (patch.archiveDir !== undefined) {
+    $('archiveDir').setAttribute('aria-invalid', 'false');
+    $('archiveDir').value = d.config.archiveDir;
+    dirError = false;
+  }
   savedDir = d.config.archiveDir;
+  // Always the stored folder, never the typed one: this says where the photos will go.
   $('p-dir').textContent = d.config.archiveDir;
   if (d.warning) show($('config-msg'), 'warn', esc(d.warning));
   else savedNote();
@@ -523,12 +544,22 @@ async function save(patch, opts) {
 
 function savedNote() {
   const el = $('config-msg');
+  // A refused folder shares this box with the note, and the note must never be what
+  // removes it: the refusal is the only thing saying the photos are not going where the
+  // person just typed. It is put back because it is still true — the tick that saved did
+  // not fix it.
+  const error = dirError ? el.querySelector('.msg.err') : null;
+  const restore = () => { el.textContent = ''; if (error) el.appendChild(error); };
   // Emptied first, so the second "Saved" is announced as well as the first. The brief
   // blink is also the visual cue that something new was just stored.
-  el.textContent = '';
+  restore();
   // Not over the "locked" note: Start saving persists the form and then the run begins
   // inside those 50ms.
-  setTimeout(() => { if (!isRunning) el.innerHTML = '<span class="saved">Saved</span>'; }, 50);
+  setTimeout(() => {
+    if (isRunning) return;
+    restore();
+    el.insertAdjacentHTML('beforeend', '<span class="saved">Saved</span>');
+  }, 50);
 }
 
 function showSaveError(d, opts) {
@@ -542,6 +573,7 @@ function showSaveError(d, opts) {
   }
   show($('config-msg'), 'err', esc(text));
   if (d.field === 'archiveDir') {
+    dirError = true;
     $('archiveDir').setAttribute('aria-invalid', 'true');
     // Only move focus when the person pressed something; stealing it as they tab away
     // from the field would trap them in it.
@@ -559,7 +591,12 @@ function showSaveError(d, opts) {
 function updateRunReady() {
   const none = kids.length > 0 && selectedIds().length === 0;
   $('btn-run').disabled = !sessionOk || isRunning || none;
+  const stopBtn = $('btn-stop');
+  stopBtn.disabled = !isRunning || stopping;
   if (isRunning) return;
+  // The run is over, however it ended; Stop is ready for the next one.
+  stopping = false;
+  stopBtn.textContent = 'Stop';
   if (!sessionOk) $('run-state').textContent = 'Step 3 of 3. Waiting for step 1.';
   else if (none) $('run-state').textContent = 'Step 3 of 3. Cannot start until at least one child is ticked in step 2.';
   else $('run-state').textContent = 'Step 3 of 3. Ready to start.';
@@ -632,7 +669,17 @@ function describeSelection() {
   const st = $('kids-status');
   st.classList.remove('err');
   const chosen = selectedIds();
-  if (chosen.length === 0) { st.textContent = ''; return; }
+  if (kids.length === 0) { st.textContent = ''; return; }
+  if (chosen.length === 0) {
+    // Nobody ticked has to be said where the eye already is — beside the names — and not
+    // only in the line next to the button, which is for screen readers. A sighted person
+    // otherwise meets a greyed-out "Start saving" with nothing on screen explaining it.
+    // This is also the state /api/children can arrive in, when every stored child has
+    // left the account.
+    st.classList.add('err');
+    st.textContent = 'Tick at least one child. Photos are only saved for the children you tick.';
+    return;
+  }
   const names = kids.filter((k) => chosen.includes(k.id)).map((k) => k.fullName);
   const list = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
   if (chosen.length === kids.length) {
@@ -698,6 +745,28 @@ $('btn-run').onclick = async () => {
   poll();
 };
 
+$('btn-stop').onclick = async () => {
+  const btn = $('btn-stop');
+  stopping = true;
+  btn.disabled = true;
+  // The reply comes back at once; the run then finishes the photo it is on before it
+  // stops, so the waiting shows in the progress line rather than in a frozen button.
+  btn.textContent = 'Stopping\u2026';
+  try {
+    const r = await api('/api/stop', { method: 'POST', body: '{}' });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      show($('run-result'), 'err', esc(d.error || 'Could not stop it.'));
+      stopping = false;
+      updateRunReady();
+    }
+  } catch {
+    show($('run-result'), 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
+    stopping = false;
+    updateRunReady();
+  }
+};
+
 function paint(p, running, result) {
   if (!p) return;
   $('s-saved').textContent = p.saved;
@@ -707,7 +776,9 @@ function paint(p, running, result) {
 
   const bar = $('bar');
   const fill = $('bar-fill');
-  if (running && !p.total) {
+  const stopped = p.phase === 'stopped';
+  bar.dataset.stopped = stopped ? 'true' : 'false';
+  if ((running || stopped) && !p.total) {
     // We do not know how many photos there are until the feed has been walked. Showing a
     // percentage here would be an invention, so show motion without a number instead.
     bar.dataset.indeterminate = 'true';
@@ -747,6 +818,12 @@ function paint(p, running, result) {
       if (result.failed > 0) html += ' <b>' + result.failed + '</b> could not be fetched &mdash; press Start saving again to retry them.';
       show($('run-result'), result.failed > 0 ? 'warn' : 'ok', html);
     }
+  }
+  if (p.phase === 'stopped') {
+    // Neither finished nor failed. Everything already saved is on disk and the next run
+    // carries on from there, so this reads as an ordinary outcome, not as a warning.
+    setStep($('card-run'), $('num-3'), $('run-state'), 'active', p.message);
+    show($('run-result'), 'ok', esc(p.message));
   }
   if (p.phase === 'error') {
     show($('run-result'), 'err', esc(p.message) + ' <br><br>If your session has expired, paste a fresh value in step 1 above.');
