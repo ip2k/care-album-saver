@@ -43,6 +43,9 @@ The first time, it asks to download the tool. Say yes. Then it prints a link lik
 > internet — nobody else can open it. The `token` is a one-time password so that other
 > programs on your computer cannot open it either.
 
+Leave that black window open while you work. Everything happens inside it, and closing it
+stops the tool.
+
 ---
 
 ## Step 2 — Connect your account
@@ -59,6 +62,11 @@ and copy one value across.
    a long jumble of letters and numbers.
 5. Paste it into the box and press **Connect**.
 
+The page writes those five steps for the browser you are reading it in, so if what is on
+screen differs from the list above, follow the screen. Firefox and Safari call the panel
+**Storage** rather than **Application**, and Safari hides it until you turn it on: Safari
+menu → **Settings** → **Advanced** → tick **Show features for web developers**.
+
 If it worked, the step turns green and your children appear, each with a tick box:
 
 ![The assistant after connecting, showing a green tick and the two children read from the account, each with a ticked box](images/02-connected.png)
@@ -74,18 +82,28 @@ If it worked, the step turns green and your children appear, each with a tick bo
 
 ## Step 3 — Choose what you want
 
-The defaults are sensible; you can press Start without changing anything.
+The defaults are sensible; you can press **Start saving** without changing anything.
 
 **Which children.** Every child on your account starts ticked. Untick a child to leave
 their photos out — for instance if one of them has left the nursery, or you only want a
-single child in this folder. At least one must stay ticked, and the line underneath the
-names always says, in words, whose photos will be saved. Open **Advanced options** if you
-want to adjust the rest.
+single child in this folder. The line underneath the names always says, in words, whose
+photos will be saved: *Photos will be saved for both children.*, or *Photos will be saved
+for Robin Maple only.*
+
+**If you untick every child**, that line turns red and reads *Tick at least one child.
+Photos are only saved for the children you tick.*, and **Start saving** goes grey until you
+tick someone. Nothing is stored while it says that — "nobody" is not a choice the tool can
+save — so your previous choice is what a run started from the terminal would still use.
+
+If every child you had ticked has since left your account, all the boxes come back ticked
+rather than none. A choice that names nobody is out of date, not a decision to save
+nothing.
 
 **Nothing to remember to press.** Each setting is saved the moment you change it, and a
 small *Saved* appears to say so. The one exception is the folder, because a half-typed
 path is not a folder yet: it is saved when you leave that box, press Enter, or press
 **Use this folder**. When you press **Start saving**, what is on the screen is what runs.
+Open **Advanced options** for the folder, the layout and the rest.
 
 ![The options, with a child unticked, name labelling, location removal, the advanced drawer and the Saved note highlighted](images/03-options.png)
 
@@ -95,9 +113,10 @@ path is not a folder yet: it is saved when you leave that box, press Enter, or p
 | Label photos with your child's name | **On** | Lets Apple Photos and similar find them by name. The name is written inside the photo file. |
 | Keep the teacher's note | **On** | Saves the caption as the photo's description. |
 | Remove location information | **On** | Strips GPS coordinates so a shared photo cannot reveal where it was taken. |
-| Folder layout | Child, then week | Or one folder per week with all children together. |
+| Folder layout | Child, then week | Or one folder per week with all children together, or one folder per week with a folder for each child inside it. |
 | Where to save | `~/Brightwheel Photos` | **Avoid iCloud Drive, Dropbox or OneDrive folders** unless you want copies on their servers. |
 | Only look for new photos | **On** | Much faster. Turn off to re-check from the beginning. |
+| Save an extra settings file beside each photo | **Off** | A small `.xmp` file that photo-editing programs such as Lightroom and darktable can read. Leave it off unless you use one of them. |
 
 > **From the terminal instead:** `npx brightwheel-archive children` lists your children with
 > the id Brightwheel uses for each, and `npx brightwheel-archive run --child "Sam Maple"`
@@ -109,7 +128,11 @@ path is not a folder yet: it is saved when you leave that box, press Enter, or p
 ## Step 4 — Save the photos
 
 Press **Start saving**. The first run takes a while — it fetches everything. Later runs
-take seconds, because it only looks for what is new.
+take seconds, because it only looks for what is new. While it is working the settings above
+are locked and the page says so, and the line under the buttons tells you what it is doing:
+*Looking for Robin Maple's photos*, then *Looked through 40 of 312 updates for Robin
+Maple*, then *Saving 2026-09-18_093214_7f3a9b21.jpg*. You can close the page — the run
+keeps going in the black window, and opening the link again picks the progress back up.
 
 ![A completed run showing the saved, already-had and failed counts, with Stop greyed out beside Start saving now that nothing is running](images/04-done.png)
 
@@ -119,9 +142,32 @@ The tool follows your system appearance, so it looks right in dark mode too:
 
 - **Saved** — new photos copied to your computer.
 - **Already had** — recognised as ones you have. This is why a second run is quick.
-- **Failed** — could not be fetched. Run it again later; it picks up where it stopped.
+- **Couldn't save** — could not be fetched. Press **Start saving** again later; it picks up
+  where it stopped.
 
-Press `Ctrl` + `C` in the terminal when you are done.
+At the end it says *Saved 28 new items.*, or, on a day when there is nothing new, *You are
+up to date — there were no new photos to save.*
+
+### Stopping part-way
+
+You can stop a run whenever you like, and nothing already saved is lost: those photos are
+on your computer, and the tool writes down what it has before it stops, so the next run
+carries on from there instead of starting again.
+
+- **The Stop button**, beside *Start saving*. It is grey until a run is going. Press it and
+  it reads *Stopping…* while the photo being saved is finished — a large video can take a
+  moment — and then the page says *Stopped. 12 item(s) saved so far are kept; run again to
+  carry on where it left off.* Press **Start saving** whenever you want to continue.
+- **`Ctrl` + `C` in the black window** closes the setup assistant. If a run is going it is
+  stopped first, in exactly the way the Stop button does, so the window takes a moment to
+  close.
+- **`Ctrl` + `C` while `npx brightwheel-archive run` is going** (the terminal-only way to
+  save photos, below) prints *Stopping after the current photo…*, finishes that photo, and
+  ends with *Run the same command again to carry on where it left off.*
+
+Press `Ctrl` + `C` a second time and it stops on the spot. The photos you already have are
+safe, but the last few may not have been written down yet, so the next run fetches those
+again and can leave you a second copy of a photo or two, named `…-2.jpg`.
 
 ---
 
@@ -129,6 +175,7 @@ Press `Ctrl` + `C` in the terminal when you are done.
 
 ```
 Brightwheel Photos/
+├── archive.json                                   ← the list of what has been saved
 └── Robin Maple/
     └── 2026-W38/
         ├── README.md                              ← what this week is, in plain English
@@ -141,6 +188,11 @@ Brightwheel Photos/
 
 The `.json` file means the archive still makes sense in twenty years, with or without this
 tool.
+
+`archive.json` is the tool's own list of what it has already saved. It is how the next run
+knows what is new, and it is what lets a stopped run be carried on. Every path in it is
+written with forward slashes on every computer, so the folder still reads correctly if you
+move it between a Mac, a Windows PC and Linux.
 
 ---
 
@@ -155,24 +207,43 @@ crontab -e
 Add this line, save and close. It runs at 7pm daily:
 
 ```
-0 19 * * *  npx brightwheel-archive run
+0 19 * * *  /usr/local/bin/npx brightwheel-archive run
 ```
+
+Use the full path to `npx`, not a bare `npx`: a scheduled job like this one looks for
+programs in only a few places and usually does not find it. Type `which npx` in your
+terminal and paste what it prints — on a Mac with Homebrew it is often
+`/opt/homebrew/bin/npx`.
 
 ### Windows
 
 Open **Task Scheduler** → **Create Basic Task** → Daily → Start a program:
 
-- Program: `npx`
+- Program: `npx.cmd`
 - Arguments: `brightwheel-archive run`
+
+The `.cmd` matters. Task Scheduler starts the program itself rather than going through a
+command prompt, so a bare `npx` sends it looking for `npx.exe`, which does not exist, and
+the task fails at once with *the system cannot find the file specified*. Setting Program to
+`cmd.exe` and Arguments to `/c npx brightwheel-archive run` works just as well.
 
 ### Docker
 
 ```sh
 docker run --rm \
+  --user "$(id -u):$(id -g)" \
   -v ~/.config/brightwheel-archive:/config \
   -v ~/Brightwheel\ Photos:/photos \
-  ghcr.io/OWNER/brightwheel-archive run
+  ghcr.io/OWNER/brightwheel-archive run --dir /photos
 ```
+
+`--dir /photos` is what sends the photos to the folder you mounted; without it they are
+written inside the container and go when it does. `--user` runs the container as you, which
+is what lets it read your session file and write into your folder on Linux; Docker Desktop
+on a Mac or Windows does not need it and is not harmed by it. The `/config` line above is
+the Linux location — on a Mac the session lives in
+`~/Library/Application Support/brightwheel-archive`, and `npx brightwheel-archive where`
+prints the exact folder to mount.
 
 ---
 
@@ -187,8 +258,13 @@ npx brightwheel-archive doctor
 
 | Message | What to do |
 |---|---|
-| *Your Brightwheel session has expired* | Normal — they expire. Run `setup` again and paste a fresh value. |
+| *Your Brightwheel session has expired* | Normal — they expire. Run `setup` again and paste a fresh value. If it happens in the middle of a run, everything saved up to that point is kept and the next run carries on from there. |
 | *That does not look like a Brightwheel session* | You may have copied the **Name** column instead of **Value**. |
+| *Tick at least one child* | Every child is unticked. **Start saving** stays grey until you tick one — the tool will not run with nobody chosen. |
+| *That is a temporary folder, and your computer deletes those automatically* | The folder you typed is one the computer empties by itself, so it is refused rather than losing your photos months from now. Choose somewhere permanent, such as `~/Brightwheel Photos`. |
+| *This folder looks like it is inside Dropbox* (or iCloud Drive, OneDrive, Google Drive) | A warning, not a refusal: the folder is saved and the run will use it. It means a copy of every photo goes to that company as well. Fine if you meant it. |
+| *Could not reach the tool* | The black window it was started from has been closed. Start it again with `npx brightwheel-archive setup` and open the new link. |
+| *Looked through 40 of 312 updates* | Not a problem — this is the progress line. Brightwheel counts updates of every kind, so that total includes check-ins, naps and notes. It is not a number of photos, and most of them are not photos. |
 | *No children found on this account* | Make sure you signed in as the parent account, not a staff one. |
 | *ExifTool is not installed* | Harmless. Dates and names go into the `.json` files instead. Install ExifTool to embed them. |
 | Photos in the wrong week | Please open an issue — include the `.json` file (it has no private data beyond your child's name). |
