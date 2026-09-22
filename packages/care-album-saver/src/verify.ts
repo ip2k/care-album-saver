@@ -261,7 +261,9 @@ export async function verify(
         report.findings.push(
           `CONFIRMED: event_date and created_at differ on ${differing.length} of ${pairs.length} records ` +
             `(largest gap ${biggest} minutes, ${laterUploads} uploaded after the moment recorded). ` +
-            'Upload time is not capture time, which is the whole reason this tool rewrites the date.',
+            'On this account the two differ, so event_date may be a real capture time. That would be ' +
+            'new — on the account checked in September 2026 they were identical on every record. ' +
+            'Please open an issue with this line; it is worth confirming.',
         );
         if (sameDayBreak > 0) {
           report.findings.push(
