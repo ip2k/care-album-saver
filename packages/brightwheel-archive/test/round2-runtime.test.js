@@ -20,6 +20,7 @@ import {
 import { closeMetadata } from '../dist/metadata.js';
 import { placeholderJpeg } from '../dist/mock/fixtures.js';
 import { Manifest } from '../../media-ferry/dist/index.js';
+import { exifToolSkipReason } from '../../../scripts/test-env.js';
 
 /**
  * Stopping a run on purpose, and the three ways a run used to mislead the person watching
@@ -54,12 +55,13 @@ const manifestOf = async (dir) => JSON.parse(await readFile(join(dir, 'archive.j
 /** How many progress events of one phase have arrived so far. */
 const soFar = (progress, phase) => progress.filter((p) => p.phase === phase).length;
 
-let exiftoolMissing = false;
-try {
-  await import('exiftool-vendored');
-} catch (error) {
-  exiftoolMissing = `exiftool-vendored did not load; it is an optional dependency: ${error.message}`;
-}
+/**
+ * False when ExifTool is here, and the reason when it is not. Handed to node:test's `skip`
+ * option below, never checked inside a test body: `if (missing) return t.skip(...)` reports
+ * the test as a PASS, so a machine without the optional dependency printed a green run that
+ * had examined none of the metadata. scripts/test-env.js also decides what CI does with it.
+ */
+const exiftoolMissing = await exifToolSkipReason(() => import('exiftool-vendored'));
 
 // ---------------------------------------------------------------- stopping on purpose
 
@@ -239,8 +241,7 @@ test('recorded paths use forward slashes, and a lookup accepts either slash', as
 
 // ---------------------------------------------------------------- the .xmp sidecar
 
-test('with the .xmp sidecar on, one is written for every file and reported as written', async (t) => {
-  if (exiftoolMissing) return t.skip(exiftoolMissing);
+test('with the .xmp sidecar on, one is written for every file and reported as written', { skip: exiftoolMissing }, async () => {
   const mock = await startMockBrightwheel({ activitiesPerStudent: 4 });
   try {
     const dir = await mkdtemp(join(tmpdir(), 'bw-xmp-'));
@@ -262,8 +263,7 @@ test('with the .xmp sidecar on, one is written for every file and reported as wr
   }
 });
 
-test('an .xmp sidecar that cannot be written is reported as such, and the photo still is embedded', async (t) => {
-  if (exiftoolMissing) return t.skip(exiftoolMissing);
+test('an .xmp sidecar that cannot be written is reported as such, and the photo still is embedded', { skip: exiftoolMissing }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'bw-xmp-fail-'));
   const file = join(dir, 'a.jpg');
   await writeFile(file, placeholderJpeg('act-111-0000'));
@@ -379,12 +379,24 @@ test('a mid-run failure is printed once, not once as progress and again as a cra
   }
 });
 
-test('a run that fails on every photo still prints no credential', async () => {
-  // A signed URL is a bearer credential for that file, and the session is worse. Several
-  // layers keep them out of a terminal — the download error redacts its URL, `Secret`
-  // cannot be printed at all, and the progress printer now scrubs like every other output
-  // path rather than being the one that trusts the layers above it. This pins the property
-  // those layers exist for, so that losing any one of them shows up here.
+test('a run that fails on every photo prints its refusals with the signature already stripped', async () => {
+  // A signed URL is a bearer credential for that file, and the session is worse.
+  //
+  // The title used to say "still prints no credential" and the comment claimed this pinned
+  // the progress printer's scrub(). It did not, and saying so was the problem: in this
+  // scenario the credential never reaches the printer. media-ferry's redactUrl() rewrites
+  // the URL as it builds the DownloadError, so what the CLI is handed is redacted before it
+  // is printed, and removing scrub() from the printer leaves this test green. A test cited
+  // as proof of a layer it does not touch is worse than no test.
+  //
+  // So this now names the layer it really pins: the redaction inside the download error,
+  // checked by its result rather than by the absence of a signature — absence would also
+  // hold if the URL were dropped entirely, or if nothing were printed at all. `Secret`'s
+  // unprintability is pinned in integration.test.js ('a Secret cannot be printed by
+  // accident'), and scrub()'s own pattern table there too ('scrub catches credentials that
+  // leaked into free text'). The printer's scrub() is a backstop for the day some future
+  // error message arrives carrying one; nothing here exercises it, and nothing here says it
+  // does.
   const mock = await startMockBrightwheel({ activitiesPerStudent: 3, mediaUrlExpiresAfterRequests: 0 });
   const archive = await cliArchiveDir();
   const configDir = await signedInConfigDir({ delayMs: 0, archiveDir: archive });
@@ -396,6 +408,14 @@ test('a run that fails on every photo still prints no credential', async () => {
     ).catch((error) => ({ stdout: error.stdout ?? '' }));
 
     assert.match(stdout, /HTTP 403/, 'the refusals were reported');
+    // Every refusal names its file in the form redactUrl() produces: the origin and path
+    // kept, so the parent can see which photo it was, and the whole query gone. Six photos,
+    // six lines; a layer that stopped redacting would print the signature instead.
+    const redacted = stdout.match(/HTTP 403 for \S+/g) ?? [];
+    assert.equal(redacted.length, 6, `expected one line per photo, got:\n${stdout}`);
+    for (const line of redacted) {
+      assert.match(line, /\/media\/act-\d+-\d+\.jpg\?<redacted>$/, line);
+    }
     assert.ok(!/signature=[^&\s]+/.test(stdout), 'a signature must never reach the terminal');
     assert.ok(!stdout.includes(SESSION), 'nor the session');
   } finally {

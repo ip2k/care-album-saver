@@ -1,3 +1,6 @@
+// Imported first, as in every other file that names a config directory: it points this
+// run at a throwaway one even under a bare `node --test` (see scripts/test-env.js).
+import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -155,6 +158,11 @@ test('the file-mode tests skip on Windows with a printed reason, never silently'
   // that is what turns "35 pass" on a Windows runner from a question into an answer.
   const file = fileURLToPath(new URL('./integration.test.js', import.meta.url));
   const configDir = await mkdtemp(join(tmpdir(), 'bw-test-config-child-'));
+  // The child runs the real setup UI, so it gets a throwaway directory and the same guard
+  // the child itself applies — checked here too, because the child's own failure would be
+  // buried in its TAP output rather than reported as this test failing.
+  process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = configDir;
+  assert.equal(assertIsolatedConfigDir(), configDir);
   // The runner marks its own children with NODE_TEST_CONTEXT, and a grandchild that
   // inherits it reports in the runner's internal protocol instead of TAP.
   const { NODE_TEST_CONTEXT: _, ...env } = process.env;
