@@ -22,6 +22,10 @@
  *  - Light and dark are both first-class, via prefers-color-scheme
  *    (/design/human-interface-guidelines/dark-mode).
  *  - Motion respects prefers-reduced-motion (/design/human-interface-guidelines/motion).
+ *  - What is on screen is what runs. Every setting saves itself the moment it changes, and
+ *    "Start saving" sends the whole form again before it starts. A tick that was visible
+ *    but not yet stored used to be silently ignored, because the run reads settings from
+ *    disk (/design/human-interface-guidelines/feedback).
  */
 export const PAGE = String.raw`<!doctype html>
 <html lang="en">
@@ -193,14 +197,33 @@ export const PAGE = String.raw`<!doctype html>
   .msg.err { background: var(--danger-tint); color: var(--danger); border-color: var(--danger); }
   .msg.warn { background: var(--warn-tint); color: var(--warn); border-color: var(--warn); }
   .msg b { font-weight: 650; }
+  /* The quiet confirmation for a setting that saved itself. A full banner for every tick
+     would shout; this is a footnote. */
+  .saved { display: inline-block; margin-top: var(--s3); font-size: .875rem; color: var(--ok); font-weight: 550; }
 
-  ul.kids { display: flex; flex-wrap: wrap; gap: var(--s2); margin: 0 0 var(--s4); padding: 0; list-style: none; }
+  fieldset.kids-set { border: 0; padding: 0; margin: 0 0 var(--s4); min-width: 0; }
+  fieldset.kids-set legend { font-size: .9375rem; font-weight: 550; padding: 0; margin-bottom: var(--s2); }
+  ul.kids { display: flex; flex-wrap: wrap; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+  .kids-empty { color: var(--text-muted); font-size: .9375rem; }
+  /* Each child is a pill that is also its checkbox's label, so the whole pill is the
+     target (44px tall, per the HIG) rather than only the 24px box inside it. */
   .kid {
-    background: var(--accent-tint); color: var(--accent-ink);
-    border: 1px solid var(--border);
-    padding: var(--s2) var(--s4); border-radius: 999px;
-    font-size: .9375rem; font-weight: 550;
+    display: inline-flex; align-items: center; gap: var(--s2);
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border-strong);
+    padding: var(--s2) var(--s4) var(--s2) var(--s3); border-radius: 999px;
+    font-size: .9375rem; font-weight: 550; min-height: 2.75rem;
+    cursor: pointer;
   }
+  .kid:has(input:checked) { background: var(--accent-tint); color: var(--accent-ink); border-color: var(--accent); }
+  .kid:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+  .kid input[type=checkbox] {
+    margin: 0; flex: 0 0 auto;
+    width: 1.5rem; height: 1.5rem;   /* 24px — WCAG 2.5.8 minimum target size */
+    accent-color: var(--accent);
+  }
+  .kids-status { font-size: .875rem; color: var(--text-muted); margin: var(--s2) 0 0; min-height: 1.4em; }
+  .kids-status.err { color: var(--danger); font-weight: 550; }
 
   .opt { display: flex; align-items: flex-start; gap: var(--s3); padding: var(--s3) 0; border-top: 1px solid var(--border); }
   .opt:first-of-type { border-top: 0; }
@@ -296,10 +319,14 @@ export const PAGE = String.raw`<!doctype html>
           <span class="num" aria-hidden="true" id="num-2">2</span>
           <h2 id="h-children">Children on this account</h2>
         </div>
-        <p class="hint">Brightwheel only ever shows this tool the children on your own account.</p>
+        <p class="hint">Tick the children whose photos you want. Brightwheel only ever shows this tool the children on your own account. Each setting here is saved the moment you change it.</p>
         <div class="body">
           <p class="sr-only" id="children-state">Step 2 of 3. Waiting for step 1.</p>
-          <ul class="kids" id="kids" aria-live="polite"><li style="color:var(--text-muted);font-size:.9375rem;list-style:none">Connect first to see your children here.</li></ul>
+          <fieldset class="kids-set">
+            <legend>Save photos for</legend>
+            <ul class="kids" id="kids"><li class="kids-empty">Connect first to see your children here.</li></ul>
+            <p class="kids-status" id="kids-status" role="status" aria-live="polite"></p>
+          </fieldset>
 
           <div class="opt">
             <input type="checkbox" id="tagChildName" checked>
@@ -333,8 +360,9 @@ export const PAGE = String.raw`<!doctype html>
               </div>
               <div class="field">
                 <label class="field-label" for="archiveDir">Where to save the photos</label>
-                <input type="text" id="archiveDir" spellcheck="false" aria-describedby="dir-warn">
+                <input type="text" id="archiveDir" spellcheck="false" aria-describedby="dir-warn config-msg">
                 <p class="why" id="dir-warn" style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Avoid iCloud Drive, Dropbox or OneDrive folders unless you want copies on their servers.</p>
+                <button class="secondary" id="btn-dir" type="button" style="margin-top:var(--s3)">Use this folder</button>
               </div>
               <div class="opt">
                 <input type="checkbox" id="incremental" checked>
@@ -348,10 +376,9 @@ export const PAGE = String.raw`<!doctype html>
                   <span class="why">A small .xmp file that photo-editing programs such as Lightroom and darktable can read. Leave this off unless you use one of them.</span>
                 </label>
               </div>
-              <button class="secondary" id="btn-save-config" type="button">Save settings</button>
-              <div id="config-msg" role="status" aria-live="polite"></div>
             </div>
           </details>
+          <div id="config-msg" role="status" aria-live="polite"></div>
         </div>
       </section>
     </li>
@@ -435,6 +462,118 @@ function setStep(card, numEl, srEl, state, srText) {
 
 let lastAnnounced = '';
 let state = null;
+let sessionOk = false;
+let isRunning = false;
+/** The children on the account, as last read. Empty until step 1 is done. */
+let kids = [];
+/** The folder as last accepted by the tool, so re-saving the same value costs nothing. */
+let savedDir = '';
+
+const selectedIds = () =>
+  [...document.querySelectorAll('#kids input[type=checkbox]')].filter((b) => b.checked).map((b) => b.dataset.id);
+
+/** Everything the person can see in step 2, as one config patch. */
+function formState() {
+  const patch = {
+    tagChildName: $('tagChildName').checked, tagNote: $('tagNote').checked,
+    stripLocation: $('stripLocation').checked, incremental: $('incremental').checked,
+    writeSidecar: $('writeSidecar').checked, organiseBy: $('organiseBy').value,
+    archiveDir: $('archiveDir').value,
+  };
+  if (kids.length > 0) patch.includeStudents = selectedIds();
+  return patch;
+}
+
+/**
+ * Saves go one at a time, in the order they happened. Two quick ticks otherwise race, and
+ * the one that lands second wins even if it was made first.
+ */
+let saves = Promise.resolve();
+function persist(patch, opts = {}) {
+  const run = saves.then(() => save(patch, opts));
+  saves = run.catch(() => {});
+  return run;
+}
+
+async function save(patch, opts) {
+  if (Object.keys(patch).length === 1 && patch.archiveDir === savedDir) {
+    // Leaving the field and pressing the button both save; the second is a no-op.
+    savedNote();
+    return true;
+  }
+  let d;
+  try {
+    const r = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
+    d = await r.json();
+  } catch {
+    d = { ok: false, error: 'Could not save that. Check the tool is still running in the window you started it from.' };
+  }
+  if (!d.ok) {
+    showSaveError(d, opts);
+    return false;
+  }
+  $('archiveDir').setAttribute('aria-invalid', 'false');
+  $('archiveDir').value = d.config.archiveDir;
+  savedDir = d.config.archiveDir;
+  $('p-dir').textContent = d.config.archiveDir;
+  if (d.warning) show($('config-msg'), 'warn', esc(d.warning));
+  else savedNote();
+  return true;
+}
+
+function savedNote() {
+  const el = $('config-msg');
+  // Emptied first, so the second "Saved" is announced as well as the first. The brief
+  // blink is also the visual cue that something new was just stored.
+  el.textContent = '';
+  // Not over the "locked" note: Start saving persists the form and then the run begins
+  // inside those 50ms.
+  setTimeout(() => { if (!isRunning) el.innerHTML = '<span class="saved">Saved</span>'; }, 50);
+}
+
+function showSaveError(d, opts) {
+  const text = d.error || 'Could not save those settings.';
+  if (d.field === 'includeStudents') {
+    const st = $('kids-status');
+    st.classList.add('err');
+    st.textContent = text;
+    updateRunReady();
+    return;
+  }
+  show($('config-msg'), 'err', esc(text));
+  if (d.field === 'archiveDir') {
+    $('archiveDir').setAttribute('aria-invalid', 'true');
+    // Only move focus when the person pressed something; stealing it as they tab away
+    // from the field would trap them in it.
+    if (opts.focus) {
+      document.querySelector('details').open = true;
+      $('archiveDir').focus();
+    }
+  }
+}
+
+/**
+ * Whether "Start saving" may be pressed, and why not when it may not. The reason is put
+ * where a screen reader will find it, next to the button, not only in a colour change.
+ */
+function updateRunReady() {
+  const none = kids.length > 0 && selectedIds().length === 0;
+  $('btn-run').disabled = !sessionOk || isRunning || none;
+  if (isRunning) return;
+  if (!sessionOk) $('run-state').textContent = 'Step 3 of 3. Waiting for step 1.';
+  else if (none) $('run-state').textContent = 'Step 3 of 3. Cannot start until at least one child is ticked in step 2.';
+  else $('run-state').textContent = 'Step 3 of 3. Ready to start.';
+}
+
+/** Settings cannot change under a run that has already read them, so say so. */
+function lockSettings(locked) {
+  for (const el of document.querySelectorAll('#card-children input, #card-children select, #card-children button')) {
+    el.disabled = locked;
+  }
+  const msg = $('config-msg');
+  if (locked) msg.innerHTML = '<span class="saved" data-note="lock" style="color:var(--text-muted)">Settings are locked while saving is in progress.</span>';
+  else if (msg.firstElementChild?.dataset.note === 'lock') msg.textContent = '';
+}
 
 async function refresh() {
   const r = await api('/api/state');
@@ -443,16 +582,18 @@ async function refresh() {
   for (const k of ['tagChildName','tagNote','stripLocation','incremental','writeSidecar']) $(k).checked = c[k];
   $('organiseBy').value = c.organiseBy;
   $('archiveDir').value = c.archiveDir;
+  savedDir = c.archiveDir;
   $('p-dir').textContent = c.archiveDir;
 
   if (state.hasSession) {
+    sessionOk = true;
     setStep($('card-connect'), $('num-1'), $('connect-state'), 'complete',
       'Step 1 of 3, complete. Connected' + (state.email ? ' as ' + state.email : '') + '.');
     show($('connect-msg'), 'ok', 'Connected' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') + '.');
-    $('btn-run').disabled = false;
     setStep($('card-run'), $('num-3'), $('run-state'), 'active', 'Step 3 of 3. Ready to start.');
-    loadChildren();
+    await loadChildren();
   }
+  updateRunReady();
   paint(state.progress, state.running, state.lastResult);
   // A run started before this page was opened (or before a reload) is still going in the
   // terminal. Without restarting the poll here the bar sits motionless, and HIG's
@@ -465,9 +606,40 @@ async function loadChildren() {
   const r = await api('/api/children');
   const d = await r.json();
   if (!d.ok) return;
-  $('kids').innerHTML = d.children.map((k) => '<li class="kid">' + esc(k.fullName) + '</li>').join('');
+  kids = d.children;
+  const included = new Set(d.included);
+  // The element id is positional; the Brightwheel id travels in a data attribute, where
+  // any character is safe once escaped.
+  $('kids').innerHTML = kids.map((k, i) =>
+    '<li><label class="kid" for="kid-' + i + '">' +
+    '<input type="checkbox" id="kid-' + i + '" data-id="' + esc(k.id) + '"' + (included.has(k.id) ? ' checked' : '') + '>' +
+    esc(k.fullName) + '</label></li>').join('');
+  for (const box of document.querySelectorAll('#kids input')) box.addEventListener('change', onChildToggled);
+  describeSelection();
   setStep($('card-children'), $('num-2'), $('children-state'), 'complete',
-    'Step 2 of 3. Found ' + d.children.length + ' child' + (d.children.length === 1 ? '' : 'ren') + '.');
+    'Step 2 of 3. Found ' + kids.length + ' child' + (kids.length === 1 ? '' : 'ren') + '. Tick the ones to save photos for.');
+}
+
+function onChildToggled() {
+  describeSelection();
+  updateRunReady();
+  // Sent even when nothing is ticked: the tool refuses that, and its reason is shown.
+  persist({ includeStudents: selectedIds() });
+}
+
+/** Plain words for who is in and who is out, spoken as well as shown. */
+function describeSelection() {
+  const st = $('kids-status');
+  st.classList.remove('err');
+  const chosen = selectedIds();
+  if (chosen.length === 0) { st.textContent = ''; return; }
+  const names = kids.filter((k) => chosen.includes(k.id)).map((k) => k.fullName);
+  const list = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  if (chosen.length === kids.length) {
+    st.textContent = 'Photos will be saved for ' + (kids.length === 1 ? names[0] : kids.length === 2 ? 'both children' : 'all ' + kids.length + ' children') + '.';
+  } else {
+    st.textContent = 'Photos will be saved for ' + list + ' only.';
+  }
 }
 
 $('btn-connect').onclick = async () => {
@@ -495,31 +667,34 @@ $('btn-connect').onclick = async () => {
   btn.disabled = false; btn.textContent = 'Connect';
 };
 
-$('btn-save-config').onclick = async () => {
-  const patch = {
-    tagChildName: $('tagChildName').checked, tagNote: $('tagNote').checked,
-    stripLocation: $('stripLocation').checked, incremental: $('incremental').checked,
-    writeSidecar: $('writeSidecar').checked, organiseBy: $('organiseBy').value,
-    archiveDir: $('archiveDir').value,
-  };
-  const r = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
-  const d = await r.json();
-  if (!d.ok) {
-    show($('config-msg'), 'err', esc(d.error || 'Could not save those settings.'));
-    $('archiveDir').setAttribute('aria-invalid', 'true');
-    $('archiveDir').focus();
-    return;
-  }
-  $('archiveDir').setAttribute('aria-invalid', 'false');
-  show($('config-msg'), d.warning ? 'warn' : 'ok', d.warning ? esc(d.warning) : 'Settings saved.');
-  $('p-dir').textContent = d.config.archiveDir;
-  $('archiveDir').value = d.config.archiveDir;
-};
+// Ticks and the layout menu save themselves. The folder is typed, so it saves when the
+// person leaves the field or presses Enter, never per keystroke: half a path is always
+// an invalid folder, and the error would flash on every letter.
+for (const k of ['tagChildName', 'tagNote', 'stripLocation', 'incremental', 'writeSidecar']) {
+  $(k).addEventListener('change', () => persist({ [k]: $(k).checked }));
+}
+$('organiseBy').addEventListener('change', () => persist({ organiseBy: $('organiseBy').value }));
+$('archiveDir').addEventListener('change', () => persist({ archiveDir: $('archiveDir').value }));
+$('btn-dir').onclick = () => persist({ archiveDir: $('archiveDir').value }, { focus: true });
 
 $('btn-run').onclick = async () => {
   $('btn-run').disabled = true;
   $('run-result').innerHTML = '';
-  await api('/api/sync', { method: 'POST', body: '{}' });
+  // What is on screen is what runs. The whole form is sent again here, so a change that
+  // was refused earlier, or is still on its way, cannot be left behind by a run that
+  // reads its settings from disk.
+  if (!(await persist(formState(), { focus: true }))) {
+    show($('run-result'), 'err', 'Not started. Fix the setting marked in step 2, then press Start saving again.');
+    updateRunReady();
+    return;
+  }
+  const r = await api('/api/sync', { method: 'POST', body: '{}' });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    show($('run-result'), 'err', esc(d.error || 'Could not start.'));
+    updateRunReady();
+    return;
+  }
   poll();
 };
 
@@ -552,6 +727,13 @@ function paint(p, running, result) {
     $('run-live').textContent = p.message;
   }
 
+  // Before the phase text below, so "finished" is not overwritten by "ready to start".
+  if (Boolean(running) !== isRunning) {
+    isRunning = Boolean(running);
+    lockSettings(isRunning);
+  }
+  updateRunReady();
+
   if (p.phase === 'done') {
     setStep($('card-run'), $('num-3'), $('run-state'), 'complete', 'Step 3 of 3, finished.');
     bar.dataset.indeterminate = 'false';
@@ -570,7 +752,6 @@ function paint(p, running, result) {
     show($('run-result'), 'err', esc(p.message) + ' <br><br>If your session has expired, paste a fresh value in step 1 above.');
     $('card-run').dataset.state = 'active';
   }
-  $('btn-run').disabled = Boolean(running);
 }
 
 async function poll() {
