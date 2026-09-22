@@ -1,11 +1,12 @@
 import '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  applyMetadata,
   BrightwheelClient,
   buildTags,
   DEFAULT_CONFIG,
@@ -14,7 +15,9 @@ import {
   startWebUi,
   sync,
 } from '../dist/index.js';
-import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
+import { closeMetadata } from '../dist/metadata.js';
+import { placeholderJpeg, placeholderMp4 } from '../dist/mock/fixtures.js';
+import { assertIsolatedConfigDir, exifToolSkipReason } from '../../../scripts/test-env.js';
 
 /**
  * The three fixes an independent audit of the merged lanes asked for that nothing was
@@ -35,12 +38,12 @@ const clientFor = (mock) =>
 const configFor = (dir, extra = {}) =>
   ({ ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0, includeStudents: [ROBIN], ...extra });
 
-let exiftoolMissing = false;
-try {
-  await import('exiftool-vendored');
-} catch {
-  exiftoolMissing = true;
-}
+/**
+ * False when ExifTool is here, the reason to skip when it is not. scripts/test-env.js holds
+ * the policy, including why a CI runner that has lost the optional dependency fails rather
+ * than skipping: a skipped metadata test reads as a pass and proves nothing.
+ */
+const exiftoolMissing = await exifToolSkipReason(() => import('exiftool-vendored'));
 
 // ---------------------------------------------------------------- stopping, mid-listing
 
@@ -93,7 +96,7 @@ test('a stop is noticed on a page carrying no photos, not only between photos', 
 
 // ---------------------------------------------------------------- the sidecar nobody saw
 
-test('a .xmp sidecar that cannot be written is reported by the run, not swallowed', { skip: exiftoolMissing && 'exiftool-vendored did not load' }, async () => {
+test('a .xmp sidecar that cannot be written is reported by the run, not swallowed', { skip: exiftoolMissing }, async () => {
   // applyMetadata learned to report a failed sidecar honestly, but sync only passed on a
   // failure to embed, so with the sidecar option turned on the failure reached nobody. The
   // person had ticked a box and been told nothing when it did not happen.
@@ -200,15 +203,15 @@ test('a stop that arrives in the instant a run is starting still stops it', asyn
 
 // ---------------------------------------------------------------- what "no names" means
 
-test('turning the names off leaves no name of any kind inside the file', async () => {
-  // The switch reads, to a parent, as "do not make this photo self-identifying". It used
-  // to govern only the child's name, while the nursery's name and the name of whoever
-  // posted the photo went in regardless — so a file shared with the switch off still said
-  // which nursery the child attends. Both now follow the same switch, and so does the
-  // teacher's note, which was the last thing still going in and is the one that names all
-  // three at once.
-  const student = { id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook Early Learning' };
-  const activity = {
+/**
+ * The switch reads, to a parent, as "do not make this photo self-identifying". It used to
+ * govern only the child's name, while the nursery's name and the name of whoever posted the
+ * photo went in regardless — so a file shared with the switch off still said which nursery
+ * the child attends. All three now follow the same switch.
+ */
+const NAMED = {
+  student: { id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook Early Learning' },
+  activity: {
     id: 'act-1',
     studentId: 'stu-x',
     capturedAt: new Date('2026-09-18T09:15:00'),
@@ -216,39 +219,78 @@ test('turning the names off leaves no name of any kind inside the file', async (
     url: 'https://example.invalid/a.jpg',
     kind: 'image',
     author: 'Ms. Alvarez',
-  };
+  },
+  /**
+   * The three names the switch governs, and the note — which has a switch of its own but
+   * is governed by this one as well, because a note routinely names the child, the room
+   * and the teacher in one sentence.
+   */
+  names: ['Robin', 'Sunnybrook', 'Alvarez'],
+  note: 'Water play',
+};
 
+const namedInput = (kind, tagChildName, filePath = '/dev/null') => ({
+  filePath,
+  activity: { ...NAMED.activity, kind },
+  student: NAMED.student,
+  tagChildName,
+  tagNote: true,
+  stripLocation: true,
+  writeSidecar: false,
+});
+
+test('turning the names off keeps all three out of the tags that would be written', () => {
   for (const kind of ['image', 'video']) {
-    const off = buildTags({
-      filePath: '/dev/null',
-      activity: { ...activity, kind },
-      student,
-      tagChildName: false,
-      tagNote: true,
-      stripLocation: true,
-      writeSidecar: false,
-    });
-    const written = JSON.stringify(off);
-    assert.ok(!written.includes('Robin'), `${kind}: the child's name must not be written`);
-    assert.ok(!written.includes('Sunnybrook'), `${kind}: nor the nursery's`);
-    assert.ok(!written.includes('Alvarez'), `${kind}: nor whoever posted it`);
-    // Nor the note. "Water play in the garden" is a tame example; a real one is "Robin fell
-    // asleep mid-song at circle time", which names the child, the room and — with the
-    // teacher's name beside it — a third party. While it was written under its own switch,
-    // "nothing inside the file says who or where" was false in the default configuration,
-    // because the note switch starts on. It is still kept in full in the .json sidecar.
-    assert.ok(!written.includes('Water play'), `${kind}: nor the teacher's note`);
+    const off = JSON.stringify(buildTags(namedInput(kind, false)));
+    for (const name of NAMED.names) assert.ok(!off.includes(name), `${kind}: ${name} must not be written`);
+    assert.ok(!off.includes(NAMED.note), `${kind}: nor the note, which names all three at once`);
 
-    const on = JSON.stringify(buildTags({
-      filePath: '/dev/null',
-      activity: { ...activity, kind },
-      student,
-      tagChildName: true,
-      tagNote: true,
-      stripLocation: true,
-      writeSidecar: false,
-    }));
-    assert.ok(on.includes('Robin') && on.includes('Sunnybrook') && on.includes('Alvarez'),
-      `${kind}: and all three are written when the switch is on`);
+    const on = JSON.stringify(buildTags(namedInput(kind, true)));
+    for (const name of NAMED.names) assert.ok(on.includes(name), `${kind}: ${name} belongs there with the switch on`);
+    assert.ok(on.includes(NAMED.note), `${kind}: and so does the note, with both switches on`);
+  }
+});
+
+test('turning the names off leaves no name of any kind inside the file', { skip: exiftoolMissing }, async () => {
+  // The test above reads the tag object buildTags hands back, which is a plan and not a
+  // file. This one is the claim in the title: a real JPEG and a real MP4 are written by the
+  // same code a run uses, and the bytes on disk are searched for each name. A tag table that
+  // omitted a name while ExifTool wrote it anyway — from a template, a duplicate group, an
+  // MWG fan-out — would pass the first test and fail this one.
+  const { ExifTool } = await import('exiftool-vendored');
+  const reader = new ExifTool();
+  const dir = await mkdtemp(join(tmpdir(), 'bw-names-'));
+  try {
+    for (const kind of ['image', 'video']) {
+      const id = kind === 'video' ? 'act-111-0005' : 'act-111-0000';
+      for (const tagChildName of [false, true]) {
+        const file = join(dir, `${kind}-${tagChildName}.${kind === 'video' ? 'mp4' : 'jpg'}`);
+        await writeFile(file, kind === 'video' ? placeholderMp4(id) : placeholderJpeg(id));
+        const outcome = await applyMetadata(namedInput(kind, tagChildName, file));
+        assert.equal(outcome.embedded, true, `${kind}: ${outcome.reason ?? 'nothing was embedded'}`);
+
+        const bytes = await readFile(file);
+        // Both encodings a metadata block may use. A name hidden as UTF-16 is still a name.
+        const inFile = (text) =>
+          bytes.includes(Buffer.from(text, 'utf8')) || bytes.includes(Buffer.from(text, 'utf16le'));
+        // And what a gallery reads, which is not always what a byte search finds.
+        const tags = JSON.stringify(await reader.readRaw(file, { readArgs: ['-G1', '-a'] }));
+
+        for (const name of NAMED.names) {
+          assert.equal(inFile(name), tagChildName, `${kind}, switch ${tagChildName}: "${name}" in the bytes`);
+          assert.equal(tags.includes(name), tagChildName, `${kind}, switch ${tagChildName}: "${name}" in the tags`);
+        }
+        // The note follows the names switch as well: it is the field most likely to name
+        // the child, the room and the teacher in one sentence.
+        assert.equal(inFile(NAMED.note), tagChildName, `${kind}, switch ${tagChildName}: the note in the bytes`);
+        // Dates go in whatever the switch says, which is also what shows the write happened
+        // at all rather than the file being left exactly as the mock served it.
+        assert.ok(tags.includes('2026'), `${kind}: the capture date is written either way`);
+      }
+    }
+  } finally {
+    await reader.end();
+    await closeMetadata();
+    await rm(dir, { recursive: true, force: true });
   }
 });
