@@ -7,7 +7,7 @@ import { inspect } from 'node:util';
 import { request as httpRequest } from 'node:http';
 import {
   BrightwheelClient, startMockBrightwheel, sync, Secret, scrub, scrubDeep,
-  normaliseCookieInput, DEFAULT_CONFIG, writeSecureFile, startWebUi, checkArchiveDir,
+  normaliseCookieInput, DEFAULT_CONFIG, writeSecureFile, startWebUi, checkArchiveDir, configDir,
 } from '../dist/index.js';
 
 let mock;
@@ -454,4 +454,16 @@ test('the web config endpoint refuses a temporary destination', async () => {
   } finally {
     await ui.close();
   }
+});
+
+// ---------------------------------------------------------------- test isolation
+
+test('the test suite never touches the real config directory', () => {
+  // scripts/test-env.js is preloaded by `pnpm test`. If it is missing, every test that
+  // starts the setup UI writes the mock session over the developer's real one.
+  const dir = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
+  assert.ok(dir, 'BRIGHTWHEEL_ARCHIVE_CONFIG_DIR must be set for the whole test run');
+  assert.ok(!dir.startsWith(join(homedir(), 'Library')), 'must not be under ~/Library');
+  assert.ok(!dir.startsWith(join(homedir(), '.config')), 'must not be under ~/.config');
+  assert.equal(configDir(), dir);
 });
