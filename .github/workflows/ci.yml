@@ -1,0 +1,71 @@
+name: ci
+
+# Runs on every push to main and on every pull request, including from forks — the same
+# trigger as security.yml, for the same reason: a change is shown working before it is
+# merged, not after a parent installs it. The matrix is the only place a Windows path or
+# a Node 20 gap is ever exercised; no developer machine on this project is Windows and
+# none runs Node 20.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One red cell must not cancel the others: "fails only on Windows with Node 20" is
+      # the whole diagnosis, and fail-fast would hide it.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22, 24, 26]
+    steps:
+      - uses: actions/checkout@v5
+      # pnpm comes from its own action rather than `corepack enable`: Node 25 stopped
+      # bundling corepack, so on the 26 cells that step would find nothing to enable.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - name: The CLI entry point starts on this platform
+        # `where` reads two paths and prints them; no network, nothing written. It proves
+        # the shebang-headed dist/cli.js loads under this Node and OS and that the config
+        # directory resolves per platform — APPDATA on Windows, not a POSIX guess.
+        run: node packages/brightwheel-archive/dist/cli.js where
+        env:
+          BRIGHTWHEEL_ARCHIVE_CONFIG_DIR: ${{ runner.temp }}/bw-config
+
+  screenshots:
+    name: guide screenshots still capture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # The only network use here is fetching Chromium. The script itself drives the
+      # built-in mock, so a captured image can only ever show Robin and Sam Maple.
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/screenshots.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guide-screenshots
+          path: docs/images/*.png
+          retention-days: 7

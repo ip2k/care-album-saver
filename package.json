@@ -7,8 +7,8 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "test": "node --test packages/*/test/*.test.js",
-    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo"
+    "test": "node --test --import ./scripts/test-env.js packages/brightwheel-archive/test packages/media-ferry/test",
+    "clean": "tsc --build --clean"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

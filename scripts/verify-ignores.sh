@@ -64,8 +64,29 @@ must_ignore "$TMP/clip.mov"                      "video"
 must_ignore "Brightwheel Photos/a.jpg"           "default archive folder"
 
 echo
+echo "Everything else an archive run writes must be ignored:"
+# The photos are only half of what a run leaves on disk. These files name the child in
+# plain text, and a parent who archives into a folder inside their clone of this repo is
+# one `git add -A` away from publishing them.
+must_ignore "$TMP/Robin-Maple/2026-W38/2026-09-18_1530_ab12cd34.jpg"      "archived photo"
+must_ignore "$TMP/Robin-Maple/2026-W38/2026-09-18_1530_ab12cd34.jpg.json" "sidecar naming the child"
+must_ignore "$TMP/Robin-Maple/2026-W38/2026-09-18_1530_ab12cd34.jpg.xmp"  "xmp sidecar"
+must_ignore "$TMP/Robin-Maple/2026-W38/2026-09-18_1530_ab12cd34.mp4.json" "video sidecar"
+must_ignore "$TMP/Robin-Maple/2026-W38/README.md"                        "week README naming the child"
+must_ignore "$TMP/2026-W01/README.md"                                    "week README, week-only layout"
+must_ignore "$TMP/archive.json"                                          "manifest naming every child and note"
+
+echo
 echo "Documentation screenshots must still be committable:"
 must_track "docs/images/01-connect.png"          "synthetic mock screenshot"
+
+echo
+echo "The project's own files must still be committable:"
+# The rules above match a directory shape and media sidecar suffixes precisely so that they
+# cannot swallow the repository's own documentation. Proving it beats believing it.
+must_track "README.md"                           "the project's own README"
+must_track "docs/GUIDE.md"                       "the guide"
+must_track "package.json"                        "a project manifest that is not archive.json"
 
 rm -rf "$TMP"
 rmdir "Brightwheel Photos" 2>/dev/null || true

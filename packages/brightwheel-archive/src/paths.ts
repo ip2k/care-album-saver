@@ -38,7 +38,13 @@ export const sessionPath = (): string => join(configDir(), 'session.json');
 
 /** Default place to put the photos, if the user does not choose one. */
 export function defaultArchiveDir(): string {
-  return join(homedir(), 'Brightwheel Photos');
+  // The override exists for the same reason BRIGHTWHEEL_ARCHIVE_CONFIG_DIR does, and it was
+  // added for the same reason: isolating the config directory was not enough. A test or an
+  // ad-hoc script that builds a config from DEFAULT_CONFIG without naming a folder archives
+  // into the real one — which put mock photographs in a developer's home directory three
+  // times on 2026-09-22, each time from code that believed it was isolated. The test run
+  // sets this (see scripts/test-env.js); nothing in the product does.
+  return process.env.BRIGHTWHEEL_ARCHIVE_DIR || join(homedir(), 'Brightwheel Photos');
 }
 
 /**

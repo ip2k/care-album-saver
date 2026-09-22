@@ -9,7 +9,7 @@
  *   node scripts/screenshots.js
  */
 import { chromium } from 'playwright';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,12 +21,39 @@ const SESSION = 'test-session-value';
 const VIEWPORT = { width: 1340, height: 940 };
 
 /**
+ * Where the run's photos go. NOT a temporary directory: the tool refuses those, and when
+ * it did, the run fell back to the stored default — the real ~/Brightwheel Photos on the
+ * machine generating the docs. This folder is inside node_modules, which is gitignored
+ * and must exist for the script to run at all, and it is deleted at the end.
+ */
+const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/brightwheel-archive-screenshots', import.meta.url));
+
+/**
+ * The path shown in the pictures. The real one contains the developer's username, which
+ * has no business in a public image; the mock's parent is Alex Maple, so this is theirs.
+ * Only the two places that display the path are touched, and only just before a shot.
+ */
+const SHOWN_PATH = '/Users/alex/Brightwheel Photos';
+async function showPath(page, value) {
+  await page.evaluate((v) => {
+    document.querySelector('#archiveDir').value = v;
+    document.querySelector('#p-dir').textContent = v;
+  }, value);
+}
+
+/**
  * Draw callouts into the page's left and right margins and point an arrow at the target.
  *
  * The UI column is 760px wide inside a 1340px viewport, which leaves ~290px of clear
  * space either side. Putting every label there means an annotation can never cover the
  * thing it is describing, and labels cannot collide with each other because each is given
  * its own vertical band.
+ *
+ * A label is set against the edge of the CARD, not of the element it points at. Measuring
+ * from the element put the label wherever that element's own inset happened to fall, and
+ * a control sitting near the card's padding — the paste box, the first tick — pushed its
+ * label a few pixels over the card's border. Going by the card also lines the labels up
+ * with each other, which is what makes the margin read as a margin.
  */
 async function annotate(page, notes) {
   await page.evaluate((items) => {
@@ -39,7 +66,13 @@ async function annotate(page, notes) {
 
     const svgNS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNS, 'svg');
-    Object.assign(svg.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' });
+    // Sized to the document, not the viewport: with 100% the arrows for anything below
+    // the first screen were clipped, so no scrolled screenshot ever showed one.
+    Object.assign(svg.style, {
+      position: 'absolute', left: '0', top: '0',
+      width: `${document.documentElement.scrollWidth}px`,
+      height: `${document.documentElement.scrollHeight}px`,
+    });
     svg.setAttribute('width', String(document.documentElement.scrollWidth));
     svg.setAttribute('height', String(document.documentElement.scrollHeight));
     const defs = document.createElementNS(svgNS, 'defs');
@@ -56,6 +89,11 @@ async function annotate(page, notes) {
       const top = r.top + window.scrollY;
       const onRight = item.side !== 'left';
 
+      // The card the element lives in: the label is set against its edge, clear of it.
+      const cr = (el.closest('.card, .privacy') ?? el).getBoundingClientRect();
+      const GAP = 24;
+      const bx = onRight ? cr.right + GAP : cr.left - GAP;
+
       // Anchor on the element edge nearest the margin we are writing into.
       const ax = onRight ? r.right + 6 : r.left - 6;
       const ay = top + Math.min(r.height / 2, 28);
@@ -65,10 +103,10 @@ async function annotate(page, notes) {
       Object.assign(box.style, {
         position: 'absolute',
         width: '236px',
-        top: `${(item.labelTop ?? ay) - 20}px`,
+        top: `${ay + (item.offset ?? 0) - 20}px`,
         [onRight ? 'left' : 'right']: onRight
-          ? `${r.right + 64}px`
-          : `${document.documentElement.scrollWidth - r.left + 64}px`,
+          ? `${bx}px`
+          : `${document.documentElement.scrollWidth - bx}px`,
         background: '#e0472c',
         color: '#fff',
         font: '600 13.5px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -81,11 +119,10 @@ async function annotate(page, notes) {
       // Arrow from the callout's inner edge to the element edge, drawn after layout
       // so the real label height is known.
       requestAnimationFrame(() => {});
-      const bx = onRight ? r.right + 64 : document.documentElement.scrollWidth - (document.documentElement.scrollWidth - r.left + 64);
       const line = document.createElementNS(svgNS, 'path');
-      const startX = onRight ? bx - 6 : r.left + 6 + 0;
-      const startY = (item.labelTop ?? ay) + 2;
-      const midX = onRight ? (ax + startX) / 2 : (ax + startX) / 2;
+      const startX = onRight ? bx - 6 : bx + 6;
+      const startY = ay + (item.offset ?? 0) + 2;
+      const midX = (ax + startX) / 2;
       line.setAttribute(
         'd',
         `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${ay}, ${ax} ${ay}`,
@@ -113,77 +150,167 @@ async function annotate(page, notes) {
     document.body.appendChild(layer);
   }, notes);
   await page.waitForTimeout(160);
+
+  // Labels belong in the margins; prove it rather than assume it. A callout that grows by
+  // a line, or a card that gets wider, otherwise creeps over the very thing it describes,
+  // and nobody notices until the picture is in the guide. The arrows are exempt: one
+  // crossing a card's edge to touch its target is the point of it.
+  const collisions = await page.evaluate(() => {
+    const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const short = (n) => JSON.stringify(n.textContent.slice(0, 34) + '…');
+    const labels = [...document.querySelectorAll('.__ann > div')].filter((n) => n.textContent);
+    // The drawn content, not `.wrap`: the column's own padding is clear space a label may
+    // legitimately sit in, and judging by it would reject layouts that are perfectly fine.
+    const content = [...document.querySelectorAll('.card, .privacy, h1, .lede')].map((n) => n.getBoundingClientRect());
+    const bad = [];
+    for (const [i, label] of labels.entries()) {
+      const r = label.getBoundingClientRect();
+      if (content.some((c) => overlaps(r, c))) bad.push(`${short(label)} reaches into the page column`);
+      for (const other of labels.slice(i + 1)) {
+        if (overlaps(r, other.getBoundingClientRect())) bad.push(`${short(label)} overlaps ${short(other)}`);
+      }
+    }
+    return bad;
+  });
+  if (collisions.length > 0) throw new Error(`Callouts collide:\n  ${collisions.join('\n  ')}`);
 }
 
-async function shot(page, name) {
+/**
+ * `endAt` names the element the picture should end just below, so no row and no card is
+ * cut in half.
+ *
+ * The callouts are measured with it. A label sits in the margin beside the thing it
+ * describes and, being four lines of text against a one-line row, routinely reaches
+ * further down the page than its anchor — and half a callout looks as unfinished as half
+ * a card. Rather than clamp to the viewport and quietly cut something anyway, a shot that
+ * does not fit is an error naming the height it needed: the fix is that shot's viewport,
+ * not a silently smaller picture.
+ */
+async function shot(page, name, endAt) {
   await mkdir(OUT, { recursive: true });
-  await page.screenshot({ path: join(OUT, `${name}.png`), fullPage: false });
+  await showPath(page, SHOWN_PATH);
+  let clip;
+  if (endAt) {
+    const box = await page.evaluate((sel) => {
+      const bottoms = [document.querySelector(sel).getBoundingClientRect().bottom];
+      // Every callout and ring. The arrows live in an SVG sized to the whole document,
+      // so measuring that would ask for a picture the height of the page.
+      for (const n of document.querySelectorAll('.__ann > div')) bottoms.push(n.getBoundingClientRect().bottom);
+      return { needed: Math.ceil(Math.max(...bottoms)) + 8, viewport: window.innerHeight, width: window.innerWidth };
+    }, endAt);
+    if (box.needed > box.viewport) {
+      throw new Error(`${name}: needs ${box.needed}px of viewport and has ${box.viewport}px. Raise the height for this shot.`);
+    }
+    clip = { x: 0, y: 0, width: box.width, height: box.needed };
+  }
+  await page.screenshot({ path: join(OUT, `${name}.png`), fullPage: false, clip });
   process.stdout.write(`  docs/images/${name}.png\n`);
 }
 
 const main = async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'bw-shots-'));
   process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = configDir;
-  const photoDir = await mkdtemp(join(tmpdir(), 'bw-photos-'));
+  await rm(PHOTOS, { recursive: true, force: true });
+  await mkdir(PHOTOS, { recursive: true });
+  // Stored before the UI starts, so there is never a moment when the default applies.
+  await writeFile(join(configDir, 'config.json'), JSON.stringify({ archiveDir: PHOTOS }));
 
   const mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 14 });
   const ui = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2, colorScheme: 'light' });
 
   process.stdout.write('Capturing screenshots (all data is synthetic):\n');
   await page.goto(ui.url, { waitUntil: 'networkidle' });
 
   // 1 — the first thing a parent sees.
   await annotate(page, [
-    { selector: '#card-connect .steps', text: 'Four steps, in plain language. You sign in on Brightwheel’s own site — this tool never sees your password.', labelTop: 250 },
-    { selector: '#cookie', text: 'Paste the one value here. It is stored on your computer only.', labelTop: 430, side: 'left' },
+    { selector: '#howto', text: 'Five steps, in plain language. You sign in on Brightwheel’s own site — this tool never sees your password.', offset: 0 },
+    { selector: '#cookie', text: 'Paste the one value here. It is stored on your computer only.', offset: 0, side: 'left' },
   ]);
-  await shot(page, '01-connect');
+  // Ends with step 1's card, whole. Letting the viewport decide sliced the step-2 card
+  // below it in half and left its last line of text hard against the edge.
+  await shot(page, '01-connect', '#card-connect');
 
-  // 2 — connected, children listed.
+  // 2 — connected, children listed. Connecting moves focus to Start saving, which scrolls
+  // step 2 off the top; bring the tick and the children back into view first.
   await page.fill('#cookie', SESSION);
   await page.click('#btn-connect');
   await page.waitForSelector('.kid', { timeout: 10000 });
   await page.waitForTimeout(400);
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1100 });
+  await page.evaluate(() => document.querySelector('#card-connect').scrollIntoView({ block: 'start' }));
+  await page.waitForTimeout(300);
   await annotate(page, [
-    { selector: '#num-1', text: 'A green tick means this step is done.', labelTop: 150, side: 'left' },
-    { selector: '#kids', text: 'Your children, read from your own account. Brightwheel never shows this tool anybody else’s child.', labelTop: 470 },
+    { selector: '#num-1', text: 'A green tick means this step is done.', offset: 0, side: 'left' },
+    { selector: '#kids', text: 'Your children, read from your own account. Each one is a tick box — untick a child to leave their photos out.', offset: 0 },
   ]);
-  await shot(page, '02-connected');
+  // Ends just below the first option row rather than wherever the viewport happens to
+  // fall: without this the picture sliced through "Keep the teacher's note".
+  await shot(page, '02-connected', '#card-children .body > .opt');
+  await page.setViewportSize(VIEWPORT);
 
-  // 3 — the choices that matter, with the advanced drawer open.
+  // 3 — the choices that matter, with one child unticked and the advanced drawer open.
+  // Every change saves itself, so the shot also shows the quiet "Saved" confirmation.
+  // The open drawer makes this card taller than the usual viewport.
+  const saved = page.waitForResponse((r) => r.url().includes('/api/config'));
+  await page.uncheck('#kid-1');
+  await saved;
+  await page.waitForFunction(() => document.querySelector('#config-msg')?.textContent === 'Saved', { timeout: 5000 });
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1200 });
   await page.evaluate(() => document.querySelector('details').setAttribute('open', ''));
-  await page.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'center' }));
+  await page.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
   await annotate(page, [
-    { selector: '#tagChildName', text: 'Writes your child’s name into the photo so Photos and Immich can find them by name.', labelTop: 120, side: 'left' },
-    { selector: '#stripLocation', text: 'On by default: removes GPS coordinates so a shared file cannot reveal a location.', labelTop: 300, side: 'left' },
-    { selector: 'details summary', text: 'Sensible defaults up front. Everything adjustable is tucked in here.', labelTop: 430 },
+    { selector: '#kids-status', text: 'It says, in words, whose photos will be saved.', offset: 0 },
+    { selector: '#tagChildName', text: 'Writes your child’s name into the photo so Photos and Immich can find them by name.', offset: -10, side: 'left' },
+    { selector: '#stripLocation', text: 'On by default: removes GPS coordinates so a shared file cannot reveal a location.', offset: 0, side: 'left' },
+    { selector: 'details summary', text: 'Sensible defaults up front. Everything adjustable is tucked in here.', offset: 0 },
+    { selector: '#config-msg', text: 'Nothing to remember to press: each setting is saved the moment you change it.', offset: -24 },
   ]);
-  await shot(page, '03-options');
+  await shot(page, '03-options', '#card-children');
+  await page.setViewportSize(VIEWPORT);
+  const restored = page.waitForResponse((r) => r.url().includes('/api/config'));
+  await page.check('#kid-1');
+  await restored;
 
-  // 4 — a completed run.
-  await page.evaluate((dir) => {
-    document.querySelector('#archiveDir').value = dir;
-    document.querySelector('#btn-save-config').click();
-  }, photoDir);
-  await page.waitForTimeout(500);
+  // 4 — a completed run. Start saving sends the form as shown, so the real folder must be
+  // back in the field before it is pressed.
+  await showPath(page, PHOTOS);
   await page.click('#btn-run');
-  await page.waitForFunction(() => document.querySelector('#s-saved').textContent !== '0', { timeout: 60000 });
-  await page.waitForTimeout(3500);
-  await page.evaluate(() => document.querySelector('#card-run').scrollIntoView({ block: 'center' }));
+  // Wait for the completion banner, not merely for the first file to land — otherwise the
+  // "finished" screenshot shows a run still in progress.
+  await page.waitForFunction(
+    () => document.querySelector('#run-result')?.textContent?.trim().length > 0,
+    { timeout: 120000 },
+  );
+  await page.waitForTimeout(600);
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1100 });
+  await page.evaluate(() => document.querySelector('#card-run').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
   await annotate(page, [
-    { selector: '.stats', text: 'Saved, already-had, and failed. A second run saves nothing new — it recognises what it already has.', labelTop: 250 },
-    { selector: '.privacy', text: 'The privacy summary is on the page itself, not buried in a document nobody reads.', labelTop: 470, side: 'left' },
+    { selector: '.stats', text: 'Saved, already-had, and failed. A second run saves nothing new — it recognises what it already has.', offset: 0 },
+    { selector: '.privacy', text: 'The privacy summary is on the page itself, not buried in a document nobody reads.', offset: 0, side: 'left' },
   ]);
   await shot(page, '04-done');
+  // Belt and braces: the run must have written here and nowhere else.
+  await access(join(PHOTOS, 'archive.json'));
+
+  // 5 — dark mode, on the step with the most controls. Both schemes are first-class.
+  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1160 }, deviceScaleFactor: 2, colorScheme: 'dark' });
+  await dark.goto(ui.url, { waitUntil: 'networkidle' });
+  await dark.waitForSelector('.kid', { timeout: 10000 });
+  await dark.waitForTimeout(700);
+  await dark.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'start' }));
+  await dark.waitForTimeout(300);
+  await shot(dark, '05-dark', '#card-run');
+  await dark.close();
 
   await browser.close();
   await ui.close();
   await mock.close();
-  process.stdout.write('\nDone. Photos written to a temporary folder and discarded.\n');
+  await rm(PHOTOS, { recursive: true, force: true });
+  process.stdout.write('\nDone. The run\u2019s photos went to a scratch folder inside node_modules and were deleted.\n');
 };
 
 main().catch((e) => {
