@@ -5,11 +5,17 @@ import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startMockBrightwheel, startWebUi } from '../dist/index.js';
+import {
+  startMockBrightwheel,
+  startWebUi,
+  writeSecureFile,
+  configPath,
+  DEFAULT_CONFIG,
+} from '../dist/index.js';
 import { chooseFolder, openFolder } from '../dist/native.js';
 
 /**
@@ -50,6 +56,14 @@ async function freshConfigDir() {
  * call. `replies` is consulted per program name; anything not named is reported as missing,
  * which is how a computer without zenity behaves.
  */
+/**
+ * Somewhere the archive-destination rule actually permits. mkdtemp is refused by design,
+ * and the home folder belongs to the person running the suite, so this is what is left.
+ * node_modules must exist for the suite to run at all, and .cache inside it is gitignored.
+ */
+const REAL_PHOTOS_ROOT = fileURLToPath(new URL('../../../node_modules/.cache/bw-native-test/', import.meta.url));
+after(async () => { await rm(REAL_PHOTOS_ROOT, { recursive: true, force: true }); });
+
 function recorder(replies = {}) {
   const calls = [];
   const spawn = async (file, args, timeoutMs) => {
@@ -236,12 +250,19 @@ test('only one folder chooser may be open at a time', async () => {
 
 test('/api/open-folder ignores a path in the body and opens the configured folder', async () => {
   await freshConfigDir();
-  // The archive folder of a test run is the throwaway one scripts/test-env.js made, which
-  // exists — so this exercises the whole path, stat included.
-  const configured = process.env.BRIGHTWHEEL_ARCHIVE_DIR;
+  // NOT the test run's own archive folder, which is a temp directory: the route re-checks
+  // the stored destination against the same rule that governs where photos may be saved,
+  // and temp directories are refused outright because the operating system empties them.
+  // A folder under node_modules/.cache is the one durable, gitignored place a test has.
+  const configured = join(REAL_PHOTOS_ROOT, 'open-me');
+  await mkdir(configured, { recursive: true });
   const native = recorder({ open: { code: 0 } });
   const { handle, call } = await setupUi({ native: { platform: 'darwin', spawn: native.spawn } });
   try {
+    // Stored the way a parent stores it, through the endpoint that validates it.
+    const saved = await call('/api/config', { archiveDir: configured });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+
     const opened = await call('/api/open-folder', { path: '/etc', dir: '/System', archiveDir: '/Users/alex/elsewhere' });
     assert.equal(opened.status, 200, JSON.stringify(opened.body));
     assert.equal(opened.body.ok, true);
@@ -443,4 +464,48 @@ test('the page offers the chooser and the open button, and both go through the t
   } finally {
     await handle.close();
   }
+});
+
+test('opening the folder refuses a destination the tool would not archive into', async () => {
+  // config.json is an ordinary file in the parent's own directory. A hand edit, an older
+  // build, or a bug in a neighbouring route can put anything in archiveDir — and without a
+  // check here, "open my photos folder" becomes "open any absolute path on this machine".
+  // A checker got /etc and an application bundle opened this way before the re-validation.
+  await freshConfigDir();
+  const spawned = [];
+  const { handle, call } = await setupUi({
+    connect: false,
+    native: { spawn: async (file, args) => { spawned.push([file, args]); return { code: 0, stdout: '', stderr: '' }; } },
+  });
+  try {
+    // Written straight to the file, as a hand edit would be: the API would refuse it.
+    await writeSecureFile(configPath(), JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: '/etc' }, null, 2));
+
+    const res = await call('/api/open-folder', {});
+    assert.equal(res.status, 400, '/etc is not a folder this tool archives into');
+    assert.equal(res.body.ok, false);
+    assert.match(res.body.error, /operating system/i, 'and it says why in plain words');
+    assert.deepEqual(spawned, [], 'nothing was launched');
+  } finally {
+    await handle.close();
+  }
+});
+
+test('a chooser that is broken rather than dismissed is not reported as a cancellation', async () => {
+  // zenity exits 1 both when the person presses Cancel and when it cannot reach a display.
+  // Reading the code alone told a parent "No folder was chosen" on a machine where no
+  // dialog ever appeared — and returned before kdialog, the one that might have worked,
+  // was tried. What separates them is that a failure complains and a dismissal is silent.
+  const broken = recorder({
+    zenity: { code: 1, stderr: 'Unable to init server: Could not connect: Connection refused' },
+    kdialog: { code: 0, stdout: '/home/alex/Pictures\n' },
+  });
+  const chosen = await chooseFolder({ platform: 'linux', spawn: broken.spawn });
+  assert.deepEqual(chosen, { ok: true, path: '/home/alex/Pictures' }, 'it moved on to the one that works');
+  assert.deepEqual(broken.calls.map((c) => c.file), ['zenity', 'kdialog']);
+
+  // And a real dismissal, which says nothing, still reads as a dismissal and stops there.
+  const dismissed = recorder({ zenity: { code: 1, stderr: '' }, kdialog: { code: 0, stdout: '/home/alex/x\n' } });
+  assert.deepEqual(await chooseFolder({ platform: 'linux', spawn: dismissed.spawn }), { ok: false, cancelled: true });
+  assert.deepEqual(dismissed.calls.map((c) => c.file), ['zenity'], 'a dismissal is an answer, not a failure to try again');
 });

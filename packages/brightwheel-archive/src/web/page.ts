@@ -389,6 +389,20 @@ ${COOKIE_HELP_CSS}
             </label>
           </div>
 
+          <div class="field" id="dir-field">
+            <label class="field-label" for="archiveDir">Where to save the photos</label>
+            <div class="dir-row">
+              <input type="text" id="archiveDir" spellcheck="false" aria-describedby="dir-warn dir-note config-msg">
+              <button class="secondary" id="btn-choose-dir" type="button">Choose a folder&hellip;</button>
+            </div>
+            <p class="why" id="dir-warn" style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Avoid iCloud Drive, Dropbox or OneDrive folders unless you want copies on their servers.</p>
+            <div class="dir-actions">
+              <button class="secondary" id="btn-dir" type="button">Use this folder</button>
+              <button class="secondary" id="btn-open-dir" type="button">Open this folder</button>
+            </div>
+            <p class="dir-note" id="dir-note" role="status" aria-live="polite"></p>
+          </div>
+
           <details>
             <summary>Advanced options</summary>
             <div class="inner">
@@ -399,19 +413,6 @@ ${COOKIE_HELP_CSS}
                   <option value="week">One folder per week, all children together</option>
                   <option value="week-per-child">Each week, then a folder per child</option>
                 </select>
-              </div>
-              <div class="field">
-                <label class="field-label" for="archiveDir">Where to save the photos</label>
-                <div class="dir-row">
-                  <input type="text" id="archiveDir" spellcheck="false" aria-describedby="dir-warn dir-note config-msg">
-                  <button class="secondary" id="btn-choose-dir" type="button">Choose a folder&hellip;</button>
-                </div>
-                <p class="why" id="dir-warn" style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Avoid iCloud Drive, Dropbox or OneDrive folders unless you want copies on their servers.</p>
-                <div class="dir-actions">
-                  <button class="secondary" id="btn-dir" type="button">Use this folder</button>
-                  <button class="secondary" id="btn-open-dir" type="button">Open this folder</button>
-                </div>
-                <p class="dir-note" id="dir-note" role="status" aria-live="polite"></p>
               </div>
               <div class="opt">
                 <input type="checkbox" id="incremental" checked>
@@ -746,10 +747,8 @@ function showSaveError(d, opts) {
     $('archiveDir').setAttribute('aria-invalid', 'true');
     // Only move focus when the person pressed something; stealing it as they tab away
     // from the field would trap them in it.
-    if (opts.focus) {
-      document.querySelector('details').open = true;
-      $('archiveDir').focus();
-    }
+    // The field is out in the open now, so there is no disclosure to prise open first.
+    if (opts.focus) $('archiveDir').focus();
   }
 }
 

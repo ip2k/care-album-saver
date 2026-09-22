@@ -75,7 +75,7 @@ async function archived(dir, child = 'Robin-Maple') {
       if (!/\.(jpg|mp4)$/.test(name)) continue;
       const path = join(dir, child, week, name);
       const sidecar = JSON.parse(await readFile(`${path}.json`, 'utf8'));
-      out.push({ path, name, sidecar, capturedAt: new Date(sidecar.capturedAt) });
+      out.push({ path, name, sidecar, postedAt: new Date(sidecar.postedAt) });
     }
   }
   return out;
@@ -180,7 +180,7 @@ test('buildTags picks the table by kind: EXIF for photos, QuickTime for videos',
     filePath: '/nowhere', tagChildName: true, tagNote: true, stripLocation: true, writeSidecar: false,
     student: { id: 's', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook' },
   };
-  const activity = { id: 'a', studentId: 's', capturedAt: when, note: 'Water play.', url: 'u', author: 'Ms. Alvarez' };
+  const activity = { id: 'a', studentId: 's', postedAt: when, note: 'Water play.', url: 'u', author: 'Ms. Alvarez' };
 
   const photo = buildTags({ ...base, activity: { ...activity, kind: 'image' } });
   assert.equal(photo['EXIF:DateTimeOriginal'], '2026:09:17 18:14:55');
@@ -212,22 +212,22 @@ test('photo metadata round-trips: capture time, offset, name and note, pixels un
   const files = await archived(dir);
   const photo = files.find((f) => f.name.endsWith('.jpg') && f.sidecar.note);
   assert.ok(photo, 'expected a photo with a note');
-  const { capturedAt } = photo;
+  const { postedAt } = photo;
   const tags = await readRaw(photo.path);
 
   // The date family, all in local time — and not the upload time six hours later.
-  const local = exifDateTime(capturedAt);
-  const uploaded = exifDateTime(new Date(capturedAt.getTime() + 6 * 3600 * 1000));
+  const local = exifDateTime(postedAt);
+  const uploaded = exifDateTime(new Date(postedAt.getTime() + 6 * 3600 * 1000));
   assert.notEqual(local, uploaded);
   assert.equal(tags['ExifIFD:DateTimeOriginal'], local);
   assert.equal(tags['ExifIFD:CreateDate'], local);
   assert.equal(tags['IFD0:ModifyDate'], local);
-  assert.equal(tags['ExifIFD:OffsetTimeOriginal'], exifOffset(capturedAt));
+  assert.equal(tags['ExifIFD:OffsetTimeOriginal'], exifOffset(postedAt));
   assert.equal(tags['ExifIFD:OffsetTimeOriginal'], '-10:00', 'TZ pin did not take effect');
-  assert.equal(tags['XMP-photoshop:DateCreated'], `${local}${exifOffset(capturedAt)}`);
-  assert.equal(tags['XMP-xmp:CreateDate'], `${local}${exifOffset(capturedAt)}`);
+  assert.equal(tags['XMP-photoshop:DateCreated'], `${local}${exifOffset(postedAt)}`);
+  assert.equal(tags['XMP-xmp:CreateDate'], `${local}${exifOffset(postedAt)}`);
   assert.equal(tags['IPTC:DateCreated'], local.slice(0, 10));
-  assert.equal(tags['IPTC:TimeCreated'], `${local.slice(11)}${exifOffset(capturedAt)}`);
+  assert.equal(tags['IPTC:TimeCreated'], `${local.slice(11)}${exifOffset(postedAt)}`);
   assert.ok(!JSON.stringify(tags).includes(uploaded), 'the upload time must appear nowhere');
 
   // The name, once in each place — a regression test for the doubled keyword list.
@@ -255,7 +255,7 @@ test('photo metadata round-trips: capture time, offset, name and note, pixels un
   // And every other photo of both children got the same treatment.
   for (const other of [...files, ...(await archived(dir, 'Sam-Maple'))].filter((f) => f.name.endsWith('.jpg'))) {
     const o = await readRaw(other.path, '-EXIF:DateTimeOriginal', '-XMP-iptcExt:PersonInImage');
-    assert.equal(o['ExifIFD:DateTimeOriginal'], exifDateTime(other.capturedAt), other.name);
+    assert.equal(o['ExifIFD:DateTimeOriginal'], exifDateTime(other.postedAt), other.name);
     assert.equal(o['XMP-iptcExt:PersonInImage'], other.sidecar.child.name, other.name);
   }
 });
@@ -277,7 +277,7 @@ test('with the name and note options off, neither is written anywhere', { skip: 
     }
     // The date is still corrected: opting out of the name is not opting out of the fix.
     const stamp = kind === '.jpg' ? tags['ExifIFD:DateTimeOriginal'] : tags['Keys:CreationDate'];
-    assert.ok(stamp.startsWith(exifDateTime(file.capturedAt)), `${kind}: ${stamp}`);
+    assert.ok(stamp.startsWith(exifDateTime(file.postedAt)), `${kind}: ${stamp}`);
   }
 });
 
@@ -287,13 +287,13 @@ test('video metadata round-trips: UTC headers, local Apple date, name and note, 
   const dir = await syncInto();
   const video = (await archived(dir)).find((f) => f.name.endsWith('.mp4'));
   assert.ok(video, 'expected a video');
-  const { capturedAt } = video;
-  const local = exifDateTime(capturedAt);
-  const offset = exifOffset(capturedAt);
+  const { postedAt } = video;
+  const local = exifDateTime(postedAt);
+  const offset = exifOffset(postedAt);
 
   // Guard: this capture must straddle midnight UTC, or the test below proves nothing about
   // calendar days. If the mock's schedule changes, pick another file rather than weaken this.
-  assert.notEqual(utcStamp(capturedAt).slice(0, 10), local.slice(0, 10), 'fixture no longer crosses a UTC day');
+  assert.notEqual(utcStamp(postedAt).slice(0, 10), local.slice(0, 10), 'fixture no longer crosses a UTC day');
 
   // The archive puts it on the local day.
   assert.ok(video.name.startsWith(local.slice(0, 10).replaceAll(':', '-')), video.name);
@@ -304,7 +304,7 @@ test('video metadata round-trips: UTC headers, local Apple date, name and note, 
   const stale = utcStamp(MP4_CONTAINER_CREATED);
   for (const key of ['QuickTime:CreateDate', 'QuickTime:ModifyDate', 'Track1:TrackCreateDate',
     'Track1:TrackModifyDate', 'Track1:MediaCreateDate', 'Track1:MediaModifyDate']) {
-    assert.equal(raw[key], utcStamp(capturedAt), key);
+    assert.equal(raw[key], utcStamp(postedAt), key);
     assert.notEqual(raw[key], stale, `${key} still says when the file was encoded`);
   }
   // Read with the QuickTime UTC rule, as Apple Photos, Immich and Google Photos do, the
@@ -320,9 +320,9 @@ test('video metadata round-trips: UTC headers, local Apple date, name and note, 
 
   // What the library's rich reader — the one Immich is built on — makes of it.
   const rich = await exiftool.read(video.path);
-  assert.equal(Math.floor(rich.CreateDate.toDate().getTime() / 1000), Math.floor(capturedAt.getTime() / 1000));
-  assert.equal(rich.CreateDate.day, capturedAt.getDate());
-  assert.equal(rich.CreateDate.hour, capturedAt.getHours());
+  assert.equal(Math.floor(rich.CreateDate.toDate().getTime() / 1000), Math.floor(postedAt.getTime() / 1000));
+  assert.equal(rich.CreateDate.day, postedAt.getDate());
+  assert.equal(rich.CreateDate.hour, postedAt.getHours());
 
   // Name and note, in the XMP that galleries read and the Apple keys that Photos indexes.
   assert.deepEqual(asList(raw['XMP-iptcExt:PersonInImage']), ['Robin Maple']);
@@ -345,7 +345,7 @@ test('video metadata round-trips: UTC headers, local Apple date, name and note, 
   const probe = await ffprobe(video.path);
   if (probe) {
     assert.equal(probe.stderr, '');
-    assert.equal(probe.format.tags.creation_time, `${capturedAt.toISOString().slice(0, 19)}.000000Z`);
+    assert.equal(probe.format.tags.creation_time, `${postedAt.toISOString().slice(0, 19)}.000000Z`);
     assert.equal(probe.format.tags['com.apple.quicktime.creationdate'], `${local.slice(0, 10).replaceAll(':', '-')}T${local.slice(11)}${offset.replace(':', '')}`);
     assert.equal(probe.streams[0].codec_name, 'mjpeg');
   }
@@ -391,7 +391,7 @@ async function fileCarryingGps(kind) {
 const gpsActivity = (id, kind) => ({
   id,
   studentId: 'stu-x',
-  capturedAt: new Date('2026-09-17T18:14:55-10:00'),
+  postedAt: new Date('2026-09-17T18:14:55-10:00'),
   note: 'Water play in the garden.',
   url: 'https://example.invalid/a',
   author: 'Ms. Alvarez',

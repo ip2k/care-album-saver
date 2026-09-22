@@ -10,7 +10,7 @@
  */
 import { chromium } from 'playwright';
 import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startMockBrightwheel } from '../packages/brightwheel-archive/dist/mock/server.js';
@@ -39,6 +39,25 @@ async function showPath(page, value) {
     document.querySelector('#archiveDir').value = v;
     document.querySelector('#p-dir').textContent = v;
   }, value);
+}
+
+/**
+ * Replace this developer's own home folder wherever the page prints it.
+ *
+ * A sweep over every text node rather than a list of selectors, because the page renders
+ * paths from several places and at several moments — the run summary after a run, the
+ * schedule card after its state arrives — and a selector list is a list of the places
+ * somebody remembered. One of them printed a home-folder path into a committed image.
+ */
+async function scrubPersonal(page) {
+  await page.evaluate((home) => {
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      if (node.textContent.includes(home)) {
+        node.textContent = node.textContent.split(home).join('/Users/alex');
+      }
+    }
+  }, homedir());
 }
 
 /**
@@ -186,9 +205,40 @@ async function annotate(page, notes) {
  * does not fit is an error naming the height it needed: the fix is that shot's viewport,
  * not a silently smaller picture.
  */
+/**
+ * No real person's name in a committed picture.
+ *
+ * Checked against the page's own text rather than the PNG, because a PNG's text is
+ * compressed: a `strings` search over the file finds nothing and reads as a pass. The first
+ * version of this guard did exactly that and missed a home-folder path that was in plain
+ * sight in the image.
+ */
+async function assertNothingPersonal(page, name) {
+  const real = [process.env.USER, process.env.LOGNAME, homedir()].filter(Boolean);
+  const text = await page.evaluate(() => document.body.innerText);
+  for (const needle of real) {
+    if (text.includes(needle)) {
+      const where = await page.evaluate((n) => {
+        const hits = [];
+        const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+          if (t.textContent.includes(n)) hits.push((t.parentElement?.id || t.parentElement?.className || t.parentElement?.tagName) + ' :: ' + t.textContent.trim().slice(0, 120));
+        }
+        return hits;
+      }, needle);
+      throw new Error(`${name}: the page shows "${needle}", which belongs to whoever ran this. Substitute it before the shot.\n  ` + where.join('\n  '));
+    }
+  }
+}
+
 async function shot(page, name, endAt) {
   await mkdir(OUT, { recursive: true });
   await showPath(page, SHOWN_PATH);
+  // Settle first: a card that re-renders from its own fetch would otherwise put the real
+  // path back between the sweep and the shutter.
+  await page.waitForTimeout(150);
+  await scrubPersonal(page);
+  await assertNothingPersonal(page, name);
   let clip;
   if (endAt) {
     const box = await page.evaluate((sel) => {
@@ -262,6 +312,9 @@ const main = async () => {
   await page.waitForFunction(() => document.querySelector('#config-msg')?.textContent === 'Saved', { timeout: 5000 });
   // Taller for the same reason as shot 2.
   await page.setViewportSize({ width: VIEWPORT.width, height: 1400 });
+  // Opened for the picture so the whole of step 2 is visible at once. The folder field
+  // itself is no longer in here — it sits in the open above this — so what the disclosure
+  // still holds is the layout choice and the two rarely-changed switches.
   await page.evaluate(() => document.querySelector('details').setAttribute('open', ''));
   await page.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
@@ -289,7 +342,13 @@ const main = async () => {
     { timeout: 120000 },
   );
   await page.waitForTimeout(600);
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1100 });
+  // Back to the shown path now that the run is over: the summary prints the folder a third
+  // time beside its own button, and it is written only once a run finishes.
+  await showPath(page, SHOWN_PATH);
+  // Tall enough for step 4 as well. The run summary and the scheduling step are one story —
+  // "that was the one-time part, here is how it keeps itself up to date" — and cutting the
+  // picture between them loses the point of step 4 existing.
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1720 });
   await page.evaluate(() => document.querySelector('#card-run').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
   await annotate(page, [
@@ -302,7 +361,7 @@ const main = async () => {
 
   // 5 — dark mode, on the step with the most controls. Both schemes are first-class.
   // Taller for the same reason as shot 2.
-  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1320 }, deviceScaleFactor: 2, colorScheme: 'dark' });
+  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1660 }, deviceScaleFactor: 2, colorScheme: 'dark' });
   await dark.goto(ui.url, { waitUntil: 'networkidle' });
   await dark.waitForSelector('.kid', { timeout: 10000 });
   await dark.waitForTimeout(700);

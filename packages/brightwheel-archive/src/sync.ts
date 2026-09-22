@@ -115,7 +115,7 @@ function archiveTimezone(): string {
  * like new files. Embedding Brightwheel's own id makes the name deterministic.
  */
 function nameFor(activity: MediaActivity, ext: string): { stem: string; ext: string } {
-  const d = activity.capturedAt;
+  const d = activity.postedAt;
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp =
     `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
@@ -505,18 +505,18 @@ export async function sync(
             break;
           }
 
-          if (!newest || activity.capturedAt > newest) newest = activity.capturedAt;
+          if (!newest || activity.postedAt > newest) newest = activity.postedAt;
 
           if (manifest.has({ sourceId: `brightwheel:${activity.id}`, url: activity.url })) {
             result.skipped += 1;
             continue;
           }
 
-          const rel = folderFor(config, student, activity.capturedAt);
+          const rel = folderFor(config, student, activity.postedAt);
           const dir = join(config.archiveDir, rel);
           if (!seenFolders.has(dir)) {
             await mkdir(dir, { recursive: true, mode: ARCHIVE_DIR_MODE });
-            await writeWeekReadme(dir, activity.capturedAt, student.fullName);
+            await writeWeekReadme(dir, activity.postedAt, student.fullName);
             seenFolders.add(dir);
             const existing = await readdir(dir).catch(() => [] as string[]);
             takenByFolder.set(dir, new Set(existing.map((f) => f.toLowerCase())));
@@ -569,8 +569,8 @@ export async function sync(
               etag: dl.validators.etag ?? null,
               lastModified: dl.validators.lastModified ?? null,
               provenance: {
-                capturedAt: activity.capturedAt.toISOString(),
-                // Which clock decided the folder and the filename. capturedAt is an
+                postedAt: activity.postedAt.toISOString(),
+                // Which clock decided the folder and the filename. postedAt is an
                 // instant; the day it belongs to is not, and this is the answer this run
                 // used. See `archiveTimezone`.
                 filedInTimezone: timezone,

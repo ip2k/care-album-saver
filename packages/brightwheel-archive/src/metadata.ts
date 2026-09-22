@@ -92,7 +92,7 @@ function quickTimeUtc(when: Date): string {
  */
 function imageTags(input: MetadataInput): TagSet {
   const { activity, student } = input;
-  const when = activity.capturedAt;
+  const when = activity.postedAt;
 
   const tags: TagSet = {
     'EXIF:DateTimeOriginal': exifDateTime(when),
@@ -175,7 +175,7 @@ function imageTags(input: MetadataInput): TagSet {
  */
 function videoTags(input: MetadataInput): TagSet {
   const { activity, student } = input;
-  const when = activity.capturedAt;
+  const when = activity.postedAt;
 
   const tags: TagSet = {
     'QuickTime:CreateDate': quickTimeUtc(when),
@@ -225,7 +225,7 @@ export async function writeJsonSidecar(input: MetadataInput): Promise<void> {
   const sidecar = {
     source: 'brightwheel',
     brightwheelActivityId: activity.id,
-    capturedAt: activity.capturedAt.toISOString(),
+    postedAt: activity.postedAt.toISOString(),
     child: { id: student.id, name: student.fullName },
     school: student.schoolName,
     note: activity.note,

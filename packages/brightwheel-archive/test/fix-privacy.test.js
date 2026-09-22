@@ -53,7 +53,7 @@ const STUDENT = {
 const ACTIVITY = {
   id: 'act-1',
   studentId: 'stu-x',
-  capturedAt: new Date('2026-09-18T09:15:00'),
+  postedAt: new Date('2026-09-18T09:15:00'),
   // Shaped like a real one: it names the child, the room and, with the author beside it,
   // the teacher. This is why the note cannot be a "neutral caption".
   note: 'Robin fell asleep mid-song at circle time in the Sunflower room.',
@@ -172,13 +172,13 @@ test('without ExifTool the parent is told that location was NOT removed, not onl
     await writeFile(file, 'stand-in for a photo; nothing here reads the bytes');
     const base = {
       filePath: file,
-      activity: ${JSON.stringify({ ...ACTIVITY, capturedAt: ACTIVITY.capturedAt.toISOString() })},
+      activity: ${JSON.stringify({ ...ACTIVITY, postedAt: ACTIVITY.postedAt.toISOString() })},
       student: ${JSON.stringify(STUDENT)},
       tagChildName: true,
       tagNote: true,
       writeSidecar: false,
     };
-    base.activity.capturedAt = new Date(base.activity.capturedAt);
+    base.activity.postedAt = new Date(base.activity.postedAt);
     console.log(JSON.stringify({
       asked: await m.applyMetadata({ ...base, stripLocation: true }),
       notAsked: await m.applyMetadata({ ...base, stripLocation: false }),

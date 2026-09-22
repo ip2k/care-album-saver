@@ -279,7 +279,7 @@ test('an .xmp sidecar that cannot be written is reported as such, and the photo 
       activity: {
         id: 'act-111-0000',
         studentId: ROBIN,
-        capturedAt: new Date('2026-09-17T18:14:55Z'),
+        postedAt: new Date('2026-09-17T18:14:55Z'),
         note: 'Water play in the garden this morning.',
         url: 'https://cdn.example/a.jpg',
         author: 'Ms. Alvarez',

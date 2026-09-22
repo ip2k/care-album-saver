@@ -282,7 +282,7 @@ export class BrightwheelClient {
       // than resetting it and stretching the walk.
       const { items } = result;
       if (opts.stopBefore && items.length > 0) {
-        olderPages = items.every((i) => i.capturedAt < opts.stopBefore!) ? olderPages + 1 : 0;
+        olderPages = items.every((i) => i.postedAt < opts.stopBefore!) ? olderPages + 1 : 0;
       }
       const reachedCutOff = olderPages >= PAGES_PAST_THE_CUT_OFF;
 
