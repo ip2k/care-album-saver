@@ -19,26 +19,33 @@ import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { BrightwheelClient, startMockBrightwheel, sync, Secret, DEFAULT_CONFIG, buildTags } from '../dist/index.js';
+import { applyMetadata, BrightwheelClient, startMockBrightwheel, sync, Secret, DEFAULT_CONFIG, buildTags } from '../dist/index.js';
+import { closeMetadata } from '../dist/metadata.js';
 import { placeholderJpeg, placeholderMp4, MP4_CONTAINER_CREATED } from '../dist/mock/fixtures.js';
 import { exifDateTime, exifOffset } from 'media-ferry';
+import { exifToolSkipReason } from '../../../scripts/test-env.js';
 
 const run = promisify(execFile);
 
 let mock;
 /** Our own ExifTool for reading back. `sync()` ends the one it writes with. */
 let exiftool = null;
-let exiftoolMissing = 'exiftool-vendored did not load; it is an optional dependency';
+/**
+ * False when ExifTool is here, and the reason when it is not — passed to node:test's `skip`
+ * option below rather than checked inside each test body. Every metadata test in this file
+ * used to begin `if (exiftoolMissing) return t.skip(...)`, which reports as a PASS: a CI
+ * cell whose optional dependency failed to install printed a fully green suite having
+ * proved nothing at all about what goes into a photo. See scripts/test-env.js for why this
+ * fails outright on CI instead of skipping.
+ */
+const exiftoolMissing = await exifToolSkipReason(() => import('exiftool-vendored'));
 const SESSION = 'test-session-value';
 
 before(async () => {
   mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 12 });
-  try {
+  if (!exiftoolMissing) {
     const { ExifTool } = await import('exiftool-vendored');
     exiftool = new ExifTool({ exiftoolEnv: { TZ: process.env.TZ } });
-    exiftoolMissing = false;
-  } catch (error) {
-    exiftoolMissing += `: ${error.message}`;
   }
 });
 after(async () => {
@@ -198,8 +205,7 @@ test('buildTags picks the table by kind: EXIF for photos, QuickTime for videos',
 
 // ---------------------------------------------------------------- photos
 
-test('photo metadata round-trips: capture time, offset, name and note, pixels untouched', async (t) => {
-  if (exiftoolMissing) return t.skip(exiftoolMissing);
+test('photo metadata round-trips: capture time, offset, name and note, pixels untouched', { skip: exiftoolMissing }, async () => {
   const dir = await syncInto();
   const files = await archived(dir);
   const photo = files.find((f) => f.name.endsWith('.jpg') && f.sidecar.note);
@@ -230,7 +236,10 @@ test('photo metadata round-trips: capture time, offset, name and note, pixels un
   assert.equal(tags['IPTC:Caption-Abstract'], photo.sidecar.note);
   assert.equal(tags['XMP-dc:Creator'], photo.sidecar.postedBy);
   assert.equal(tags['XMP-iptcExt:LocationCreatedSublocation'], 'Sunnybrook Early Learning');
-  assert.deepEqual(Object.keys(tags).filter((k) => /GPS/i.test(k)), [], 'no location data');
+  // A backstop, not the proof: the mock's photos carry no coordinates in the first place,
+  // so this line would hold with the stripping removed. What the strip actually does is
+  // proved further down, on a file that does carry them.
+  assert.deepEqual(Object.keys(tags).filter((k) => /GPS/i.test(k)), [], 'nothing added any location');
 
   // The picture itself: the scan is byte-identical to what the mock served, and the file
   // still opens as the same image.
@@ -249,8 +258,7 @@ test('photo metadata round-trips: capture time, offset, name and note, pixels un
   }
 });
 
-test('with the name and note options off, neither is written anywhere', async (t) => {
-  if (exiftoolMissing) return t.skip(exiftoolMissing);
+test('with the name and note options off, neither is written anywhere', { skip: exiftoolMissing }, async () => {
   const dir = await syncInto({ tagChildName: false, tagNote: false });
   const files = await archived(dir);
   for (const kind of ['.jpg', '.mp4']) {
@@ -273,8 +281,7 @@ test('with the name and note options off, neither is written anywhere', async (t
 
 // ---------------------------------------------------------------- videos
 
-test('video metadata round-trips: UTC headers, local Apple date, name and note, frame untouched', async (t) => {
-  if (exiftoolMissing) return t.skip(exiftoolMissing);
+test('video metadata round-trips: UTC headers, local Apple date, name and note, frame untouched', { skip: exiftoolMissing }, async () => {
   const dir = await syncInto();
   const video = (await archived(dir)).find((f) => f.name.endsWith('.mp4'));
   assert.ok(video, 'expected a video');
@@ -322,7 +329,9 @@ test('video metadata round-trips: UTC headers, local Apple date, name and note, 
   assert.equal(raw['XMP-dc:Description'], video.sidecar.note);
   assert.equal(raw['Keys:Description'], video.sidecar.note);
   assert.equal(raw['Keys:Author'], video.sidecar.postedBy);
-  assert.deepEqual(Object.keys(raw).filter((k) => /GPS/i.test(k)), [], 'no location data');
+  // As with the photo above: a backstop against something adding coordinates, not a test
+  // of the stripping, which the location section below exercises on a video that has some.
+  assert.deepEqual(Object.keys(raw).filter((k) => /GPS/i.test(k)), [], 'nothing added any location');
 
   // The frame is untouched: ExifTool grew `moov` and moved `mdat`, but the sample inside
   // is byte-for-byte the placeholder the mock served.
@@ -337,6 +346,119 @@ test('video metadata round-trips: UTC headers, local Apple date, name and note, 
     assert.equal(probe.format.tags.creation_time, `${capturedAt.toISOString().slice(0, 19)}.000000Z`);
     assert.equal(probe.format.tags['com.apple.quicktime.creationdate'], `${local.slice(0, 10).replaceAll(':', '-')}T${local.slice(11)}${offset.replace(':', '')}`);
     assert.equal(probe.streams[0].codec_name, 'mjpeg');
+  }
+});
+
+// ---------------------------------------------------------------- where it was taken
+
+/**
+ * A file that arrives carrying coordinates, which the mock's own fixtures never do.
+ *
+ * "Remove the location" is one of the promises the setup page makes to a parent, and until
+ * this existed nothing tested it: the two round-trips above assert that no GPS tag comes
+ * out of a file that had none going in, which stays true however thoroughly the stripping
+ * is broken. So the coordinates are written in here first, with ExifTool, and the strip
+ * then has something to remove.
+ *
+ * 21.2870 N, 157.8390 W is Kapiolani Park in Honolulu — a public park, chosen because it
+ * matches this file's timezone and because nothing in this project has ever been there.
+ */
+const GPS_LAT_DMS = /21 deg 17/;
+async function fileCarryingGps(kind) {
+  const dir = await mkdtemp(join(tmpdir(), 'bw-gps-'));
+  const id = kind === 'video' ? 'act-111-0005' : 'act-111-0000';
+  const file = join(dir, kind === 'video' ? 'a.mp4' : 'a.jpg');
+  await writeFile(file, kind === 'video' ? placeholderMp4(id) : placeholderJpeg(id));
+  // A video's coordinates live in one ISO 6709 string under Apple's Keys table; a photo's
+  // live in the EXIF GPS IFD as four separate tags. Both are what a phone camera writes.
+  const coordinates =
+    kind === 'video'
+      ? { 'Keys:GPSCoordinates': '+21.2870-157.8390/' }
+      : { GPSLatitude: 21.287, GPSLatitudeRef: 'N', GPSLongitude: -157.839, GPSLongitudeRef: 'W' };
+  await exiftool.write(file, coordinates, { writeArgs: ['-overwrite_original'] });
+
+  // The fixture is only worth anything if the coordinates really went in.
+  const before = await readRaw(file);
+  assert.ok(Object.keys(before).some((k) => /GPS/i.test(k)), `${kind}: no GPS was written to the fixture`);
+  assert.match(String(before['Composite:GPSPosition']), GPS_LAT_DMS, `${kind}: the fixture's own coordinates`);
+
+  return { id, file };
+}
+
+/** The activity and child a stripping run is given; only the switch differs between runs. */
+const gpsActivity = (id, kind) => ({
+  id,
+  studentId: 'stu-x',
+  capturedAt: new Date('2026-09-17T18:14:55-10:00'),
+  note: 'Water play in the garden.',
+  url: 'https://example.invalid/a',
+  author: 'Ms. Alvarez',
+  kind,
+});
+const GPS_STUDENT = {
+  id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook Early Learning',
+};
+
+test('coordinates that come in with a photo or a video are taken back out', { skip: exiftoolMissing }, async () => {
+  try {
+    for (const kind of ['image', 'video']) {
+      const { id, file } = await fileCarryingGps(kind);
+      const outcome = await applyMetadata({
+        filePath: file,
+        activity: gpsActivity(id, kind),
+        student: GPS_STUDENT,
+        tagChildName: true,
+        tagNote: true,
+        stripLocation: true,
+        writeSidecar: false,
+      });
+      assert.equal(outcome.embedded, true, `${kind}: ${outcome.reason ?? ''}`);
+
+      const after = await readRaw(file);
+      assert.deepEqual(
+        Object.keys(after).filter((k) => /GPS/i.test(k)),
+        [],
+        `${kind}: the place this was taken is still in the file`,
+      );
+      // Not only the named tags: the derived ones ExifTool computes from them are gone too,
+      // which is the difference between "the coordinates are hidden" and "they are absent".
+      assert.doesNotMatch(JSON.stringify(after), GPS_LAT_DMS, `${kind}: a copy survived somewhere else`);
+      // And the date was still written, so this is the strip doing the work rather than a
+      // write that failed and left the file alone.
+      const stamp = kind === 'video' ? after['Keys:CreationDate'] : after['ExifIFD:DateTimeOriginal'];
+      assert.ok(String(stamp).startsWith('2026:09:17 18:14:55'), `${kind}: ${stamp}`);
+    }
+  } finally {
+    await closeMetadata();
+  }
+});
+
+test('with the location switch off, coordinates are left exactly where they were', { skip: exiftoolMissing }, async () => {
+  // The mirror of the test above, and what makes it mean something: the same fixture and
+  // the same call with stripLocation false keeps every tag. Without this, a run that simply
+  // failed to write anything would look identical to a successful strip.
+  try {
+    for (const kind of ['image', 'video']) {
+      const { id, file } = await fileCarryingGps(kind);
+      await applyMetadata({
+        filePath: file,
+        activity: gpsActivity(id, kind),
+        student: GPS_STUDENT,
+        tagChildName: true,
+        tagNote: true,
+        stripLocation: false,
+        writeSidecar: false,
+      });
+
+      const after = await readRaw(file);
+      assert.ok(
+        Object.keys(after).some((k) => /GPS/i.test(k)),
+        `${kind}: the coordinates went when nothing asked them to`,
+      );
+      assert.match(String(after['Composite:GPSPosition']), GPS_LAT_DMS, `${kind}: and they still read the same`);
+    }
+  } finally {
+    await closeMetadata();
   }
 });
 

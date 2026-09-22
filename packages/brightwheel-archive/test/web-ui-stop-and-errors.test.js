@@ -8,6 +8,7 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Script } from 'node:vm';
 import { startMockBrightwheel, startWebUi, writeSecureFile } from '../dist/index.js';
 
 /**
@@ -67,6 +68,15 @@ async function setupUi({ connect = true } = {}) {
 const pageHtml = (handle) =>
   fetch(`http://127.0.0.1:${handle.port}/?token=${handle.token}`).then((r) => r.text());
 
+/** The page's one inline script, as source text. */
+function pageScript(html) {
+  const open = html.indexOf('<script>');
+  const close = html.indexOf('</script>', open);
+  assert.ok(open > 0 && close > open, 'the page must carry an inline script');
+  assert.equal(html.indexOf('<script', close), -1, 'and exactly one, or this reads the wrong half');
+  return html.slice(open + '<script>'.length, close);
+}
+
 /** The slice of that script between two markers, so an assertion cannot match elsewhere. */
 function section(html, from, to) {
   const a = html.indexOf(from);
@@ -125,7 +135,7 @@ test('/api/stop says plainly when there is nothing to stop, and needs the token'
   }
 });
 
-test('Stop ends a run where it stands, keeps what it saved, and says so in plain words', async (t) => {
+test('Stop ends a run where it stands, keeps what it saved, and says so in plain words', async () => {
   await freshConfigDir();
   const dir = await photosDir();
   const { handle, call } = await setupUi();
@@ -143,12 +153,15 @@ test('Stop ends a run where it stands, keeps what it saved, and says so in plain
     await handle.stop();
 
     const state = (await call('/api/state')).body;
-    if (state.progress.phase !== 'stopped') {
-      // sync()'s options.signal is the runtime lane's to add; until it is merged the abort
-      // reaches nothing and this half of the test has nothing to assert. Skipped out loud,
-      // with the reason, rather than quietly passing on a run that went to completion.
-      return t.skip('sync() does not honour options.signal yet — the runtime lane adds it');
-    }
+    // Asserted, never skipped. This used to degrade to t.skip() when the phase was anything
+    // but 'stopped', on the grounds that sync() might not honour options.signal yet — which
+    // meant that deleting the whole Stop feature would turn this, the one test named after
+    // it, green-with-a-skip. A guard that cannot fail defends nothing.
+    assert.equal(
+      state.progress.phase,
+      'stopped',
+      'the run must end as a stop; a run that went to completion means Stop reached nothing',
+    );
 
     assert.equal(state.running, false, 'the run is over, not merely asked to stop');
     assert.equal(state.lastResult.stopped, true, 'and it resolved rather than threw');
@@ -245,6 +258,34 @@ test('a stored selection of children who have all left reads as "all", not as no
 
 // ---------------------------------------------------------------- what the page shows
 
+test('the script the page serves is a script a browser can read', async () => {
+  // Every other assertion in this section reads the page's script as TEXT, which a broken
+  // script satisfies just as happily as a working one: a stray bracket anywhere in those
+  // 400 lines still contains the words being matched, so the whole suite stayed green while
+  // the parent's setup page did nothing at all. Compiling it is the cheapest thing that can
+  // tell the difference.
+  await freshConfigDir();
+  const { handle } = await setupUi({ connect: false });
+  try {
+    const source = pageScript(await pageHtml(handle));
+
+    // Compiled, never run: node:vm parses the whole body and throws a SyntaxError if it
+    // cannot, which is the question being asked. Running it would need a browser — there is
+    // no document, fetch target or navigator here — and this suite deliberately has none.
+    assert.doesNotThrow(
+      () => new Script(source, { filename: 'setup-page-script.js' }),
+      'the page script must parse, or the setup page is blank for every parent',
+    );
+
+    // The page is served as a classic script, not a module, so the compile above has to ask
+    // for the same dialect the browser will. A body that only parses as a module would pass
+    // a module compile here and still fail in the browser.
+    assert.ok(!/^\s*(import|export)\s/m.test(source), 'a classic script has no import or export');
+  } finally {
+    await handle.close();
+  }
+});
+
 test('the page keeps a refused folder marked until the folder itself is fixed', async () => {
   await freshConfigDir();
   const { handle } = await setupUi({ connect: false });
@@ -334,19 +375,59 @@ test('the page offers Stop only while a run is going, and reports a stopped run 
 
 // ---------------------------------------------------------------- test isolation
 
-test('the isolation guard refuses a real config location, not merely an unset variable', () => {
+test('the isolation guard allows only a throwaway directory, not merely "not one of three"', async () => {
   const restore = process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
+  const restoreScratch = process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
   try {
     // Importing scripts/test-env.js fills the variable in only when it is unset, so a
     // stray value already naming the developer's own directory would sail straight
     // through it and this suite would write the mock's session over their real one.
-    for (const real of ['Library', '.config', 'AppData']) {
-      process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = join(homedir(), real, 'brightwheel-archive');
-      assert.throws(assertIsolatedConfigDir, /real config location/, `${real} must be refused`);
+    const refused = [
+      // The three the guard used to know by name.
+      join(homedir(), 'Library', 'Application Support', 'brightwheel-archive'),
+      join(homedir(), '.config', 'brightwheel-archive'),
+      join(homedir(), 'AppData', 'Roaming', 'brightwheel-archive'),
+      // And the ones it did not, which is the point: anywhere in the home folder was
+      // accepted as "isolated" purely because nobody had listed it.
+      join(homedir(), 'brightwheel-archive'),
+      join(homedir(), 'Developer', 'brightwheel-archive', 'config'),
+      join(homedir(), 'Brightwheel Photos'),
+      '/etc/brightwheel-archive',
+      'relative/not-even-absolute',
+    ];
+    for (const dir of refused) {
+      process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = dir;
+      assert.throws(
+        assertIsolatedConfigDir,
+        /not a throwaway test directory|not a full path/,
+        `${dir} must be refused`,
+      );
     }
+
     delete process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR;
     assert.throws(assertIsolatedConfigDir, /import scripts\/test-env\.js/);
+
+    // What every test file actually does is accepted, or the guard is useless in the other
+    // direction. mkdtemp's answer on a Mac is a symlinked spelling of the temp directory,
+    // so this also pins that the comparison resolves both sides.
+    const throwaway = await mkdtemp(join(tmpdir(), 'bw-guard-'));
+    process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = throwaway;
+    assert.equal(assertIsolatedConfigDir(), throwaway);
+
+    // The one escape hatch: somewhere outside the temp directory that its owner has said in
+    // as many words is scratch space. It has to be said, and it only covers what it names.
+    const elsewhere = join(homedir(), 'some-runner-scratch', 'bw-config');
+    process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = elsewhere;
+    assert.throws(assertIsolatedConfigDir, /throwaway test directory/, 'unmarked, so refused');
+    process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH = join(homedir(), 'some-runner-scratch');
+    assert.equal(assertIsolatedConfigDir(), elsewhere);
+    process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = join(homedir(), 'Library', 'x');
+    assert.throws(assertIsolatedConfigDir, /throwaway test directory/, 'and covers only what it names');
+
+    await rm(throwaway, { recursive: true, force: true });
   } finally {
     process.env.BRIGHTWHEEL_ARCHIVE_CONFIG_DIR = restore;
+    if (restoreScratch === undefined) delete process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH;
+    else process.env.BRIGHTWHEEL_ARCHIVE_TEST_SCRATCH = restoreScratch;
   }
 });
