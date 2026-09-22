@@ -147,8 +147,12 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     '',
     `Photos and videos of ${childName} from this week, saved from Brightwheel.`,
     '',
-    'Each file has a matching `.json` file next to it with the date it was taken,',
-    'who posted it and any note the teacher wrote.',
+    'Each file has a matching `.json` file next to it with the date it was posted to',
+    'Brightwheel, who posted it and any note the teacher wrote.',
+    '',
+    'That posted date is the best one there is: the photographs arrive from Brightwheel',
+    'carrying no date of their own, so the moment the picture was actually taken is not',
+    'recorded anywhere. For a nursery the two are usually minutes apart.',
     '',
     // Said out loud, in the folder, because the archive outlives the settings that made
     // it: Brightwheel records the moment but not the timezone, so which day a photo lands
