@@ -25,8 +25,34 @@ export interface ClientOptions {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * How far an incremental walk keeps going after the feed appears to be older than the
+ * cut-off: this many pages in a row must be entirely older before it stops.
+ *
+ * One page is not enough, because the feed is ordered by *upload* time while the cut-off is
+ * a *capture* time, and teachers back-date. A batch of photos taken last week and uploaded
+ * this morning sits at the very top of the feed with capture times older than anything the
+ * last run saw. Stopping at that first page would end the walk on the batch and never reach
+ * the genuinely new posts underneath it — and because a walk that saw nothing new does not
+ * move the cut-off either, no later run would reach them, while the tool reported that
+ * everything was up to date. That is a photo lost for good, which is the one failure this
+ * project cannot accept.
+ *
+ * The trade is requests against photos. Each extra page is one more API request and one more
+ * politeness delay on every nightly run; three pages is roughly 300 posts at the default
+ * page size, which is larger than any plausible single back-dated batch and costs about a
+ * second. A larger number buys tolerance for a bigger batch at the same linear cost; a
+ * smaller one saves a request and silently loses photos.
+ */
+export const PAGES_PAST_THE_CUT_OFF = 3;
+
 export interface ActivityListOptions {
   pageSize?: number;
+  /**
+   * Hard stop on how many pages one walk reads. A runaway loop against a parent's account
+   * is worse than an unfinished walk, so the limit stays — but reaching it is reported on
+   * the last page's `truncated`, because such a walk has not seen the end of the feed.
+   */
   maxPages?: number;
   stopBefore?: Date;
   /**
@@ -58,6 +84,15 @@ export interface ActivityPage {
   found: number;
   /** Posts of every kind on this and every earlier page: how far through the feed we are. */
   examined: number;
+  /**
+   * Set on the last page of a walk that ran into `maxPages` while the feed went on.
+   *
+   * Without it, a walk cut short by the page limit ends exactly like a walk that reached
+   * the end of the feed, and a caller that advances a cut-off at the end of a walk would
+   * step over every post it never looked at. Only the walk sets this; a single-page fetch
+   * says nothing about where the feed ends.
+   */
+  truncated?: boolean;
 }
 
 /**
@@ -207,8 +242,8 @@ export class BrightwheelClient {
       `/students/${encodeURIComponent(studentId)}/activities?${query}`,
       `activities page ${page}`,
     );
-    const items = parseActivities(raw, studentId);
-    const check = validateExtraction(items, page);
+    const { items, undated } = parseActivities(raw, studentId);
+    const check = validateExtraction(items, page, undated);
     this.log(`Page ${page}: ${check.message}`);
 
     if (check.status === 'suspicious') {
@@ -229,20 +264,35 @@ export class BrightwheelClient {
    */
   async *activityPages(studentId: string, opts: ActivityListOptions = {}): AsyncGenerator<ActivityPage, void, void> {
     const maxPages = opts.maxPages ?? 500;
+    /** Consecutive pages, so far, that carried media and nothing newer than the cut-off. */
+    let olderPages = 0;
+
     for (let page = 0; page < maxPages; page++) {
       const result = await this.activitiesPage(studentId, page, opts);
       if (result.found === 0) return;
 
-      yield result;
-
-      // Incremental runs stop once the feed is older than what we already have. Only a
-      // page with media on it can say so; a page of check-ins carries no capture times.
+      // Incremental runs stop once the feed is older than what we already have — but not
+      // at the first such page. Only a page with media on it votes at all: a page of
+      // check-ins carries no capture times, so it leaves the tally where it was rather
+      // than resetting it and stretching the walk.
       const { items } = result;
-      if (opts.stopBefore && items.length > 0 && items.every((i) => i.capturedAt < opts.stopBefore!)) return;
+      if (opts.stopBefore && items.length > 0) {
+        olderPages = items.every((i) => i.capturedAt < opts.stopBefore!) ? olderPages + 1 : 0;
+      }
+      const reachedCutOff = olderPages >= PAGES_PAST_THE_CUT_OFF;
+
+      yield { ...result, truncated: !reachedCutOff && page === maxPages - 1 };
+      if (reachedCutOff) return;
     }
   }
 
-  /** Every media post for a student, newest first. The page-level walk without the context. */
+  /**
+   * Every media post for a student, newest first. The page-level walk without the context.
+   *
+   * Note what is dropped with that context: a caller here cannot tell a walk that reached
+   * the end of the feed from one `maxPages` cut short. Anything that records how far it
+   * got — `sync` does — must read the pages, not this.
+   */
   async *activities(studentId: string, opts: ActivityListOptions = {}): AsyncGenerator<MediaActivity[], void, void> {
     for await (const page of this.activityPages(studentId, opts)) {
       if (page.items.length > 0) yield page.items;
