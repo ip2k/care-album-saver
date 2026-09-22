@@ -55,4 +55,6 @@ regexes = [
   '''signature=(aaa|zzz|deadbeef|x)\b''',
   # The verify-report fixture, which needs a signature long enough to look like one.
   '''signature=not-a-real-signature''',
+  # The paste-shape tests, which need values long enough to look like a session.
+  '''NotARealSession''',
 ]
