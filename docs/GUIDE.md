@@ -37,7 +37,7 @@ The first time, it asks to download the tool. Say yes. Then it prints a link lik
 
 **Copy that whole link and paste it into your browser.** You will see this:
 
-![The setup assistant's first step, with the five instructions for finding your Brightwheel session highlighted](images/01-connect.png)
+![The setup assistant's first step, with the five instructions for finding your Brightwheel session and the box you paste it into both highlighted](images/01-connect.png)
 
 > **Why the odd-looking link?** `127.0.0.1` means *this computer*. The page is not on the
 > internet — nobody else can open it. The `token` is a one-time password so that other
@@ -111,7 +111,7 @@ path is not a folder yet: it is saved when you leave that box, press Enter, or p
 Press **Start saving**. The first run takes a while — it fetches everything. Later runs
 take seconds, because it only looks for what is new.
 
-![A completed run showing the saved, already-had and failed counts](images/04-done.png)
+![A completed run showing the saved, already-had and failed counts, with Stop greyed out beside Start saving now that nothing is running](images/04-done.png)
 
 The tool follows your system appearance, so it looks right in dark mode too:
 
