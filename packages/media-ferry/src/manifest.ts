@@ -7,7 +7,11 @@ export const MANIFEST_SCHEMA = 2;
 export const MANIFEST_FILENAME = 'archive.json';
 
 export interface ManifestRecord {
-  /** Filename relative to the archive root, using forward slashes. */
+  /**
+   * Filename relative to the archive root, using forward slashes on every platform. The
+   * manifest travels with the archive — a drive moved from a Windows machine to a Mac —
+   * so the one form that every platform's `path.join` accepts is the one stored.
+   */
   path: string;
   /** Stable identity supplied by the source service, e.g. "brightwheel:<media-id>". */
   sourceId: string | null;
@@ -58,6 +62,7 @@ export class Manifest {
   private bySourceId = new Map<string, ManifestRecord>();
   private byTransferId = new Map<string, ManifestRecord>();
   private byHash = new Map<string, ManifestRecord>();
+  private byPath = new Map<string, ManifestRecord>();
   private records: ManifestRecord[] = [];
   /** Adapter-owned state, persisted with the records. See `ManifestData.state`. */
   readonly state: Record<string, unknown> = {};
@@ -88,10 +93,14 @@ export class Manifest {
     // stripped form would mean this index silently never matched, and every run would
     // re-download anything whose Brightwheel id had changed.
     if (r.transferId) r.transferId = transferIdentity(r.transferId);
+    // Likewise the path: a manifest written on Windows before paths were normalised holds
+    // backslashes, and a reader on any platform should see the one documented form.
+    r.path = posixPath(r.path);
     this.records.push(r);
     if (r.sourceId) this.bySourceId.set(r.sourceId, r);
     if (r.transferId) this.byTransferId.set(r.transferId, r);
     this.byHash.set(r.sha256, r);
+    this.byPath.set(r.path, r);
   }
 
   /** Look up an already-downloaded file by service media id. */
@@ -109,6 +118,11 @@ export class Manifest {
     return this.byHash.get(sha256);
   }
 
+  /** Look up by archive-relative path, written with either kind of slash. */
+  findByPath(path: string): ManifestRecord | undefined {
+    return this.byPath.get(posixPath(path));
+  }
+
   /** True when any key already matches, meaning there is nothing to download. */
   has(opts: { sourceId?: string | null; url?: string | null }): boolean {
     if (opts.sourceId && this.bySourceId.has(opts.sourceId)) return true;
@@ -119,11 +133,14 @@ export class Manifest {
   add(record: Omit<ManifestRecord, 'downloadedAt'> & { downloadedAt?: string }): ManifestRecord {
     const full: ManifestRecord = {
       ...record,
+      path: posixPath(record.path),
       downloadedAt: record.downloadedAt ?? new Date().toISOString(),
     };
     const existing = full.sourceId ? this.bySourceId.get(full.sourceId) : undefined;
     if (existing) {
+      this.byPath.delete(existing.path);
       Object.assign(existing, full);
+      this.byPath.set(existing.path, existing);
       return existing;
     }
     this.index(full);
@@ -161,6 +178,11 @@ export class Manifest {
     await writeFile(temp, JSON.stringify(data, null, 2), 'utf8');
     await rename(temp, target);
   }
+}
+
+/** The forward-slash form of an archive-relative path, whichever separator it arrived with. */
+function posixPath(path: string): string {
+  return path.replaceAll('\\', '/');
 }
 
 export type { RemoteValidators };

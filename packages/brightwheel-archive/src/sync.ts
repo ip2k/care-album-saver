@@ -1,5 +1,5 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, posix, sep } from 'node:path';
 import {
   DownloadError,
   Manifest,
@@ -18,7 +18,11 @@ import { applyMetadata, closeMetadata } from './metadata.js';
 import { ARCHIVE_DIR_MODE, checkArchiveDir } from './safety.js';
 
 export interface SyncProgress {
-  phase: 'starting' | 'listing' | 'downloading' | 'done' | 'error';
+  /**
+   * `stopped` is the end of a run that was asked to stop (see `sync`'s `signal`): it is a
+   * normal ending, not a failure, and it is the last event such a run emits.
+   */
+  phase: 'starting' | 'listing' | 'downloading' | 'done' | 'error' | 'stopped';
   student?: string;
   message: string;
   saved: number;
@@ -44,6 +48,11 @@ export interface SyncResult {
   students: string[];
   archiveDir: string;
   warnings: string[];
+  /**
+   * The run stopped early because it was asked to, rather than reaching the end of the
+   * feed. Everything it had saved is on disk and in the manifest; the next run carries on.
+   */
+  stopped: boolean;
 }
 
 /** Where a given photo belongs on disk, per the chosen layout. */
@@ -59,6 +68,17 @@ function folderFor(config: Config, student: Student, when: Date): string {
     default:
       return join(child, week);
   }
+}
+
+/**
+ * The manifest's form of "where this file is": forward slashes, on every platform.
+ *
+ * `join` uses the separator of the machine it runs on, so a Windows run would record
+ * `Robin-Maple\2026-W38\...` in a file that travels with the archive to a Mac. The folders
+ * on disk keep the platform's own separator; only the recorded path is normalised.
+ */
+function archivePath(rel: string, filename: string): string {
+  return posix.join(...rel.split(sep), filename);
 }
 
 /**
@@ -142,6 +162,11 @@ interface Walk {
    * expiry pays for one extra request and the other ninety-nine on that page reuse it.
    */
   refreshed: Map<number, Map<string, string>>;
+  /**
+   * Pages that have already spent their one re-fetch on an *expiry* the URL declared, as
+   * opposed to one the CDN enforced. See `fetchMedia` for why that budget exists.
+   */
+  presumedExpired: Set<number>;
 }
 
 const isRefused = (e: unknown) => e instanceof DownloadError && (e.status === 401 || e.status === 403);
@@ -162,6 +187,13 @@ const hasExpired = (url: string) => {
  * same URL twice. A refusal that survives all of that is something other than expiry, and
  * the item is left for the next run rather than hammered. A refusal counts, a network error
  * does not — that is the caller's problem to report as it is.
+ *
+ * Bounded twice over, because `expires=` is a guess. Not every CDN means "Unix time" by it;
+ * one that means "seconds of life" reads as 1970 and so as permanently expired, which would
+ * buy a fresh listing page for every item on the page and get the same unreadable parameter
+ * back each time. So a page may be re-fetched on the strength of a declared expiry once per
+ * run — after that its URLs are treated as final and the CDN, which is the only authority
+ * on the matter, gets to answer. A real refusal still buys the one re-fetch per item.
  */
 async function fetchMedia(walk: Walk, page: ActivityPage, activity: MediaActivity, target: string) {
   const headers = walk.client.mediaHeaders();
@@ -185,8 +217,10 @@ async function fetchMedia(walk: Walk, page: ActivityPage, activity: MediaActivit
   // refreshed copy is the better first choice for the rest — no wasted request each.
   let url = walk.refreshed.get(page.page)?.get(activity.id) ?? activity.url;
   // A URL that says it has already expired is not worth a request either — unless the
-  // feed offers nothing else, in which case the CDN gets the final word after all.
-  if (hasExpired(url)) {
+  // feed offers nothing else, in which case the CDN gets the final word after all, or the
+  // page has already been refreshed on that claim once and it did not help.
+  if (hasExpired(url) && !walk.presumedExpired.has(page.page)) {
+    walk.presumedExpired.add(page.page);
     tried.add(url);
     url = (await alternative()) ?? url;
   }
@@ -206,11 +240,20 @@ async function fetchMedia(walk: Walk, page: ActivityPage, activity: MediaActivit
   }
 }
 
+/**
+ * Save every new photo and video.
+ *
+ * `options.signal` is how a parent stops a run — Ctrl+C in the terminal, Stop in the setup
+ * assistant. Stopping is not failing: the item being downloaded is allowed to finish, the
+ * manifest is written, and the run *resolves* with `stopped` set. Nothing is abandoned
+ * half-saved and nothing is lost, because the cut-off of the child that was interrupted is
+ * left where it was — the next run walks that feed again and skips what it already holds.
+ */
 export async function sync(
   client: BrightwheelClient,
   config: Config,
   onProgress: (p: SyncProgress) => void = () => {},
-  options: { allowTemporaryDir?: boolean } = {},
+  options: { allowTemporaryDir?: boolean; signal?: AbortSignal } = {},
 ): Promise<SyncResult> {
   const result: SyncResult = {
     saved: 0,
@@ -219,6 +262,7 @@ export async function sync(
     students: [],
     archiveDir: config.archiveDir,
     warnings: [],
+    stopped: false,
   };
 
   onProgress({ phase: 'starting', message: 'Checking your Brightwheel session', ...counts(result) });
@@ -249,8 +293,15 @@ export async function sync(
   const takenByFolder = new Map<string, Set<string>>();
   const seenFolders = new Set<string>();
 
+  /** Set when the progress stream has already carried this run's failure. */
+  let failureReported = false;
+
   try {
     for (const student of students) {
+      if (options.signal?.aborted) {
+        result.stopped = true;
+        break;
+      }
       onProgress({
         phase: 'listing',
         student: student.fullName,
@@ -261,7 +312,13 @@ export async function sync(
       // Incremental: stop paging once we reach posts older than the last complete walk.
       const through = walked[student.id];
       const cutOff = config.incremental && through ? new Date(through) : undefined;
-      const walk: Walk = { client, student, listing: { stopBefore: cutOff }, refreshed: new Map() };
+      const walk: Walk = {
+        client,
+        student,
+        listing: { stopBefore: cutOff },
+        refreshed: new Map(),
+        presumedExpired: new Set(),
+      };
       let newest = cutOff;
       const failedBefore = result.failed;
 
@@ -278,6 +335,14 @@ export async function sync(
         });
 
         for (const activity of page.items) {
+          // Asked to stop: the download in flight has finished, and the next one never
+          // starts. Checked here rather than mid-download so that no file is left partly
+          // written and every byte already fetched is recorded below.
+          if (options.signal?.aborted) {
+            result.stopped = true;
+            break;
+          }
+
           if (!newest || activity.capturedAt > newest) newest = activity.capturedAt;
 
           if (manifest.has({ sourceId: `brightwheel:${activity.id}`, url: activity.url })) {
@@ -328,7 +393,7 @@ export async function sync(
             }
 
             manifest.add({
-              path: join(rel, filename),
+              path: archivePath(rel, filename),
               sourceId: `brightwheel:${activity.id}`,
               transferId: dl.url,
               bytes: dl.bytes,
@@ -360,11 +425,17 @@ export async function sync(
             if (result.warnings.length < 8) result.warnings.push(`${filename}: ${message}`);
           }
         }
+        if (result.stopped) break;
       }
 
       // Only a walk that reached the end with nothing left behind may move the cut-off; a
-      // failed item stays inside the window so that the next run really does retry it.
-      if (newest && result.failed === failedBefore) walked[student.id] = newest.toISOString();
+      // failed item stays inside the window so that the next run really does retry it, and
+      // a walk stopped part-way is the same case — it holds the newest posts and nothing
+      // older, so its newest post is not a floor the next run may stand on.
+      if (!result.stopped && newest && result.failed === failedBefore) {
+        walked[student.id] = newest.toISOString();
+      }
+      if (result.stopped) break;
     }
   } catch (error) {
     // Say so on the progress stream as well, with the counts intact: a polling UI must see
@@ -374,6 +445,7 @@ export async function sync(
       result.saved > 0
         ? ` The ${result.saved} item${result.saved === 1 ? ' saved before this is' : 's saved before this are'} kept; the next run carries on from there.`
         : '';
+    failureReported = true;
     onProgress({ phase: 'error', message: `${reason}${kept}`, ...counts(result) });
     throw error;
   } finally {
@@ -382,9 +454,31 @@ export async function sync(
     // died halfway discarded up to 25 downloaded items and every later run fetched them again.
     try {
       await manifest.save();
+    } catch (error) {
+      // The manifest is the memory of what has been saved, so failing to write it is the
+      // run failing, not a footnote: the next run would fetch all of it again. It reaches
+      // the progress stream like any other failure, or a polling UI sits on the last
+      // "Saving…" line for ever. It does not replace an earlier failure as the thrown
+      // error, though — that one is what explains this one.
+      const reason = error instanceof Error ? error.message : String(error);
+      onProgress({
+        phase: 'error',
+        message: `The list of what has been saved could not be written: ${reason}`,
+        ...counts(result),
+      });
+      if (!failureReported) throw error;
     } finally {
       await closeMetadata();
     }
+  }
+
+  if (result.stopped) {
+    onProgress({
+      phase: 'stopped',
+      message: `Stopped. ${result.saved} item(s) saved so far are kept; run again to carry on where it left off.`,
+      ...counts(result),
+    });
+    return result;
   }
 
   onProgress({
