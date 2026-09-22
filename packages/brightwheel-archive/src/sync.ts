@@ -82,7 +82,31 @@ function archivePath(rel: string, filename: string): string {
 }
 
 /**
+ * The timezone this archive is filed under.
+ *
+ * Brightwheel hands us an instant and no timezone: `event_date` says *when* a photo was
+ * taken, never *where*, and the students response carries the school's name but not its
+ * clock. So the day and week a photo is filed under can only come from a clock we choose,
+ * and the only honest choice is the one the person can see: the clock of the computer doing
+ * the archiving. That is right for a parent archiving at home and wrong for a machine set
+ * to UTC (a server, a container), which is why it is written into every week's README and
+ * into the manifest rather than left implicit. Pin it with `TZ` if the machine's clock is
+ * not the one the photos were taken by; nothing here invents a zone the data does not have.
+ */
+function archiveTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+/**
  * Filename stem: date, time and a short id.
+ *
+ * The date and time are the local ones — the same clock the week folder uses, see
+ * `archiveTimezone` — so a file's name, its folder and its embedded metadata never
+ * disagree with each other.
  *
  * The id suffix is not decoration. Two photos taken in the same second by the same teacher
  * are common (burst shots), and without a stable discriminator they would collide and the
@@ -125,6 +149,15 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     'Each file has a matching `.json` file next to it with the date it was taken,',
     'who posted it and any note the teacher wrote.',
     '',
+    // Said out loud, in the folder, because the archive outlives the settings that made
+    // it: Brightwheel records the moment but not the timezone, so which day a photo lands
+    // under is decided by the clock of the machine that saved it. A reader years later —
+    // or a parent who archived a fortnight of photos from a hotel — can see which clock.
+    `Dates and times here follow one clock: ${archiveTimezone()}, the timezone of the`,
+    'computer that saved these files. Brightwheel records when a photo was taken but not',
+    'the timezone it was taken in, so files saved from a computer set to another timezone',
+    'can land in the next day — or the next week — along from these.',
+    '',
     'Saved by brightwheel-archive. These files are yours; nothing here phones home.',
     '',
   ].join('\n');
@@ -150,6 +183,37 @@ function walkedThrough(manifest: Manifest): Record<string, string> {
   return state.walkedThrough as Record<string, string>;
 }
 
+/** One post Brightwheel no longer has, as recorded in the manifest. */
+interface GoneItem {
+  /** Why we believe it is gone, e.g. "HTTP 404". Never a URL: those are signed credentials. */
+  reason: string;
+  /** When this run gave up on it (ISO 8601). */
+  at: string;
+}
+
+/**
+ * Posts Brightwheel no longer has, by source id, kept in the manifest.
+ *
+ * A failed item normally holds the cut-off where it is, so that the next run walks the same
+ * stretch of feed again and really does retry it. That is right for a refused download or a
+ * dropped connection, and wrong for a post deleted on Brightwheel's side: nothing will ever
+ * fetch it, so left in the way it pins the cut-off for ever and every future run re-lists
+ * the entire feed only to fail on the same item again. Writing it down here retires it from
+ * that job and leaves the archive saying which post is missing and why, rather than quietly
+ * forgetting it.
+ *
+ * Recorded, not blacklisted: a later run that lists the post again still spends one request
+ * on it. A post that reappears is worth a request, and a photo written off by mistake is
+ * not recoverable. All the record changes is that it no longer pins the cut-off.
+ */
+function goneFromBrightwheel(manifest: Manifest): Record<string, GoneItem> {
+  const state = manifest.state;
+  if (typeof state.unavailable !== 'object' || state.unavailable === null || Array.isArray(state.unavailable)) {
+    state.unavailable = {};
+  }
+  return state.unavailable as Record<string, GoneItem>;
+}
+
 /** What one child's walk of the feed needs in order to ask for a page a second time. */
 interface Walk {
   client: BrightwheelClient;
@@ -170,6 +234,17 @@ interface Walk {
 }
 
 const isRefused = (e: unknown) => e instanceof DownloadError && (e.status === 401 || e.status === 403);
+/**
+ * A download failure no later run can cure: the file is not there.
+ *
+ * A signature that has merely gone stale is *refused* (401/403), and `fetchMedia` has
+ * already answered that by asking the listing for a fresh URL. A 404 or a 410 after all of
+ * that is the CDN saying the object itself is gone — a post deleted on Brightwheel's side.
+ * Everything else, including every network error, stays retryable, because the cost of
+ * retrying something curable is one request and the cost of writing off something curable
+ * is a photo.
+ */
+const isGone = (e: unknown) => e instanceof DownloadError && (e.status === 404 || e.status === 410);
 const hasExpired = (url: string) => {
   const expiry = signedUrlExpiry(url);
   return expiry !== null && expiry.getTime() <= Date.now();
@@ -288,6 +363,8 @@ export async function sync(
   await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
   const manifest = await Manifest.open(config.archiveDir, 'brightwheel');
   const walked = walkedThrough(manifest);
+  const gone = goneFromBrightwheel(manifest);
+  const timezone = archiveTimezone();
 
   // Names already used in each folder, so collisions get a suffix rather than overwrite.
   const takenByFolder = new Map<string, Set<string>>();
@@ -320,9 +397,19 @@ export async function sync(
         presumedExpired: new Set(),
       };
       let newest = cutOff;
-      const failedBefore = result.failed;
+      /** Failures this run could cure by trying again. Only these hold the cut-off back. */
+      let worthRetrying = 0;
+      /** The walk hit its page limit: it has not seen the end of this child's feed. */
+      let truncated = false;
+      /** How many pages it did read, for a message that says where it stopped. */
+      let pagesRead = 0;
 
       for await (const page of client.activityPages(student.id, walk.listing)) {
+        pagesRead = page.page + 1;
+        // A walk cut short by the page limit looks exactly like a finished one from here,
+        // which is why the page says so: without this the cut-off would move over posts
+        // this run never listed, and no later run would ever go back for them.
+        if (page.truncated) truncated = true;
         // Also checked here, not only in the item loop below: a page carrying no media
         // (a day of nothing but check-ins) never enters that loop, so without this a stop
         // would go unnoticed while the walk kept listing pages.
@@ -385,8 +472,6 @@ export async function sync(
             const dl = await fetchMedia(walk, page, activity, target);
             taken.add(filename.toLowerCase());
 
-            const sha256 = await hashFile(target);
-
             const metadata = await applyMetadata({
               filePath: target,
               activity,
@@ -403,6 +488,11 @@ export async function sync(
               result.warnings.push(metadata.reason);
             }
 
+            // Hashed after the tags go in, not before: embedding rewrites the file, so a
+            // hash taken on the way past describes a file that no longer exists and can
+            // never be used to check the archive. This one is the file on disk.
+            const sha256 = await hashFile(target);
+
             manifest.add({
               path: archivePath(rel, filename),
               sourceId: `brightwheel:${activity.id}`,
@@ -413,6 +503,10 @@ export async function sync(
               lastModified: dl.validators.lastModified ?? null,
               provenance: {
                 capturedAt: activity.capturedAt.toISOString(),
+                // Which clock decided the folder and the filename. capturedAt is an
+                // instant; the day it belongs to is not, and this is the answer this run
+                // used. See `archiveTimezone`.
+                filedInTimezone: timezone,
                 studentId: student.id,
                 studentName: student.fullName,
                 note: activity.note,
@@ -433,17 +527,46 @@ export async function sync(
             }
             result.failed += 1;
             const message = error instanceof Error ? error.message : String(error);
-            if (result.warnings.length < 8) result.warnings.push(`${filename}: ${message}`);
+            if (isGone(error)) {
+              // Written down rather than retried for ever. The reason is the status alone:
+              // the fuller message carries the media URL, and a signed URL is a credential.
+              gone[`brightwheel:${activity.id}`] = {
+                reason: `HTTP ${(error as DownloadError).status}`,
+                at: new Date().toISOString(),
+              };
+              if (result.warnings.length < 8) {
+                result.warnings.push(
+                  `${filename}: Brightwheel no longer has this one, so it cannot be saved. ` +
+                    `It is noted in archive.json and will not hold up later runs.`,
+                );
+              }
+            } else {
+              worthRetrying += 1;
+              if (result.warnings.length < 8) result.warnings.push(`${filename}: ${message}`);
+            }
           }
         }
         if (result.stopped) break;
       }
 
-      // Only a walk that reached the end with nothing left behind may move the cut-off; a
-      // failed item stays inside the window so that the next run really does retry it, and
-      // a walk stopped part-way is the same case — it holds the newest posts and nothing
-      // older, so its newest post is not a floor the next run may stand on.
-      if (!result.stopped && newest && result.failed === failedBefore) {
+      // A walk that ran out of pages has seen the newest posts and nothing older, exactly
+      // like one that was interrupted, so it says so rather than passing for a full pass.
+      if (truncated) {
+        result.warnings.push(
+          `${student.fullName}'s feed is longer than this tool reads in one go: it stopped after ` +
+            `${pagesRead} pages, before the oldest posts. Everything it reached is saved, and it has ` +
+            `not written that feed down as finished, so nothing has been quietly skipped — but running ` +
+            `again will stop in the same place. Please report this; reaching the rest needs a change to the tool.`,
+        );
+      }
+
+      // Only a walk that reached the end with nothing left behind may move the cut-off; an
+      // item that failed in a way a retry could cure stays inside the window so that the
+      // next run really does retry it, and a walk stopped part-way — or cut short by the
+      // page limit — is the same case: it holds the newest posts and nothing older, so its
+      // newest post is not a floor the next run may stand on. An item Brightwheel no longer
+      // has is the exception, because no run can cure it; it is written down instead.
+      if (!result.stopped && !truncated && newest && worthRetrying === 0) {
         walked[student.id] = newest.toISOString();
       }
       if (result.stopped) break;

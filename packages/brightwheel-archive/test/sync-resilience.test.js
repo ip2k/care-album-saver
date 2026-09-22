@@ -90,11 +90,17 @@ test('the run after an interruption picks up everything the interrupted one miss
     assert.equal(second.skipped, 10, 'page 0, already held');
     assert.equal(listings(healthy), 4, 'pages 0 to 2 plus the empty page that ends the feed');
 
-    // That walk finished, so the next incremental run may stop early — and does.
+    // That walk finished, so the next incremental run may stop early — and does, once it
+    // has looked PAGES_PAST_THE_CUT_OFF pages past the cut-off. It does not stop at the
+    // first page that is entirely older, because the feed is ordered by upload time and a
+    // batch of back-dated uploads sits above the posts it pre-dates; see
+    // fix-correctness.test.js, "an incremental walk does not stop at a back-dated batch".
+    // Here that means the walk reaches the end of this 23-post feed rather than stopping
+    // after page 1, so everything is recognised rather than only the first twenty.
     const third = await run(healthy, dir, { incremental: true });
     assert.equal(third.saved, 0);
-    assert.equal(third.skipped, 20);
-    assert.equal(listings(healthy), 4 + 2, 'stopped once the feed was older than the cut-off');
+    assert.equal(third.skipped, 23);
+    assert.equal(listings(healthy), 4 + 4, 'pages 0 to 2, then the empty page that ends the feed');
   } finally {
     await healthy.close();
   }
