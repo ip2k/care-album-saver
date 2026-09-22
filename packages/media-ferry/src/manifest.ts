@@ -1,10 +1,34 @@
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { transferIdentity } from './url.js';
 import type { RemoteValidators } from './download.js';
 
 export const MANIFEST_SCHEMA = 2;
 export const MANIFEST_FILENAME = 'archive.json';
+
+/**
+ * Default POSIX permissions for the manifest file: owner only.
+ *
+ * The manifest is not a list of filenames. Every record carries whatever `provenance` the
+ * adapter chose to write, and for an archive of personal media that is people — who is in
+ * the file, who posted it, what they said about it. A file describing people should not be
+ * readable by every account on a shared computer merely because 0644 is what `writeFile`
+ * does by default, so the cautious mode is the default here and a caller that wants the
+ * manifest shared passes its own.
+ *
+ * Windows has no POSIX modes; there the file inherits the ACL of the folder it sits in,
+ * and `save` skips the mode entirely rather than pretending otherwise.
+ */
+export const MANIFEST_FILE_MODE = 0o600;
+
+export interface ManifestOptions {
+  /**
+   * Permissions for the manifest file on POSIX systems. Defaults to
+   * {@link MANIFEST_FILE_MODE}, which is owner-only; pass e.g. `0o644` for an archive that
+   * is meant to be read by other accounts. Ignored on Windows.
+   */
+  fileMode?: number;
+}
 
 export interface ManifestRecord {
   /**
@@ -67,10 +91,14 @@ export class Manifest {
   /** Adapter-owned state, persisted with the records. See `ManifestData.state`. */
   readonly state: Record<string, unknown> = {};
 
-  private constructor(private readonly root: string, private readonly source: string) {}
+  private constructor(
+    private readonly root: string,
+    private readonly source: string,
+    private readonly fileMode: number,
+  ) {}
 
-  static async open(root: string, source: string): Promise<Manifest> {
-    const m = new Manifest(root, source);
+  static async open(root: string, source: string, options: ManifestOptions = {}): Promise<Manifest> {
+    const m = new Manifest(root, source, options.fileMode ?? MANIFEST_FILE_MODE);
     try {
       const raw = await readFile(join(root, MANIFEST_FILENAME), 'utf8');
       const data = JSON.parse(raw) as ManifestData;
@@ -159,6 +187,11 @@ export class Manifest {
    * Persist atomically: write a temp file then rename over the target. A half-written
    * manifest after a crash would make the tool forget files it actually has and
    * re-download them, so the rename (which is atomic on POSIX) matters.
+   *
+   * The mode goes on the *create*, not on a `chmod` afterwards: doing it in two steps
+   * leaves a window, however short, in which a file describing people is readable by every
+   * account on the machine. The rename carries the mode across with it, which also means a
+   * manifest left at 0644 by an older version is replaced rather than corrected in place.
    */
   async save(): Promise<void> {
     const data: ManifestData = {
@@ -175,7 +208,12 @@ export class Manifest {
     };
     const target = join(this.root, MANIFEST_FILENAME);
     const temp = `${target}.tmp`;
-    await writeFile(temp, JSON.stringify(data, null, 2), 'utf8');
+    await writeFile(temp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: this.fileMode });
+    if (process.platform !== 'win32') {
+      // Re-assert: the create mode is filtered by the process umask, and a temp file left
+      // behind by a crashed run is truncated by the write above but keeps its old mode.
+      await chmod(temp, this.fileMode);
+    }
     await rename(temp, target);
   }
 }

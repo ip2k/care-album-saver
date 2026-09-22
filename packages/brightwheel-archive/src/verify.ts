@@ -1,4 +1,5 @@
-import { BrightwheelClient, DEFAULT_BASE_URL, SESSION_COOKIE } from './api/client.js';
+import { DEFAULT_BASE_URL, SESSION_COOKIE } from './api/client.js';
+import { scrub } from './secrets.js';
 import type { Secret } from './secrets.js';
 
 /**
@@ -10,11 +11,18 @@ import type { Secret } from './secrets.js';
  * child's name, photo, note or identifier.
  *
  * The rule it follows: report whether a field is PRESENT and what TYPE it is. Never report
- * its value. The one exception is a boolean derived from two timestamps (does event_date
- * differ from created_at), which is the specific claim the whole timestamp-correction
- * feature rests on and which cannot be checked any other way.
+ * its value. There are two deliberate exceptions, each the answer to a question the project
+ * cannot settle any other way: whether event_date differs from created_at (the claim the
+ * whole timestamp-correction feature rests on, reported as a difference in minutes), and
+ * which company serves the media (reported as a domain, never the full host name — see
+ * where it is pushed).
  *
- * It makes at most four requests and downloads no media.
+ * It also sends the session to exactly one place: the Brightwheel API. The obvious extra
+ * check — "does the media CDN reject the session cookie?" — is the one thing this tool
+ * promises never to do, so it is not done and the report says so instead.
+ *
+ * It makes at most four requests — three to the API, one to the media host without the
+ * session — and downloads no media.
  */
 
 export interface FieldCheck {
@@ -105,7 +113,15 @@ export async function verify(
   report.checks.push({
     endpoint: 'GET /guardians/{id}/students',
     fields: [
-      { field: 'students', present: Array.isArray(list), type: typeOf(list), note: `${list.length} found` },
+      {
+        field: 'students',
+        present: Array.isArray(list),
+        type: typeOf(list),
+        // How many children are on the account is a fact about the family, not about the
+        // shape of the API, and this report is meant to be safe to paste into a public
+        // issue. "Empty or not" answers the only question the shape check is asking.
+        note: list.length === 0 ? 'empty' : 'at least one entry',
+      },
       ...(list[0] ? check(list[0] as Record<string, unknown>, ['student', 'student.object_id', 'student.first_name', 'relationship_type']) : []),
     ],
   });
@@ -178,24 +194,46 @@ export async function verify(
               ? `CONFIRMED: media URLs are signed and expiring (params: ${[...u.searchParams.keys()].join(', ')}).`
               : 'NOTE: this media URL carries no signature parameters — signature-stripping may be unnecessary.',
           );
-          report.findings.push(`Media host: ${u.host}`);
+          // The domain, not the whole host name. Which company serves the media is a real
+          // answer to a real question — is it Brightwheel's own origin or a bucket at a
+          // cloud provider? — but the labels in front of it need not be neutral: a
+          // per-tenant bucket can carry a nursery's name, and a report a parent is told to
+          // paste into a public issue must not carry the name of their child's nursery.
+          const domain = u.hostname.split('.').slice(-2).join('.');
+          const apiHost = new URL(baseUrl).hostname;
+          report.findings.push(
+            `Media is served from ${domain}, ` +
+              (u.hostname === apiHost ? 'the same host as the API.' : 'a different host from the API.') +
+              ' The full host name is left out of this report in case it names your nursery.',
+          );
 
-          // 4 — the cookie question. Does the media host reject the session cookie?
-          const withCookie = await doFetch(mediaUrl, {
-            method: 'HEAD',
-            headers: { Cookie: `${SESSION_COOKIE}=${session.expose()}` },
-          });
+          // 4 — the media host, asked the way a download asks it: signature only, no
+          // session. The tempting fifth request is "and what does it say WITH the cookie?",
+          // which is exactly the thing `BrightwheelClient.mediaHeaders` exists never to do
+          // and the README promises never happens. A command whose job is to verify the
+          // tool's claims cannot be the one place that breaks one of them, so the question
+          // goes unanswered and the report says that plainly rather than quietly omitting
+          // it. The useful half — "is the signature alone enough?" — is what downloading
+          // actually depends on, and that is the half kept.
           const without = await doFetch(mediaUrl, { method: 'HEAD' });
           report.findings.push(
-            `Media fetch WITHOUT cookie: HTTP ${without.status}. WITH cookie: HTTP ${withCookie.status}.` +
-              (without.ok && !withCookie.ok
-                ? ' CONFIRMED: sending the session to the media host breaks the request.'
-                : without.ok && withCookie.ok
-                  ? ' Both work; omitting the cookie is still correct, as the session should reach only the API.'
-                  : ' Unexpected — investigate before trusting downloads.'),
+            `Media fetch WITHOUT the session cookie: HTTP ${without.status}.` +
+              (without.ok
+                ? ' CONFIRMED: the URL signature alone is enough, which is what downloading relies on.'
+                : ' Unexpected — investigate before trusting downloads.'),
+          );
+          report.findings.push(
+            'NOT CHECKED, deliberately: what the media host does WITH the session cookie. ' +
+              'This tool sends your Brightwheel session to the Brightwheel API and nowhere ' +
+              'else, so it cannot report what would happen if it did.',
           );
         } catch (error) {
-          report.warnings.push(`Could not probe the media URL: ${error instanceof Error ? error.message : String(error)}`);
+          // Scrubbed: a failure here is reported to a parent who has been told this output
+          // is safe to share, and an error thrown while handling a signed URL is one of the
+          // few places that URL could turn up in a message.
+          report.warnings.push(
+            `Could not probe the media URL: ${scrub(error instanceof Error ? error.message : String(error))}`,
+          );
         }
       } else {
         report.warnings.push('No media URL found on the first photo activity — the media field has moved.');
