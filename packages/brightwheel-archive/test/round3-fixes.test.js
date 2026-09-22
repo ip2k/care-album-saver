@@ -204,7 +204,9 @@ test('turning the names off leaves no name of any kind inside the file', async (
   // The switch reads, to a parent, as "do not make this photo self-identifying". It used
   // to govern only the child's name, while the nursery's name and the name of whoever
   // posted the photo went in regardless — so a file shared with the switch off still said
-  // which nursery the child attends. Both now follow the same switch.
+  // which nursery the child attends. Both now follow the same switch, and so does the
+  // teacher's note, which was the last thing still going in and is the one that names all
+  // three at once.
   const student = { id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook Early Learning' };
   const activity = {
     id: 'act-1',
@@ -230,8 +232,12 @@ test('turning the names off leaves no name of any kind inside the file', async (
     assert.ok(!written.includes('Robin'), `${kind}: the child's name must not be written`);
     assert.ok(!written.includes('Sunnybrook'), `${kind}: nor the nursery's`);
     assert.ok(!written.includes('Alvarez'), `${kind}: nor whoever posted it`);
-    // The note is a different switch, and is still honoured.
-    assert.ok(written.includes('Water play'), `${kind}: the note has its own switch`);
+    // Nor the note. "Water play in the garden" is a tame example; a real one is "Robin fell
+    // asleep mid-song at circle time", which names the child, the room and — with the
+    // teacher's name beside it — a third party. While it was written under its own switch,
+    // "nothing inside the file says who or where" was false in the default configuration,
+    // because the note switch starts on. It is still kept in full in the .json sidecar.
+    assert.ok(!written.includes('Water play'), `${kind}: nor the teacher's note`);
 
     const on = JSON.stringify(buildTags({
       filePath: '/dev/null',
