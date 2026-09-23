@@ -10,6 +10,7 @@
  */
 import { chromium } from 'playwright';
 import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +28,10 @@ const VIEWPORT = { width: 1340, height: 940 };
  * and must exist for the script to run at all, and it is deleted at the end.
  */
 const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-screenshots', import.meta.url));
+// The daily log names a child and the archive folder, and shot 4 shows its tail. Pointed at
+// a throwaway directory so a committed picture can only ever contain this script's own
+// synthetic run — never the real one sitting in ~/Library/Logs.
+process.env.CARE_ALBUM_LOG_DIR = mkdtempSync(join(tmpdir(), 'cas-shot-logs-'));
 
 /**
  * The path shown in the pictures. The real one contains the developer's username, which

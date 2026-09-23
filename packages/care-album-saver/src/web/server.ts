@@ -8,6 +8,8 @@ import { cleanPastedPath, inspectCookiePaste, PASTE_CLIENT_SOURCE } from '../pas
 import { sync, type SyncProgress } from '../sync.js';
 import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
+import { photoAt, summarise } from '../gallery.js';
+import { createReadStream } from 'node:fs';
 import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
 import * as schedule from '../schedule.js';
 import { PAGE } from './page.js';
@@ -283,7 +285,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       if (req.method === 'GET' && url.pathname === '/api/state') {
         const config = await loadConfig();
         const session = await loadSession();
+        // What the archive holds, so the page can answer "is this still working?" with the
+        // photographs themselves rather than with a green tick that outlives the truth.
+        const archive = await summarise(config).catch(() => null);
         json(200, {
+          archive,
           hasSession: Boolean(session),
           sessionFingerprint: session?.session.fingerprint() ?? null,
           sessionSavedAt: session?.savedAt.toISOString() ?? null,
@@ -293,6 +299,54 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           running,
           lastResult,
         });
+        return;
+      }
+
+      /**
+       * The tail of the daily log, and where it lives.
+       *
+       * Read-only, scrubbed on the way out like every other line this server shows, and
+       * bounded by lines so an enormous one cannot make it read a disk into memory.
+       */
+      if (req.method === 'GET' && url.pathname === '/api/logs') {
+        json(200, { ok: true, ...(await schedule.readLog(200)) });
+        return;
+      }
+
+      /** Hand the log to whatever the platform has for reading logs. */
+      if (req.method === 'POST' && url.pathname === '/api/open-logs') {
+        json(200, { ok: true, ...(await schedule.openLogs()) });
+        return;
+      }
+
+      /**
+       * One photo out of the archive, for the gallery.
+       *
+       * The browser never names a file. It names an INDEX into the manifest, and an index
+       * can only ever resolve to something this tool wrote inside the archive folder — so
+       * there is no path to traverse with and no traversal to defend against. `photoAt`
+       * re-checks that the resolved file is still under the archive root anyway, for the
+       * case of a manifest edited by hand.
+       *
+       * It is a GET carrying the token in the query string, which the /api/* routes avoid.
+       * That is deliberate and it is the one exception: an <img> tag cannot send a header,
+       * and the alternative to this exception is a dashboard with no pictures on it. The
+       * request is same-origin, the page's own address already carries the token, and the
+       * fetch-metadata and Host checks above apply to it exactly as they do to everything.
+       */
+      if (req.method === 'GET' && url.pathname === '/photo') {
+        const found = await photoAt(await loadConfig(), url.searchParams.get('i'));
+        if (!found) {
+          res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
+          return;
+        }
+        res.writeHead(200, {
+          'content-type': found.type,
+          'content-length': String(found.bytes),
+          // A child's photograph must not sit in a browser cache after the tool is closed.
+          'cache-control': 'no-store, no-cache, must-revalidate, private',
+        });
+        createReadStream(found.path).pipe(res);
         return;
       }
 
