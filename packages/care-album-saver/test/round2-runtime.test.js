@@ -19,7 +19,7 @@ import {
 } from '../dist/index.js';
 import { closeMetadata } from '../dist/metadata.js';
 import { placeholderJpeg } from '../dist/mock/fixtures.js';
-import { Manifest } from '../../media-ferry/dist/index.js';
+import { Manifest } from '../dist/ferry/index.js';
 import { exifToolSkipReason } from '../../../scripts/test-env.js';
 
 /**

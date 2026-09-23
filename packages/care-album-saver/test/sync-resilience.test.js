@@ -4,7 +4,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrightwheelClient, startMockBrightwheel, sync, Secret, DEFAULT_CONFIG } from '../dist/index.js';
-import { signedUrlExpiry } from '../../media-ferry/dist/index.js';
+import { signedUrlExpiry } from '../dist/ferry/index.js';
 
 /**
  * What an interrupted or expiring run must never do: lose a download it already made, skip

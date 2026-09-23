@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { platform as osPlatform } from 'node:os';
 import { join, posix, relative, sep } from 'node:path';
-import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from 'media-ferry';
+import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from './ferry/index.js';
 import type { BrightwheelClient } from './api/client.js';
 import type { Config } from './config.js';
 
