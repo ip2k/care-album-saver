@@ -10,6 +10,7 @@
  */
 import { chromium } from 'playwright';
 import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +28,10 @@ const VIEWPORT = { width: 1340, height: 940 };
  * and must exist for the script to run at all, and it is deleted at the end.
  */
 const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-screenshots', import.meta.url));
+// The daily log names a child and the archive folder, and shot 4 shows its tail. Pointed at
+// a throwaway directory so a committed picture can only ever contain this script's own
+// synthetic run — never the real one sitting in ~/Library/Logs.
+process.env.CARE_ALBUM_LOG_DIR = mkdtempSync(join(tmpdir(), 'cas-shot-logs-'));
 
 /**
  * The path shown in the pictures. The real one contains the developer's username, which
@@ -302,7 +307,17 @@ const main = async () => {
   // step 2 off the top; bring the tick and the children back into view first.
   await page.fill('#cookie', SESSION);
   await page.click('#btn-connect');
-  await page.waitForSelector('.kid', { timeout: 10000 });
+  // Once an archive exists the steps move into Settings, so a shot OF the steps opens it.
+  await page.waitForSelector('.kid', { timeout: 10000, state: 'attached' });
+  // ...but only when they are actually in there. Opening it otherwise puts an empty modal
+  // over the very controls the next step is about to click.
+  await page.evaluate(() => {
+    const flow = document.getElementById('setup-flow');
+    const body = document.getElementById('settings-body');
+    const d = document.getElementById('dlg-settings');
+    if (flow && body && flow.parentElement === body && d && !d.open) document.getElementById('btn-settings').click();
+  });
+  await page.waitForTimeout(200);
   await page.waitForTimeout(400);
   // Taller than the default, for two reasons that stack: step 1's first instruction is now
   // a link long enough to wrap, and the cookie-help disclosure sits under it. Everything
@@ -361,29 +376,32 @@ const main = async () => {
   // Back to the shown path now that the run is over: the summary prints the folder a third
   // time beside its own button, and it is written only once a run finishes.
   await showPath(page, SHOWN_PATH);
-  // Tall enough for step 4 as well. The run summary and the scheduling step are one story —
-  // "that was the one-time part, here is how it keeps itself up to date" — and cutting the
-  // picture between them loses the point of step 4 existing.
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1720 });
-  await page.evaluate(() => document.querySelector('#card-run').scrollIntoView({ block: 'start' }));
-  await page.waitForTimeout(300);
+  // The page is a different thing now, and this is the picture of that: once an archive
+  // exists the four steps move into Settings and what is left is the answer to "is it
+  // still working" — the photographs that arrived. So the shot reloads to pick up the new
+  // view rather than screenshotting the form the run was started from.
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('#gallery a img', { timeout: 15000 });
+  await page.waitForTimeout(400);
+  await page.setViewportSize(VIEWPORT);
   await annotate(page, [
-    { selector: '.stats', text: 'Saved, already-had, and failed. A second run saves nothing new — it recognises what it already has.', offset: 0 },
-    { selector: '.privacy', text: 'The privacy summary is on the page itself, not buried in a document nobody reads.', offset: 0, side: 'left' },
+    // Both anchored in the body: a callout on the header row covered the second button,
+    // which the overlap guard does not catch because it only compares callouts.
+    { selector: '#dash-stats', text: 'How much is in the archive, and when it was last added to. Everything there is to change or check on is behind Settings, above.', offset: 0 },
+    { selector: '#gallery', text: 'What the last run brought in. Each one opens the full picture from your own disk.', offset: 0, side: 'left' },
   ]);
   await shot(page, '04-done');
   // Belt and braces: the run must have written here and nowhere else.
   await access(join(PHOTOS, 'archive.json'));
 
-  // 5 — dark mode, on the step with the most controls. Both schemes are first-class.
-  // Taller for the same reason as shot 2.
-  const dark = await browser.newPage({ viewport: { width: VIEWPORT.width, height: 1660 }, deviceScaleFactor: 2, colorScheme: 'dark' });
+  // 5 — dark mode, on the view a parent actually comes back to. Both schemes are
+  // first-class, and this is also where the one-screen budget is spent.
+  const dark = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2, colorScheme: 'dark' });
   await dark.goto(ui.url, { waitUntil: 'networkidle' });
-  await dark.waitForSelector('.kid', { timeout: 10000 });
+  await dark.waitForSelector('#gallery a img', { timeout: 15000 });
   await dark.waitForTimeout(700);
-  await dark.evaluate(() => document.querySelector('#card-children').scrollIntoView({ block: 'start' }));
-  await dark.waitForTimeout(300);
-  await shot(dark, '05-dark', '#card-run');
+  await scrubPersonal(dark);
+  await shot(dark, '05-dark');
   await dark.close();
 
   await browser.close();

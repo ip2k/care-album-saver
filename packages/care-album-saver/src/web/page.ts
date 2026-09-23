@@ -117,7 +117,78 @@ export const PAGE = String.raw`<!doctype html>
   }
   .skip:focus { transform: translateY(0); }
 
-  .wrap { max-width: 47rem; margin: 0 auto; padding: var(--s7) var(--s5) 5rem; }
+  /* The whole interface is meant to sit on one 1920x1080 screen with a browser toolbar,
+     without scrolling. That is roughly 900px of usable height, so the padding below the
+     content is a normal gap rather than the 5rem runway a long scrolling page wanted. */
+  .wrap { max-width: 56rem; margin: 0 auto; padding: var(--s5) var(--s5) var(--s6); }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; }
+  .top-actions { display: flex; gap: var(--s2); }
+
+  /* The two ways out of the main view. Labelled, not icon-only: an icon alone is announced
+     as nothing by a screen reader, and a gear means "settings" only to people who have
+     been taught that it does. */
+  .icon-btn {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: .4375rem .75rem;
+    font: 500 .875rem/1.3 inherit; min-height: 2.25rem;
+    display: inline-flex; align-items: center; gap: .4375rem; cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--surface-sunken); }
+  .icon-btn .ico { font-size: 1.0625rem; line-height: 1; }
+
+  /* The dashboard. */
+  .dash { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--s5); }
+  .dash-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; }
+  .dash-head h2 { font-size: 1.25rem; margin: 0; }
+  .dash-stats { color: var(--text-muted); font-size: .9375rem; margin: 0; }
+  .dash-actions { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s4); }
+
+  /* Thumbnails.
+     The full photo is served and the browser scales it: this tool has no image library and
+     is not about to gain one for a strip of pictures read off a local disk. auto-fill keeps
+     the strip one or two rows on a wide screen, which is what the one-screen budget allows. */
+  .gallery {
+    display: grid; gap: var(--s2); margin-top: var(--s4);
+    grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+    max-height: 21rem; overflow: auto;
+  }
+  .gallery a {
+    display: block; position: relative; aspect-ratio: 1; overflow: hidden;
+    border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-sunken);
+  }
+  .gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gallery a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* A video has no thumbnail without decoding it, so it says what it is instead. */
+  .gallery .vid { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 1.75rem; }
+  .gallery .cap {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: .25rem .375rem;
+    background: rgba(0,0,0,.55); color: #fff; font-size: .6875rem; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Dialogs. */
+  dialog {
+    border: 1px solid var(--border-strong); border-radius: var(--radius);
+    padding: 0; max-width: 46rem; width: calc(100vw - 3rem); max-height: calc(100vh - 4rem);
+    background: var(--surface); color: var(--text);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  .dlg-head {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--s4);
+    padding: var(--s4) var(--s5); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--surface);
+  }
+  .dlg-head h2 { margin: 0; font-size: 1.125rem; }
+  .dlg-body { padding: var(--s5); overflow: auto; max-height: calc(100vh - 9rem); }
+  .dlg-body h3 { font-size: 1rem; margin: var(--s5) 0 var(--s2); }
+  .dlg-body h3:first-child { margin-top: 0; }
+  .dlg-foot { margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--border); }
+  .logs {
+    background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: var(--s3); font: .8125rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    max-height: 22rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  }
 
   /* The name stands on its own: there is no subtitle under it, so the heading carries its
      whole margin and the gap to step 1 is the one deliberate space, not an 8px remnant of
@@ -357,9 +428,47 @@ ${COOKIE_HELP_CSS}
 <div class="wrap">
   <header>
     <h1>Care Album Saver</h1>
+    <div class="top-actions">
+      <button class="icon-btn" id="btn-settings" type="button" aria-haspopup="dialog">
+        <span class="ico" aria-hidden="true">&#9881;</span> Settings and Maintenance
+      </button>
+      <button class="icon-btn" id="btn-help" type="button" aria-haspopup="dialog">
+        <span class="ico" aria-hidden="true">?</span> FAQ and Docs
+      </button>
+    </div>
   </header>
 
   <main id="main">
+
+  <!--
+    What this page is for changes the moment setup is finished.
+
+    Until then it is a form, and the four steps below are the whole of it. Afterwards a
+    parent opens it for one reason — to find out whether it is still working — and the
+    honest answer to that is the photographs that arrived, not a green tick. A tick stays
+    green while an archive has been empty since March.
+
+    So the steps move wholesale into Settings once there is a session and a run behind it,
+    and this takes their place. Moved, not duplicated: every control keeps its id, its
+    handler and its behaviour, and there is exactly one of each in the document.
+  -->
+  <section class="dash" id="dash" hidden aria-labelledby="h-dash">
+    <div class="dash-head">
+      <h2 id="h-dash">Your archive</h2>
+      <p class="dash-stats" id="dash-stats"></p>
+    </div>
+    <div class="gallery" id="gallery" aria-live="polite"></div>
+    <p class="hint" id="dash-empty" hidden>Nothing has been saved yet. Press <b>Save new photos</b> to fetch what is there.</p>
+    <div class="dash-actions">
+      <button id="btn-dash-run" type="button">Save new photos</button>
+      <button class="secondary" id="btn-dash-folder" type="button">Open this folder</button>
+      <button class="secondary" id="btn-dash-logs" type="button">View the log</button>
+    </div>
+    <p class="hint" id="dash-schedule"></p>
+    <div id="dash-msg" role="status" aria-live="polite"></div>
+  </section>
+
+  <div id="setup-flow">
   <ol class="steps-list">
     <li>
       <section class="card" id="card-connect" data-state="active" aria-labelledby="h-connect">
@@ -584,14 +693,68 @@ ${COOKIE_HELP_CSS}
     <summary id="setup-summary">Change how it is set up</summary>
     <div class="inner" id="setup-inner"></div>
   </details>
+  </div>
   </main>
 
-  <aside class="privacy" aria-labelledby="h-privacy">
-    <h2 id="h-privacy">Where your photos go</h2>
+</div>
+
+<!-- Settings and Maintenance. The setup flow is MOVED in here once it is not the main
+     event; there is one of each control in the document, never two. -->
+<dialog id="dlg-settings" aria-labelledby="h-settings">
+  <div class="dlg-head">
+    <h2 id="h-settings">Settings and Maintenance</h2>
+    <button class="icon-btn" id="btn-settings-close" type="button">Close</button>
+  </div>
+  <div class="dlg-body" id="settings-body"></div>
+</dialog>
+
+<!-- Everything a parent might wonder rather than do. -->
+<dialog id="dlg-help" aria-labelledby="h-help">
+  <div class="dlg-head">
+    <h2 id="h-help">FAQ and Docs</h2>
+    <button class="icon-btn" id="btn-help-close" type="button">Close</button>
+  </div>
+  <div class="dlg-body">
+    <h3>Where your photos go</h3>
     <p>From Brightwheel straight onto this computer, into <span class="path" id="p-dir">your chosen folder</span>. Nothing is uploaded anywhere else. There is no online account to sign up for, and nothing is collected about you.</p>
     <p>This page is being served by the program running on your own computer &mdash; that is why the address starts with 127.0.0.1, which means <em>this machine only</em>. Nobody else on your network can open it, and it disappears when you stop the program.</p>
-  </aside>
-</div>
+
+    <h3>Why does it want a cookie rather than my password?</h3>
+    <p>So that it never has one. You sign in on Brightwheel&rsquo;s own website, and copy across a value that says &ldquo;this browser is already signed in&rdquo;. It is kept on this computer only, in a file only you can open, and it is sent only back to Brightwheel. If you ever think it has leaked, sign out of Brightwheel on their website and change your password.</p>
+
+    <h3>What date do the photos get?</h3>
+    <p>The time each one was <b>posted</b> to Brightwheel, which for a nursery is usually minutes after it was taken and nearly always the same day. The moment the shutter clicked is not something Brightwheel gives out &mdash; the photos arrive with nothing inside them at all, which is why a photo saved from the website lands in your photo app stamped with the moment you clicked.</p>
+
+    <h3>Will it download everything again?</h3>
+    <p>No. The first run fetches what is already there and takes a while; every run after it looks only for what is new. It keeps its own list, in <span class="path">archive.json</span> at the top of your photos folder.</p>
+
+    <h3>What happens if the computer is off at the scheduled time?</h3>
+    <p>The run happens the next time it is on. Each operating system has its own way of catching up on a job it missed, and this uses that rather than a timer of its own.</p>
+
+    <h3>Where is everything kept?</h3>
+    <p>The photos go where you chose. The settings and your saved session live in a folder outside this one, which <span class="path">care-album-saver where</span> will print for you.</p>
+
+    <p class="dlg-foot">This is free software, and the code is there to be read.
+      <a class="ext" href="https://github.com/ip2k/care-album-saver" target="_blank" rel="noopener noreferrer">The project on GitHub <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a>
+    </p>
+  </div>
+</dialog>
+
+<!-- The daily run's own log. -->
+<dialog id="dlg-logs" aria-labelledby="h-logs">
+  <div class="dlg-head">
+    <h2 id="h-logs">The daily run&rsquo;s log</h2>
+    <button class="icon-btn" id="btn-logs-close" type="button">Close</button>
+  </div>
+  <div class="dlg-body">
+    <p class="hint" id="logs-where"></p>
+    <pre class="logs" id="logs-text" tabindex="0"></pre>
+    <div class="dash-actions">
+      <button class="secondary" id="btn-logs-open" type="button">Open it in this computer&rsquo;s log viewer</button>
+    </div>
+    <div id="logs-msg" role="status" aria-live="polite"></div>
+  </div>
+</dialog>
 
 <script>
 const TOKEN = '__TOKEN__';
@@ -813,6 +976,102 @@ function lockSettings(locked) {
   else if (msg.firstElementChild?.dataset.note === 'lock') msg.textContent = '';
 }
 
+/**
+ * Which of the two things this page is, right now.
+ *
+ * Setup when there is no session, or when the last run failed in a way only a new session
+ * can cure — that second case is the one that matters, because an expired cookie is the
+ * single reason a working archive stops, and a parent who comes back to a dashboard saying
+ * "12 photos, three weeks ago" has been told nothing about what to do. Otherwise the
+ * dashboard: they are here to see that it is still working.
+ */
+function needsSetup(s) {
+  // No session at all: the first thing to do is the first step.
+  if (!s.hasSession) return true;
+  // A session that has stopped working. This is the case that matters most, because an
+  // expired cookie is the single reason a working archive quietly stops, and a parent who
+  // comes back to a dashboard reading "12 photos, three weeks ago" has been told nothing
+  // about what to do next.
+  const failed = (s.lastResult && s.lastResult.sessionExpired) ||
+    (s.progress && s.progress.phase === 'error' && /sign in|session|expired/i.test(s.progress.message || ''));
+  if (failed) return true;
+  // Connected, but nothing has ever been saved. There is no gallery to show and the steps
+  // are not finished — choosing a folder and pressing the button are still ahead. Showing a
+  // dashboard here would hide the rest of setup the moment the cookie was pasted.
+  return !s.archive || s.archive.totalFiles === 0;
+}
+
+/**
+ * Put the setup flow where it belongs for the current view.
+ *
+ * MOVED between the page and the Settings dialog, never copied. Every control keeps its
+ * id and its handler, so there is one archive-folder field in the document and one set of
+ * tick boxes, whichever view is showing — which is the only way this could be done without
+ * two of everything quietly drifting apart.
+ */
+function placeSetupFlow(inSettings) {
+  const flow = $('setup-flow');
+  const home = $('main');
+  const settings = $('settings-body');
+  const wanted = inSettings ? settings : home;
+  if (flow.parentElement !== wanted) wanted.appendChild(flow);
+  $('dash').hidden = inSettings === false;
+  flow.hidden = false;
+}
+
+function human(bytes) {
+  if (!bytes) return '0 MB';
+  const mb = bytes / 1048576;
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.max(1, Math.round(mb)) + ' MB';
+}
+const day = (iso) => {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
+};
+
+/** The archive, in one sentence and a strip of pictures. */
+function paintDashboard(s) {
+  const a = s.archive;
+  if (!a) return;
+  const stats = $('dash-stats');
+  stats.textContent = a.totalFiles === 0
+    ? 'Nothing saved yet.'
+    : a.totalFiles + ' photos and videos, ' + human(a.totalBytes) +
+      ' \u2014 newest posted ' + day(a.newestPostedAt) +
+      '. Last run saved ' + a.lastRunCount + ', on ' + day(a.lastSavedAt) + '.';
+
+  const g = $('gallery');
+  g.innerHTML = '';
+  $('dash-empty').hidden = a.recent.length > 0;
+  for (const item of a.recent) {
+    const href = '/photo?i=' + item.id + '&token=' + TOKEN;
+    const a2 = document.createElement('a');
+    a2.href = href;
+    a2.target = '_blank';
+    a2.rel = 'noopener';
+    // The caption is what a screen reader gets, so it is the child and the date rather
+    // than a filename. The note is not in it: notes name other people's children.
+    const when = item.postedAt ? new Date(item.postedAt).toLocaleDateString() : '';
+    a2.title = item.label;
+    a2.setAttribute('aria-label', (item.child || 'A photo') + ', ' + when);
+    if (item.kind === 'video') {
+      a2.innerHTML = '<span class="vid" aria-hidden="true">&#9654;</span><span class="cap">' + esc(when) + '</span>';
+    } else {
+      const img = document.createElement('img');
+      img.src = href;
+      img.alt = '';
+      img.loading = 'lazy';
+      a2.appendChild(img);
+      const cap = document.createElement('span');
+      cap.className = 'cap';
+      cap.textContent = when;
+      a2.appendChild(cap);
+    }
+    g.appendChild(a2);
+  }
+}
+
 async function refresh() {
   const r = await api('/api/state');
   state = await r.json();
@@ -833,6 +1092,8 @@ async function refresh() {
   }
   updateRunReady();
   await loadSchedule();
+  placeSetupFlow(!needsSetup(state));
+  paintDashboard(state);
   paint(state.progress, state.running, state.lastResult);
   // A run started before this page was opened (or before a reload) is still going in the
   // terminal. Without restarting the poll here the bar sits motionless, and HIG's
@@ -910,6 +1171,50 @@ function checkCookieField(rewrite) {
   field.setAttribute('aria-invalid', v.ok ? 'false' : 'true');
   btn.disabled = !v.ok;
 }
+/* ------------------------------------------------------- the two ways out of this view */
+
+const openDialog = (id) => { const d = $(id); if (d.showModal) d.showModal(); else d.setAttribute('open', ''); };
+const closeDialog = (id) => { const d = $(id); if (d.close) d.close(); else d.removeAttribute('open'); };
+
+$('btn-settings').onclick = () => openDialog('dlg-settings');
+$('btn-settings-close').onclick = () => closeDialog('dlg-settings');
+$('btn-help').onclick = () => openDialog('dlg-help');
+$('btn-help-close').onclick = () => closeDialog('dlg-help');
+$('btn-logs-close').onclick = () => closeDialog('dlg-logs');
+
+/**
+ * The daily run's log, read into the page.
+ *
+ * Shown here as well as handed to the platform's own viewer, because "open Console" is not
+ * an answer on a machine where the schedule is a systemd timer and the log is the journal —
+ * there the button reports the journalctl line instead of pretending to open something.
+ */
+async function showLogs() {
+  openDialog('dlg-logs');
+  $('logs-text').textContent = 'Reading\u2026';
+  try {
+    const d = await (await api('/api/logs')).json();
+    $('logs-where').textContent = 'Written to ' + d.path;
+    $('logs-text').textContent = d.text || 'Nothing has been written to it yet. A scheduled run adds a line each time it happens.';
+  } catch {
+    $('logs-text').textContent = 'The log could not be read.';
+  }
+}
+$('btn-dash-logs').onclick = showLogs;
+$('btn-logs-open').onclick = async () => {
+  try {
+    const d = await (await api('/api/open-logs', { method: 'POST', body: '{}' })).json();
+    show($('logs-msg'), d.opened ? 'ok' : 'warn', esc(d.opened ? 'Opened.' : d.hint || 'There is no log viewer on this computer.'));
+  } catch {
+    show($('logs-msg'), 'err', 'Could not reach the tool.');
+  }
+};
+
+/* The dashboard's own buttons reuse the controls that already exist, so there is one
+   implementation of "run" and one of "open the folder" rather than two that drift. */
+$('btn-dash-run').onclick = () => { $('btn-run').click(); openDialog('dlg-settings'); };
+$('btn-dash-folder').onclick = () => $('btn-open-dir').click();
+
 $('cookie').addEventListener('input', () => checkCookieField(false));
 $('cookie').addEventListener('paste', () => setTimeout(() => checkCookieField(true), 0));
 $('cookie').addEventListener('blur', () => checkCookieField(true));

@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, platform as osPlatform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir, readJsonFile, writeSecureFile } from './paths.js';
+import { scrub } from './secrets.js';
 import { loadConfig, saveConfig, type ScheduleMechanism, type ScheduleRecord } from './config.js';
 
 /**
@@ -286,6 +287,15 @@ export async function loadLastRun(): Promise<LastRun | null> {
 // ------------------------------------------------------------------ where things live
 
 function logDir(env: Resolved): string {
+  // Redirectable, for the same reason the config and archive directories are — and this one
+  // is not merely tidiness. The daily log records a run in the tool's own words, which
+  // means it records a child's NAME ("Looking for Robin's photos") and the archive path.
+  // The setup page now shows the tail of it, and scripts/screenshots.js drives that page to
+  // produce pictures that are committed to a public repository. Without this override the
+  // screenshot script would read the developer's real log and publish a real child's name.
+  // Set by scripts/test-env.js and by the screenshot script; nothing in the product sets it.
+  const override = process.env.CARE_ALBUM_LOG_DIR;
+  if (override) return override;
   switch (env.platform) {
     case 'darwin':
       return join(env.home, 'Library', 'Logs', 'care-album-saver');
@@ -294,6 +304,82 @@ function logDir(env: Resolved): string {
     default:
       return join(env.home, '.local', 'state', 'care-album-saver');
   }
+}
+
+/**
+ * The one log this tool owns, on every platform.
+ *
+ * Each scheduler has a logging facility and none of them has the same one. launchd takes
+ * StandardOutPath and writes a file. systemd sends a unit's output to the journal, which is
+ * the right place on that machine and is read with `journalctl --user`. cron mails output
+ * to the user unless it is redirected, which on a desktop means it vanishes. Task Scheduler
+ * records that a task ran and with what exit code, but not a word the task printed.
+ *
+ * So: the platform's own facility gets the output wherever it has one — the systemd unit is
+ * left un-redirected on purpose so the journal receives it — and in addition every
+ * scheduled run appends one line here. That is the only way "show me why last night failed"
+ * can be answered the same way on four platforms, and the only way it can be answered at
+ * all on Windows.
+ */
+export const logFile = (env: ScheduleEnvironment = {}): string => join(logDir(resolveEnv(env)), 'daily.log');
+
+/**
+ * The tail of that log, for the page to show. Scrubbed, like everything else a page sees.
+ *
+ * Bounded by lines rather than by bytes so that one enormous line cannot be used to make
+ * this read a whole disk into memory, and the file is opened read-only and closed.
+ */
+export async function readLog(lines = 200, env: ScheduleEnvironment = {}): Promise<{ path: string; text: string }> {
+  const path = logFile(env);
+  try {
+    const text = await readFile(path, 'utf8');
+    const tail = text.split(/\r?\n/).filter(Boolean).slice(-lines).join('\n');
+    return { path, text: scrub(tail) };
+  } catch {
+    return { path, text: '' };
+  }
+}
+
+/** Append one line. Never throws: a log that cannot be written must not fail the run. */
+export async function appendLog(line: string, env: ScheduleEnvironment = {}): Promise<void> {
+  const e = resolveEnv(env);
+  try {
+    await mkdir(logDir(e), { recursive: true, mode: 0o700 });
+    // Owner-only: these lines name a child and the folder their photographs are in, so the
+    // log gets the session file's treatment rather than a world-readable default.
+    await appendFile(logFile(env), `${scrub(line)}\n`, { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    /* A missing log is not worth failing a run over. */
+  }
+}
+
+/**
+ * Open the platform's own log viewer, so the answer is not only this page's textarea.
+ *
+ * macOS has Console.app, which reads the file launchd wrote. A systemd machine has the
+ * journal, and `journalctl --user -u <unit>` is where a Linux user would already look —
+ * there is no GUI to open, so the page shows the command rather than pretending. Windows
+ * records task history in Event Viewer. Where a platform has no viewer this returns the
+ * command a person would type, which is more use than a disabled button.
+ */
+export async function openLogs(env: ScheduleEnvironment = {}): Promise<{ opened: boolean; hint: string }> {
+  const e = resolveEnv(env);
+  const path = logFile(env);
+  if (e.platform === 'darwin') {
+    const r = await e.run('open', ['-a', 'Console', path]);
+    return { opened: r.code === 0, hint: r.code === 0 ? '' : `Open this file to read it: ${path}` };
+  }
+  if (e.platform === 'win32') {
+    // Task Scheduler's own history, which is where Windows records that the job ran at all.
+    const r = await e.run('cmd', ['/c', 'start', '', 'taskschd.msc']);
+    return { opened: r.code === 0, hint: `Task Scheduler keeps its own history; this tool's log is at ${path}` };
+  }
+  const mechanism = (await loadConfig()).schedule?.mechanism;
+  if (mechanism === 'systemd') {
+    return { opened: false, hint: `The system journal has it: journalctl --user -u ${SYSTEMD_UNIT} -n 200` };
+  }
+  const r = await e.run('xdg-open', [path]);
+  return { opened: r.code === 0, hint: r.code === 0 ? '' : `Open this file to read it: ${path}` };
 }
 
 const plistPath = (env: Resolved): string => join(env.home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`);

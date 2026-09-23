@@ -364,3 +364,44 @@ test('a session that expires part-way through verify names the endpoint, never a
     await mock.close();
   }
 });
+
+// --- the page has two jobs, and shows one of them at a time ------------------------------
+
+test('the page keeps one of each control, moving the setup flow rather than copying it', async () => {
+  const html = await (await fetch(`http://127.0.0.1:${handle.port}/?token=${handle.token}`)).text();
+
+  // The two ways out of the main view, both labelled. An icon alone is announced as
+  // nothing by a screen reader, and a gear means "settings" only to people taught that.
+  assert.match(html, /id="btn-settings"[^>]*>[\s\S]{0,80}Settings and Maintenance/, 'a labelled settings button');
+  assert.match(html, /id="btn-help"[^>]*>[\s\S]{0,60}FAQ and Docs/, 'a labelled help button');
+  for (const id of ['dlg-settings', 'dlg-help', 'dlg-logs']) {
+    assert.ok(html.includes(`<dialog id="${id}"`), `${id} is a real dialog element`);
+  }
+
+  // The question-and-answer material moved off the main page into the help dialog, and the
+  // project's source is linked from there.
+  const help = html.slice(html.indexOf('<dialog id="dlg-help"'), html.indexOf('<dialog id="dlg-logs"'));
+  assert.match(help, /Where your photos go/, 'the privacy explanation is in the FAQ');
+  assert.match(help, /github\.com/, 'and the FAQ links to the source');
+  assert.ok(!html.includes('<aside class="privacy"'), 'and it is not also sitting on the main page');
+
+  // One of each control in the document. Two would drift: a folder typed into one and a
+  // folder chosen in the other, with only one of them saved.
+  for (const id of ['archiveDir', 'cookie', 'schedule-time', 'btn-run']) {
+    const count = html.split(`id="${id}"`).length - 1;
+    assert.equal(count, 1, `exactly one #${id} in the document, found ${count}`);
+  }
+
+  // The setup flow is a single node, so moving it between the page and the dialog is one
+  // appendChild and every handler inside it survives untouched.
+  assert.ok(html.includes('<div id="setup-flow">'), 'the flow is one movable node');
+  assert.ok(html.includes('id="settings-body"'), 'and Settings is where it goes');
+});
+
+test('the dashboard asks for photos by index, and the page never contains a file path', async () => {
+  const html = await (await fetch(`http://127.0.0.1:${handle.port}/?token=${handle.token}`)).text();
+  // The gallery builds its URLs as /photo?i=<index>. If this ever became a path, the route
+  // would have something to traverse with; today it has only a number.
+  assert.match(html, /'\/photo\?i=' \+ item\.id/, 'thumbnails are addressed by manifest index');
+  assert.ok(!/\/photo\?path=/.test(html), 'never by path');
+});
