@@ -290,21 +290,28 @@ test('on Windows the daily run is a scheduled task, created with /F so there is 
 
   const create = os.calls.find((c) => c.args[0] === '/Create');
   assert.equal(create.file, 'schtasks');
-  assert.deepEqual(create.args, [
-    '/Create',
-    '/TN',
-    'Care Album Saver daily',
-    '/TR',
-    '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\alex\\bw\\cli.js" run --scheduled',
-    '/SC',
-    'DAILY',
-    '/ST',
-    '19:00',
-    '/F',
-  ]);
+  // Registered from XML, not from flags: the setting that makes a missed run happen at all
+  // (StartWhenAvailable) has no schtasks flag, and neither do the battery settings.
+  assert.deepEqual(create.args.slice(0, 4), ['/Create', '/TN', 'Care Album Saver daily', '/XML']);
+  assert.equal(create.args[5], '/F', 'still overwrites, so installing twice changes the time rather than leaving two');
+
+  // The XML itself is what carries the behaviour, so assert the behaviour.
+  const xml = schedule.schtasksXml(
+    { ...env, nodePath: env.nodePath, cliPath: env.cliPath },
+    { hour: 19, minute: 0 },
+  );
+  assert.match(xml, /<StartWhenAvailable>true<\/StartWhenAvailable>/, 'a run missed while the PC was off happens when it is on again');
+  // Task Scheduler defaults this to true, and on a laptop that default is the silent
+  // failure this whole change is about: the evening run simply never happens on battery.
+  assert.match(xml, /<DisallowStartIfOnBatteries>false<\/DisallowStartIfOnBatteries>/);
+  assert.match(xml, /<StopIfGoingOnBatteries>false<\/StopIfGoingOnBatteries>/);
+  assert.match(xml, /<MultipleInstancesPolicy>IgnoreNew<\/MultipleInstancesPolicy>/, 'a catch-up never doubles up on a run still going');
+  assert.match(xml, /<StartBoundary>2026-01-01T19:00:00<\/StartBoundary>/, 'at the time that was asked for');
+  assert.match(xml, /<DaysInterval>1<\/DaysInterval>/, 'every day');
+  assert.ok(xml.includes('C:\\Program Files\\nodejs\\node.exe'), 'runs the Node that installed it');
   // The documented Windows trap: Task Scheduler cannot run a bare `npx`, because the shim
   // is `npx.cmd` and there is no `npx.exe`. Naming node.exe outright sidesteps it.
-  assert.ok(!create.args.join(' ').includes('npx'));
+  assert.ok(!xml.includes('npx'));
 
   await schedule.remove(env);
   const del = os.calls.find((c) => c.args[0] === '/Delete');
@@ -506,4 +513,94 @@ test('the schedule endpoint answers, refuses a time that is not one, and needs t
   } finally {
     await handle.close();
   }
+});
+
+// ------------------------------------------------- a run the computer was off for
+
+test('every platform gets its own catch-up, and none of them is ours', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+
+  // macOS. Sleep is launchd's own problem and it solves it — the man page: a missed
+  // StartCalendarInterval fires "the next time the computer wakes up". A machine that was
+  // SHUT DOWN is the case that needed something, because the agent is loaded fresh at
+  // login with no memory of what it missed. RunAtLoad is that something.
+  const mac = recorder();
+  await schedule.install('19:00', macEnv(home, mac.run));
+  const plist = await readFile(join(home, 'Library', 'LaunchAgents', 'com.care-album-saver.daily.plist'), 'utf8');
+  assert.match(plist, /<key>RunAtLoad<\/key>\s*\n?\s*<true\/>/, 'so a Mac that was off at seven catches up at the next login');
+
+  // Linux with systemd: Persistent=true, which is systemd's own name for this.
+  assert.match(schedule.systemdTimer({ hour: 19, minute: 0 }), /Persistent=true/);
+
+  // Linux without systemd: cron is the one scheduler here with no catch-up at all, so it
+  // gets a second line. @reboot exists in every cron this tool will meet.
+  const cronHome = await freshHome();
+  const cronEnv = { platform: 'linux', home: cronHome, run: recorder().run, nodePath: '/usr/bin/node', cliPath: '/opt/bw/cli.js', uid: 1000 };
+  const lines = schedule.cronLines(cronEnv, { hour: 19, minute: 0 });
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^0 19 \* \* \* /, 'the schedule');
+  assert.match(lines[1], /^@reboot /, 'and the catch-up');
+  assert.ok(lines.every((l) => l.includes('run --scheduled')), 'both run the same thing');
+});
+
+test('the crontab block is removed whole, including one written before it grew', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  const seen = [];
+  // A crontab with the person's own lines around ours, which must survive untouched.
+  const theirs = ['# my own job', '0 6 * * * /usr/local/bin/backup'];
+  const os = recorder(({ args }) => (args[0] === '-l' ? { code: 0, stdout: seen.at(-1) ?? theirs.join('\n') } : { code: 0 }));
+  const env = { platform: 'linux', home, run: os.run, nodePath: '/usr/bin/node', cliPath: '/opt/bw/cli.js', uid: 1000 };
+
+  // systemctl missing, so the Linux branch chooses cron.
+  const noSystemd = recorder(({ file, args }) => {
+    if (file === 'systemctl') return { code: 127 };
+    if (file === 'crontab' && args[0] === '-l') return { code: 0, stdout: seen.at(-1) ?? theirs.join('\n') };
+    return { code: 0 };
+  });
+  const cronEnv = { ...env, run: async (f, a, input) => { const r = await noSystemd.run(f, a, input); if (f === 'crontab' && a[0] === '-') seen.push(input); return r; } };
+
+  await schedule.install('19:00', cronEnv);
+  const installed = seen.at(-1);
+  assert.ok(installed.includes('@reboot'), 'the catch-up line went in');
+  assert.ok(installed.includes('0 19 * * *'), 'and the daily line');
+  assert.ok(installed.includes('/usr/local/bin/backup'), "the person's own job is untouched");
+
+  await schedule.remove(cronEnv);
+  const afterRemoval = seen.at(-1);
+  assert.ok(!afterRemoval.includes('care-album-saver'), 'our whole block is gone');
+  assert.ok(!afterRemoval.includes('@reboot'), 'both lines, not just the first');
+  assert.ok(afterRemoval.includes('/usr/local/bin/backup'), "and their job survived it");
+});
+
+test('a catch-up that is not due does nothing, so "missed runs happen" is not "runs at every login"', () => {
+  const at = (iso) => new Date(iso);
+  const record = { time: '19:00' };
+
+  // Ran at 19:05 yesterday; it is now 09:00 today. The occurrence to satisfy is yesterday
+  // evening's, and it is satisfied — a login this morning must not re-run.
+  assert.equal(
+    schedule.isDue(record, { at: '2026-09-22T19:05:00', ok: true }, at('2026-09-23T09:00:00')),
+    false,
+  );
+  // Nothing has run since the machine was off at seven. Due.
+  assert.equal(
+    schedule.isDue(record, { at: '2026-09-21T19:05:00', ok: true }, at('2026-09-23T09:00:00')),
+    true,
+  );
+  // It ran and failed — an expired session, most often. The next boot or login retries it,
+  // which is how a parent who has since reconnected gets their evening back.
+  assert.equal(
+    schedule.isDue(record, { at: '2026-09-22T19:05:00', ok: false }, at('2026-09-23T09:00:00')),
+    true,
+  );
+  // After today's time has passed and today's run succeeded, nothing more is owed.
+  assert.equal(
+    schedule.isDue(record, { at: '2026-09-23T19:02:00', ok: true }, at('2026-09-23T20:00:00')),
+    false,
+  );
+  // No schedule and no history: somebody typed the command, and a typed command runs.
+  assert.equal(schedule.isDue(null, null, at('2026-09-23T09:00:00')), true);
+  assert.equal(schedule.isDue(record, null, at('2026-09-23T09:00:00')), true);
 });
