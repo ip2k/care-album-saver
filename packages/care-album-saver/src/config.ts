@@ -33,6 +33,21 @@ export interface Config {
    * scheduled and not what time it runs, which is the one thing a parent wants to know.
    */
   schedule: ScheduleRecord | null;
+  /**
+   * Also add each run's new photos to the Photos app. macOS only, and OFF unless the parent
+   * turns it on — because a Photos library with iCloud Photos switched on uploads whatever
+   * is added to it, and "nothing leaves this computer" is otherwise this tool's promise.
+   * See src/photos.ts and docs/PHOTOS.md.
+   */
+  addToPhotos: boolean;
+  /**
+   * Only files saved at or after this moment are added to Photos; `null` means every file
+   * in the archive. Set to the moment the option is turned on, so that turning it on does
+   * not pour years of photos into a library unasked. Going back further is a separate,
+   * explicit choice ("add the earlier ones too"). Written by the server only, never taken
+   * from a settings patch.
+   */
+  addToPhotosFrom: string | null;
 }
 
 /** Which of the operating system's schedulers is holding the daily run. */
@@ -67,6 +82,8 @@ export const DEFAULT_CONFIG: Config = {
   incremental: true,
   includeStudents: [],
   schedule: null,
+  addToPhotos: false,
+  addToPhotosFrom: null,
 };
 
 export async function loadConfig(): Promise<Config> {

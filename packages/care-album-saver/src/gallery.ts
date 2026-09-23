@@ -46,7 +46,8 @@ export interface ArchiveSummary {
 
 const VIDEO = /\.(mp4|mov|m4v)$/i;
 
-async function records(config: Config): Promise<ManifestRecord[]> {
+/** Every record in the archive's manifest, or none when there is no manifest it can read. */
+export async function records(config: Config): Promise<ManifestRecord[]> {
   try {
     const raw = await readFile(join(config.archiveDir, MANIFEST_FILENAME), 'utf8');
     // The array is `files` on disk. The type is called ManifestRecord, which is not the

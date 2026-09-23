@@ -45,6 +45,11 @@ if (!process.env.CARE_ALBUM_LOG_DIR) {
   process.env.CARE_ALBUM_LOG_DIR = mkdtempSync(join(tmpdir(), 'cas-test-logs-'));
 }
 
+// Adding to Photos drives the developer's real Photos app, and a library with iCloud Photos
+// on would upload the mock's pictures to a real account. src/photos.ts refuses to start
+// osascript at all while this is set; a test that exercises it passes its own stand-in.
+process.env.CARE_ALBUM_NO_PHOTOS = '1';
+
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
  *
