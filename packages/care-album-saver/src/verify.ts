@@ -1,5 +1,6 @@
 import { DEFAULT_BASE_URL, SESSION_COOKIE } from './api/client.js';
 import { assertJsonResponse } from './api/schema.js';
+import { browserUserAgent } from './api/identity.js';
 import { scrub } from './secrets.js';
 import type { Secret } from './secrets.js';
 
@@ -88,10 +89,15 @@ async function raw(
 
 export async function verify(
   session: Secret,
-  options: { baseUrl?: string; fetchImpl?: typeof fetch; deep?: boolean } = {},
+  options: { baseUrl?: string; fetchImpl?: typeof fetch; deep?: boolean; userAgent?: string | null } = {},
 ): Promise<VerifyReport> {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
-  const doFetch = options.fetchImpl ?? fetch;
+  // Every request this command makes carries the same browser identity a run does, the
+  // media ones included. Left to itself, fetch would announce `node` on each of them.
+  const userAgent = options.userAgent || browserUserAgent();
+  const baseFetch = options.fetchImpl ?? fetch;
+  const doFetch: typeof fetch = (input, init = {}) =>
+    baseFetch(input, { ...init, headers: { ...((init.headers as Record<string, string>) ?? {}), 'User-Agent': userAgent } });
   const report: VerifyReport = { reachable: false, sessionValid: false, checks: [], findings: [], warnings: [] };
 
   // 1 — the account.
