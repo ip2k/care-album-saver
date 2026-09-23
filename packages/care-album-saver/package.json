@@ -4,13 +4,28 @@
   "description": "Save your own child's photos from Brightwheel to your own computer, organised by week.",
   "license": "MIT",
   "type": "module",
-  "bin": { "care-album-saver": "./dist/cli.js" },
+  "bin": {
+    "care-album-saver": "./dist/cli.js"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "README.md", "LICENSE"],
-  "engines": { "node": ">=20.11" },
-  "dependencies": { "media-ferry": "workspace:*" },
-  "optionalDependencies": { "exiftool-vendored": "^38.1.0" },
-  "keywords": ["brightwheel", "photos", "backup", "archive", "parents"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "optionalDependencies": {
+    "exiftool-vendored": "^38.1.0"
+  },
+  "keywords": [
+    "brightwheel",
+    "photos",
+    "backup",
+    "archive",
+    "parents"
+  ],
   "sideEffects": false
 }

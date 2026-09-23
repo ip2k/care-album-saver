@@ -150,9 +150,20 @@ website, which invalidates it immediately. Do that first, before trying to rewri
 
 The setup assistant walks you through everything. **[Full illustrated guide →](docs/GUIDE.md)**
 
+**This is not on npm yet**, so it is built from a clone. That is four commands, once:
+
 ```sh
-npx care-album-saver setup
+git clone https://github.com/<your-fork>/care-album-saver.git
+cd care-album-saver
+pnpm install
+pnpm build
+node packages/care-album-saver/dist/cli.js setup
 ```
+
+`pnpm install` needs [pnpm](https://pnpm.io/installation) and Node 20 or newer. Everything
+after the first run is just the last line again. If you would rather type
+`care-album-saver` than the whole path, run `pnpm link --global` inside
+`packages/care-album-saver` once.
 
 Then open the link it prints. Three steps: connect your account, tick the children you want
 and check the settings, then press **Start saving**. Each setting saves itself the moment
@@ -166,7 +177,7 @@ you change it, so there is nothing to remember to press, and while a run is goin
 Once you have connected once, you never need to again until the session expires:
 
 ```sh
-npx care-album-saver run        # save any new photos
+care-album-saver run        # save any new photos
 ```
 
 ### Running it every day
@@ -174,7 +185,7 @@ npx care-album-saver run        # save any new photos
 **macOS / Linux** — add to `crontab -e`:
 
 ```
-0 19 * * *  /usr/local/bin/npx care-album-saver run
+0 19 * * *  /usr/bin/node /path/to/care-album-saver/packages/care-album-saver/dist/cli.js run
 ```
 
 Use the full path to `npx`, not a bare `npx`. A scheduled job looks for programs in only a
@@ -400,8 +411,8 @@ every record.
 You can check your own account, which is the point of the tool being honest about this:
 
 ```sh
-npx care-album-saver verify          # reads the API, downloads nothing
-npx care-album-saver verify --deep   # also reads three photos, then deletes them
+care-album-saver verify          # reads the API, downloads nothing
+care-album-saver verify --deep   # also reads three photos, then deletes them
 ```
 
 The second one answers "does the date survive inside the photo on *my* nursery's account?"
@@ -470,16 +481,22 @@ your child's data, ask the school.
 > as-is with no warranty. Field names in an undocumented API can change without warning; if
 > that happens the tool stops with a clear message rather than silently saving nothing.
 
-### The two packages
+### How the code is laid out
 
 | Package | |
 |---|---|
 | [`care-album-saver`](packages/care-album-saver) | The tool itself: API client, metadata, week folders, CLI and setup assistant. |
-| [`media-ferry`](packages/media-ferry) | Reusable and service-agnostic: resumable downloads, stable identity for signed URLs, content hashing, safe filenames, ISO weeks. Useful in any archiving project. |
+| [`src/ferry/`](packages/care-album-saver/src/ferry) | The service-agnostic half, kept as its own directory: resumable downloads, stable identity for signed URLs, content hashing, safe filenames, ISO weeks. It knows nothing about Brightwheel. |
 
-**The tool itself has zero required runtime dependencies.** The only entry under
-`dependencies` is `media-ferry`, the other package in this repository, which has none of its
-own; everything else the code reaches for is Node's standard library. For software that
+It used to be a second package, `media-ferry`, and was folded back in on 23 September 2026.
+The reason is worth recording: publishing this tool would have made it depend on
+`media-ferry@0.1.0` from the public registry, a name nobody had registered — so the install
+instructions could not have worked, and until someone claimed the name anybody could have
+published code into the dependency graph of a tool that handles children's photos. One
+package with a clearly separated directory has the same boundary and none of that.
+
+**The tool has zero runtime dependencies.** There is no `dependencies` entry at all;
+everything the code reaches for is Node's standard library. For software that
 handles children's photos, every third-party package is a risk that has to earn its place,
 and none needed to.
 

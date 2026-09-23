@@ -29,10 +29,16 @@ A window with text in it appears. You type commands here and press Enter.
 Type this and press Enter:
 
 ```sh
-npx care-album-saver setup
+git clone https://github.com/<your-fork>/care-album-saver.git
+cd care-album-saver
+pnpm install
+pnpm build
+node packages/care-album-saver/dist/cli.js setup
 ```
 
-The first time, it asks to download the tool. Say yes. Then it prints a link like
+The tool is not on npm yet, so those four lines build it from a clone; you need
+[pnpm](https://pnpm.io/installation) and Node 20 or newer. Every day after that, only the
+last line. Then it prints a link like
 `http://127.0.0.1:52341/?token=...`.
 
 **Copy that whole link and paste it into your browser.** You will see this:
@@ -131,8 +137,8 @@ who posted it, whichever way the switches are set — it is the record that keep
 readable in twenty years. It stays on your computer when you share a photo, which is the
 point of it; it is also the reason not to paste one into a public bug report.
 
-> **From the terminal instead:** `npx care-album-saver children` lists your children with
-> the id Brightwheel uses for each, and `npx care-album-saver run --child "Sam Maple"`
+> **From the terminal instead:** `care-album-saver children` lists your children with
+> the id Brightwheel uses for each, and `care-album-saver run --child "Sam Maple"`
 > (or `--child <id>`, repeated for several) saves only those children's photos for that one
 > run. It does not change the choice you made on this page.
 
@@ -174,7 +180,7 @@ carries on from there instead of starting again.
 - **`Ctrl` + `C` in the black window** closes the setup assistant. If a run is going it is
   stopped first, in exactly the way the Stop button does, so the window takes a moment to
   close.
-- **`Ctrl` + `C` while `npx care-album-saver run` is going** (the terminal-only way to
+- **`Ctrl` + `C` while `care-album-saver run` is going** (the terminal-only way to
   save photos, below) prints *Stopping after the current photo…*, finishes that photo, and
   ends with *Run the same command again to carry on where it left off.*
 
@@ -220,7 +226,7 @@ crontab -e
 Add this line, save and close. It runs at 7pm daily:
 
 ```
-0 19 * * *  /usr/local/bin/npx care-album-saver run
+0 19 * * *  /usr/bin/node /path/to/care-album-saver/packages/care-album-saver/dist/cli.js run
 ```
 
 Use the full path to `npx`, not a bare `npx`: a scheduled job like this one looks for
@@ -238,7 +244,7 @@ Open **Task Scheduler** → **Create Basic Task** → Daily → Start a program:
 The `.cmd` matters. Task Scheduler starts the program itself rather than going through a
 command prompt, so a bare `npx` sends it looking for `npx.exe`, which does not exist, and
 the task fails at once with *the system cannot find the file specified*. Setting Program to
-`cmd.exe` and Arguments to `/c npx care-album-saver run` works just as well.
+`cmd.exe` and Arguments to `/c node C:\path\to\care-album-saver\packages\care-album-saver\dist\cli.js run` works just as well.
 
 ### Docker
 
@@ -266,7 +272,7 @@ would supply `--dir` for you, but naming `run` at the end replaces it, so once y
 is what lets it read your session file and write into your folder on Linux; Docker Desktop
 on a Mac or Windows does not need it and is not harmed by it. The `/config` line above is
 the Linux location — on a Mac the session lives in
-`~/Library/Application Support/care-album-saver`, and `npx care-album-saver where`
+`~/Library/Application Support/care-album-saver`, and `care-album-saver where`
 prints the exact folder to mount.
 
 ---
@@ -277,7 +283,7 @@ Run this first. It checks everything and **never prints your session** — only 
 fingerprint of it:
 
 ```sh
-npx care-album-saver doctor
+care-album-saver doctor
 ```
 
 It is safe to paste into a bug report, with one thing to glance at first: it prints the full
@@ -292,10 +298,10 @@ your user account. Change that to something else if you would rather not show it
 | *Tick at least one child* | Every child is unticked. **Start saving** stays grey until you tick one — the tool will not run with nobody chosen. |
 | *That is a temporary folder, and your computer deletes those automatically* | The folder you typed is one the computer empties by itself, so it is refused rather than losing your photos months from now. Choose somewhere permanent, such as `~/Care Album Photos`. |
 | *This folder looks like it is inside Dropbox* (or iCloud Drive, OneDrive, Google Drive) | A warning, not a refusal: the folder is saved and the run will use it. It means a copy of every photo goes to that company as well. Fine if you meant it. |
-| *Could not reach the tool* | The black window it was started from has been closed. Start it again with `npx care-album-saver setup` and open the new link. |
+| *Could not reach the tool* | The black window it was started from has been closed. Start it again with `care-album-saver setup` and open the new link. |
 | *Looked through 40 of 312 updates* | Not a problem — this is the progress line. Brightwheel counts updates of every kind, so that total includes check-ins, naps and notes. It is not a number of photos, and most of them are not photos. |
 | *No children found on this Brightwheel account* | Make sure you signed in as the parent account, not a staff one. |
-| *ExifTool is not installed* | Harmless: every photo is still saved, and the dates and names go into the `.json` file beside it rather than inside it. Writing them *inside* needs the tool's own bundled copy, which comes with it automatically — so this message usually means the install skipped optional packages. Installing ExifTool on your computer by hand will **not** fix it; the tool only ever uses its own copy. Reinstalling normally (`npm install -g care-album-saver`, without `--omit=optional`) will. |
+| *ExifTool is not installed* | Harmless: every photo is still saved, and the dates and names go into the `.json` file beside it rather than inside it. Writing them *inside* needs the tool's own bundled copy, which comes with it automatically — so this message usually means the install skipped optional packages. Installing ExifTool on your computer by hand will **not** fix it; the tool only ever uses its own copy. Reinstalling normally (`pnpm install`, without `--omit=optional`) will. |
 | Photos in the wrong week | Please open an issue, and include three things: the photo's file name (`2026-09-18_093214_7f3a9b21.jpg`), the week folder it landed in (`2026-W38` — just that part, not the folder above it, which is your child's name), and the single line from the `.json` file beside it that starts `"postedAt"` (which holds
 the moment the photo was posted to Brightwheel — that is the only date there is; see the
 note below). That is everything needed to diagnose it, and none of it names anybody. **Please do not attach the whole `.json` file.** It also holds your child's name and Brightwheel id, the nursery's name, the teacher's note and who wrote it — and an issue tracker is a public web page that search engines index. |
