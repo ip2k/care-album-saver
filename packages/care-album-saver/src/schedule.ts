@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { homedir, platform as osPlatform } from 'node:os';
+import { homedir, platform as osPlatform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir, readJsonFile, writeSecureFile } from './paths.js';
@@ -51,7 +51,11 @@ const SCHTASKS_NAME = 'Care Album Saver daily';
  * So installing rewrites only the lines between this marker and the line after it, and
  * removing takes only those away. Anything unmarked is copied through untouched.
  */
-const CRON_MARKER = '# care-album-saver: the daily run. Delete these two lines to stop it.';
+const CRON_MARKER = '# care-album-saver: the daily run. Delete this block to stop it.';
+/** Closes the block. The first version wrote one line and no end marker; `stripCronBlock` still removes that shape. */
+const CRON_END = '# care-album-saver: end of the daily run.';
+/** What the first version wrote. Still recognised so that block can be removed. */
+const LEGACY_CRON_MARKER = '# care-album-saver: the daily run. Delete these two lines to stop it.';
 
 export interface CommandResult {
   /** Exit status. 127 stands in for "the program is not installed". */
@@ -233,6 +237,46 @@ export async function recordRun(run: LastRun): Promise<void> {
   await writeSecureFile(lastRunPath(), JSON.stringify(run, null, 2));
 }
 
+/**
+ * Whether a scheduled run has work to do, or whether this is a catch-up for one that
+ * already happened.
+ *
+ * Every platform's catch-up fires more often than the schedule does — launchd at each
+ * login, cron at each boot, Task Scheduler when it notices a missed start, systemd when
+ * a timer it persisted comes due. Without this guard, "make missed runs happen" would
+ * read to a parent as "runs every time I turn the computer on", and would put a listing
+ * request per child on Brightwheel for nothing.
+ *
+ * The rule is the simplest one that is right: find the most recent time the schedule
+ * should have fired at or before now, and ask whether a run has succeeded since. If one
+ * has, this invocation is a catch-up for an occurrence already covered, and there is
+ * nothing to do. If none has — the machine was off at seven, or the run failed — it is
+ * due, which is exactly the case all of this exists for.
+ *
+ * A failed run does not count as covering the occurrence, so the next login or boot
+ * retries it. That is deliberate: the common cause of failure is an expired session, and
+ * the next attempt is how a parent who has since reconnected gets their evening back.
+ */
+export function isDue(
+  record: { time: string } | null | undefined,
+  lastRun: LastRun | null,
+  now = new Date(),
+): boolean {
+  // No schedule recorded: somebody ran `run --scheduled` by hand, and a hand-run is due.
+  const time = record ? parseTimeOfDay(record.time) : null;
+  if (!time) return true;
+
+  const occurrence = new Date(now);
+  occurrence.setHours(time.hour, time.minute, 0, 0);
+  // Before today's time, the occurrence to satisfy is yesterday's.
+  if (occurrence > now) occurrence.setDate(occurrence.getDate() - 1);
+
+  if (!lastRun?.ok) return true;
+  const lastAt = Date.parse(lastRun.at);
+  if (!Number.isFinite(lastAt)) return true;
+  return lastAt < occurrence.getTime();
+}
+
 export async function loadLastRun(): Promise<LastRun | null> {
   const stored = await readJsonFile<LastRun>(lastRunPath());
   if (!stored || typeof stored.at !== 'string') return null;
@@ -301,10 +345,22 @@ export function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
     `    <key>Hour</key><integer>${time.hour}</integer>`,
     `    <key>Minute</key><integer>${time.minute}</integer>`,
     '  </dict>',
-    // Not at login. A parent who has just turned the computer on wants it responsive, and
-    // the run will come round on its own soon enough.
+    // At login as well, and this is the powered-OFF case rather than the asleep one.
+    //
+    // launchd's own words for sleep: "Unlike cron which skips job invocations when the
+    // computer is asleep, launchd will start the job the next time the computer wakes up.
+    // If multiple intervals transpire before the computer is woken, those events will be
+    // coalesced into one event upon wake from sleep." That covers a closed lid. It does
+    // not cover a Mac that was shut down at six and turned on the next morning, because
+    // the agent is loaded fresh at login with no memory of the interval it missed.
+    //
+    // RunAtLoad closes that, and the man page's objection to it — speculative launches
+    // hurting login performance — is answered by the run itself rather than by not doing
+    // it: `run --scheduled` asks `isDue` first and exits in milliseconds when the last
+    // successful run already covers the most recent occurrence. So this costs a process
+    // start at login, not a sync.
     '  <key>RunAtLoad</key>',
-    '  <false/>',
+    '  <true/>',
     // Background: launchd may then give it less CPU and less disk priority than whatever
     // the person is actually doing, which is right for an archive job.
     '  <key>ProcessType</key>',
@@ -350,6 +406,21 @@ export function systemdTimer(time: TimeOfDay): string {
   ].join('\n');
 }
 
+export function cronLines(env: Resolved, time: TimeOfDay): string[] {
+  // Two lines, because cron is the one scheduler here with no catch-up of its own. The
+  // daily line is the schedule; the @reboot line is what makes a run missed while the
+  // machine was off happen once it is on again — the behaviour launchd gives for free and
+  // systemd gives with Persistent=true. `run --scheduled` exits immediately when the most
+  // recent occurrence is already covered, so this is not "a run on every boot".
+  return [cronLine(env, time), rebootLine(env)];
+}
+
+/** The catch-up line. `@reboot` is in every cron implementation this tool will meet. */
+export function rebootLine(env: Resolved): string {
+  const log = join(logDir(env), 'daily.log');
+  return `@reboot "${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')} >> "${log}" 2>&1`;
+}
+
 export function cronLine(env: Resolved, time: TimeOfDay): string {
   const log = join(logDir(env), 'daily.log');
   return `${time.minute} ${time.hour} * * * "${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')} >> "${log}" 2>&1`;
@@ -362,6 +433,69 @@ export function cronLine(env: Resolved, time: TimeOfDay): string {
  * command is assembled as text — by Windows' design, not ours. It is still handed to
  * `execFile` as a single argument, so no shell ever sees it.
  */
+/**
+ * The task, as Task Scheduler's own XML.
+ *
+ * `schtasks /Create` has flags for the trigger and the command and for almost nothing
+ * else, and the three settings that matter here are among the nothing else:
+ *
+ *  - **StartWhenAvailable** is the missed-run catch-up, and the reason this function
+ *    exists. Microsoft: "the Task Scheduler can start the task at any time after its
+ *    scheduled time has passed", queued "after a delay. The default delay is 10 minutes."
+ *    Their documentation adds that it "applies only to time-based tasks with an end
+ *    boundary or time-based tasks that are set to repeat infinitely", which a plain daily
+ *    trigger satisfies by repeating without end.
+ *  - **DisallowStartIfOnBatteries** defaults to TRUE in Task Scheduler. On a parent's
+ *    laptop that default means the evening run simply does not happen, which is exactly
+ *    the silent failure this whole change is about. Both battery settings are turned off.
+ *  - **MultipleInstancesPolicy** IgnoreNew, so a catch-up firing while yesterday's run is
+ *    somehow still going does not start a second one against the same folder.
+ *
+ * Nothing a parent types reaches this. The only substituted values are the two absolute
+ * paths the machine gave us and the time, and each is XML-escaped on the way in.
+ */
+export function schtasksXml(env: Resolved, time: TimeOfDay): string {
+  // Task Scheduler wants a start boundary; the date is only an anchor for a daily
+  // recurrence, so any past date does. A fixed one keeps the file reproducible.
+  const start = `2026-01-01T${pad(time.hour)}:${pad(time.minute)}:00`;
+  return [
+    '<?xml version="1.0" encoding="UTF-16"?>',
+    '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+    '  <RegistrationInfo>',
+    '    <Description>Saves new photos from Brightwheel into your photos folder.</Description>',
+    '  </RegistrationInfo>',
+    '  <Triggers>',
+    '    <CalendarTrigger>',
+    `      <StartBoundary>${start}</StartBoundary>`,
+    '      <Enabled>true</Enabled>',
+    '      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>',
+    '    </CalendarTrigger>',
+    '  </Triggers>',
+    '  <Principals>',
+    '    <Principal id="Author">',
+    '      <LogonType>InteractiveToken</LogonType>',
+    '      <RunLevel>LeastPrivilege</RunLevel>',
+    '    </Principal>',
+    '  </Principals>',
+    '  <Settings>',
+    '    <StartWhenAvailable>true</StartWhenAvailable>',
+    '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>',
+    '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>',
+    '    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>',
+    '    <ExecutionTimeLimit>PT4H</ExecutionTimeLimit>',
+    '    <Enabled>true</Enabled>',
+    '  </Settings>',
+    '  <Actions Context="Author">',
+    '    <Exec>',
+    `      <Command>${xml(env.nodePath)}</Command>`,
+    `      <Arguments>${xml(`"${env.cliPath}" ${RUN_ARGS.join(' ')}`)}</Arguments>`,
+    '    </Exec>',
+    '  </Actions>',
+    '</Task>',
+    '',
+  ].join('\r\n');
+}
+
 export function schtasksCommand(env: Resolved): string {
   return `"${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')}`;
 }
@@ -448,7 +582,7 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
       // is not a failure — it is the ordinary state of a machine nobody has scheduled
       // anything on. Only the lines we get back matter.
       const kept = stripCronBlock(existing.code === 0 ? existing.stdout : '');
-      const written = `${[...kept, CRON_MARKER, cronLine(e, time)].join('\n')}\n`;
+      const written = `${[...kept, CRON_MARKER, ...cronLines(e, time), CRON_END].join('\n')}\n`;
       const applied = await e.run('crontab', ['-'], written);
       if (applied.code !== 0) {
         throw new Error(`The daily run could not be added to your crontab: ${applied.stderr.trim() || `crontab exited with ${applied.code}`}.`);
@@ -458,18 +592,18 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
     case 'schtasks': {
       location = `Task Scheduler, under "${SCHTASKS_NAME}"`;
       // /F overwrites a task of the same name, which is what makes this idempotent.
-      const created = await e.run('schtasks', [
-        '/Create',
-        '/TN',
-        SCHTASKS_NAME,
-        '/TR',
-        schtasksCommand(e),
-        '/SC',
-        'DAILY',
-        '/ST',
-        formatTimeOfDay(time),
-        '/F',
-      ]);
+      // Registered from XML rather than from flags, because the setting that makes a
+      // missed run happen at all has no flag. See schtasksXml. UTF-16LE with a BOM is what
+      // Task Scheduler writes and the encoding schtasks reads most reliably.
+      const xmlPath = join(tmpdir(), `care-album-saver-task-${process.pid}.xml`);
+      await writeFile(xmlPath, `\ufeff${schtasksXml(e, time)}`, 'utf16le');
+      let created;
+      try {
+        created = await e.run('schtasks', ['/Create', '/TN', SCHTASKS_NAME, '/XML', xmlPath, '/F']);
+      } finally {
+        // The file holds two paths and no secret, but it is still this tool's litter.
+        await rm(xmlPath, { force: true }).catch(() => {});
+      }
       if (created.code !== 0) {
         throw new Error(`Windows Task Scheduler refused the daily run: ${created.stderr.trim() || `schtasks exited with ${created.code}`}.`);
       }
@@ -637,11 +771,21 @@ function stripCronBlock(crontab: string): string[] {
   const lines = crontab.split(/\r?\n/);
   const kept: string[] = [];
   for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i]?.trim() === CRON_MARKER) {
-      i += 1; // and the command line that belongs to it
+    const line = lines[i]?.trim();
+    // Either marker opens our block: a crontab written before the @reboot line existed
+    // carries the old wording, and removing it must still work years later.
+    if (line !== CRON_MARKER && line !== LEGACY_CRON_MARKER) {
+      kept.push(lines[i] ?? '');
       continue;
     }
-    kept.push(lines[i] ?? '');
+    // Newer installs close the block explicitly. The first version wrote the marker and
+    // exactly one line, so with no end marker the block is that one line.
+    let end = -1;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (lines[j]?.trim() === CRON_END) { end = j; break; }
+      if (lines[j]?.trim() === CRON_MARKER || lines[j]?.trim() === LEGACY_CRON_MARKER) break;
+    }
+    i = end === -1 ? i + 1 : end;
   }
   while (kept.length > 0 && kept[kept.length - 1]?.trim() === '') kept.pop();
   return kept;
