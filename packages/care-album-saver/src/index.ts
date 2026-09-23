@@ -27,3 +27,15 @@ export { startMockBrightwheel, type MockServer } from './mock/server.js';
 export { verify, formatReport, type VerifyReport } from './verify.js';
 export { checkArchiveDir, ARCHIVE_DIR_MODE, type PathVerdict } from './safety.js';
 export { inspectCookiePaste, cleanPastedPath, PASTE_CLIENT_SOURCE } from './paste.js';
+export {
+  addToPhotos,
+  albumPathFor,
+  checkPhotosAccess,
+  photosStatus,
+  photosSupported,
+  PHOTOS_FOLDER,
+  PHOTOS_SCRIPT,
+  PHOTOS_SCRIPT_URL,
+  type PhotosResult,
+  type PhotosStatus,
+} from './photos.js';
