@@ -32,6 +32,8 @@ const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-sc
 // a throwaway directory so a committed picture can only ever contain this script's own
 // synthetic run — never the real one sitting in ~/Library/Logs.
 process.env.CARE_ALBUM_LOG_DIR = mkdtempSync(join(tmpdir(), 'cas-shot-logs-'));
+// And it never drives the real Photos app: see scripts/test-env.js.
+process.env.CARE_ALBUM_NO_PHOTOS = '1';
 
 /**
  * The path shown in the pictures. The real one contains the developer's username, which
@@ -313,7 +315,7 @@ const main = async () => {
   // over the very controls the next step is about to click.
   await page.evaluate(() => {
     const flow = document.getElementById('setup-flow');
-    const body = document.getElementById('settings-body');
+    const body = document.getElementById('settings-flow');
     const d = document.getElementById('dlg-settings');
     if (flow && body && flow.parentElement === body && d && !d.open) document.getElementById('btn-settings').click();
   });
@@ -387,8 +389,14 @@ const main = async () => {
   await annotate(page, [
     // Both anchored in the body: a callout on the header row covered the second button,
     // which the overlap guard does not catch because it only compares callouts.
-    { selector: '#dash-stats', text: 'How much is in the archive, and when it was last added to. Everything there is to change or check on is behind Settings, above.', offset: 0 },
-    { selector: '#gallery', text: 'What the last run brought in. Each one opens the full picture from your own disk.', offset: 0, side: 'left' },
+    // Both in the left gutter, one above the other. On the right the stats callout was set
+    // against the end of the stats line — the dashboard is not a .card, so there was no card
+    // edge to clear — and it sat over the top-right thumbnail; the right gutter is also
+    // narrower than a callout, so moving it out there would clip it at the image edge.
+    { selector: '#dash-stats', text: 'How much is in the archive, and when it was last added to. Everything there is to change or check on is behind Settings, above.', offset: 0, side: 'left' },
+    // Pointed at the second row rather than the gallery's top edge, so its arrow is short and
+    // level instead of a long curve squeezed past the callout above it.
+    { selector: '#gallery a:nth-child(7)', text: 'What the last run brought in. Each one opens the full picture from your own disk.', offset: 0, side: 'left' },
   ]);
   await shot(page, '04-done');
   // Belt and braces: the run must have written here and nowhere else.

@@ -29,7 +29,7 @@ A window with text in it appears. You type commands here and press Enter.
 Type this and press Enter:
 
 ```sh
-git clone https://github.com/<your-fork>/care-album-saver.git
+git clone https://github.com/ip2k/care-album-saver.git
 cd care-album-saver
 pnpm install
 pnpm build
@@ -314,6 +314,11 @@ note below). That is everything needed to diagnose it, and none of it names anyb
 It requests one page at a time with a pause between, which is gentler than scrolling the
 website. It reads only your own data. We cannot promise anything on Brightwheel's behalf,
 and their terms are theirs to interpret — but nothing here is aggressive.
+
+**Can it put them in Apple Photos or iCloud Photos?**
+Yes, on a Mac, if you turn it on under **Settings and Maintenance**. It is off unless you do,
+because with iCloud Photos on it means Apple uploads them to your iCloud account.
+[How it works, and what it means](PHOTOS.md).
 
 **Does it delete anything from Brightwheel?**
 No. It only reads. Nothing is ever changed or removed from your account.

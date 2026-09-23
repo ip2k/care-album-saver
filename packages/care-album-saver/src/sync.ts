@@ -22,8 +22,12 @@ export interface SyncProgress {
   /**
    * `stopped` is the end of a run that was asked to stop (see `sync`'s `signal`): it is a
    * normal ending, not a failure, and it is the last event such a run emits.
+   *
+   * `photos` is never emitted by `sync` itself. The setup server reports it while it hands
+   * the run's new files to the Photos app afterwards (src/photos.ts), so the page can say
+   * what the wait is for.
    */
-  phase: 'starting' | 'listing' | 'downloading' | 'done' | 'error' | 'stopped';
+  phase: 'starting' | 'listing' | 'downloading' | 'photos' | 'done' | 'error' | 'stopped';
   student?: string;
   message: string;
   saved: number;

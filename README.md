@@ -40,9 +40,13 @@ Two places, and only two places:
 1. **Brightwheel's service**, where they already are.
 2. **The computer you run this on**, in the folder you choose.
 
-That's it. There is no third place. There is no website to sign up to, no online account,
-and no company behind it. Nothing is uploaded anywhere. Nobody — including the people who
-wrote this — can see your photos, your child's name, or which nursery they go to.
+That's it, unless you add a third yourself. There is no website to sign up to, no online
+account, and no company behind it. This tool uploads nothing anywhere. Nobody — including the
+people who wrote this — can see your photos, your child's name, or which nursery they go to.
+
+The one way to add a third place is a setting that is **off unless you turn it on**: on a Mac,
+the tool can also add new photos to the Photos app, and if you use iCloud Photos, Apple then
+uploads them to your iCloud account. [What that setting does, and how](docs/PHOTOS.md).
 
 One honest clarification, because the word matters: the setup page *does* run a small web
 server, but it runs **on your own computer**, only while the program is open, and only your
@@ -153,7 +157,7 @@ The setup assistant walks you through everything. **[Full illustrated guide →]
 **This is not on npm yet**, so it is built from a clone. That is four commands, once:
 
 ```sh
-git clone https://github.com/<your-fork>/care-album-saver.git
+git clone https://github.com/ip2k/care-album-saver.git
 cd care-album-saver
 pnpm install
 pnpm build
@@ -226,6 +230,17 @@ There is also a `CARE_ALBUM_SESSION` environment variable, which the tool reads 
 the session file when it is set. **Mount the file rather than use it.** An environment
 variable is visible in process listings, lands in shell history, and is copied into crash
 dumps; a mounted file is none of those things.
+
+### Adding them to Apple Photos (Mac, optional)
+
+Off unless you turn it on, under **Settings and Maintenance** on the setup page. Each run then
+also adds its new photos to the Photos app, in a folder called **Brightwheel** with the same
+folders and weekly albums as your archive folder. If you use iCloud Photos, that means they
+are uploaded to your iCloud account — which is why it is off, and why it only covers photos
+saved after you turn it on unless you ask for the earlier ones too.
+
+It works by running [one short AppleScript](packages/care-album-saver/applescript/add-to-photos.applescript)
+that you can read first. [docs/PHOTOS.md](docs/PHOTOS.md) explains the whole thing.
 
 ---
 
@@ -486,6 +501,7 @@ your child's data, ask the school.
 | Package | |
 |---|---|
 | [`care-album-saver`](packages/care-album-saver) | The tool itself: API client, metadata, week folders, CLI and setup assistant. |
+| [`applescript/`](packages/care-album-saver/applescript) | The one AppleScript the optional Apple Photos setting runs, kept as a file of its own so it can be read in one place. |
 | [`src/ferry/`](packages/care-album-saver/src/ferry) | The service-agnostic half, kept as its own directory: resumable downloads, stable identity for signed URLs, content hashing, safe filenames, ISO weeks. It knows nothing about Brightwheel. |
 
 It used to be a second package, `media-ferry`, and was folded back in on 23 September 2026.
