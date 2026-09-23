@@ -1,5 +1,6 @@
 import { Secret } from './secrets.js';
 import { inspectCookiePaste } from './paste.js';
+import { acceptableUserAgent } from './api/identity.js';
 
 /** RFC 6265 cookie-octet: what a cookie value may contain, and all a saved one may hold. */
 const COOKIE_OCTETS = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/;
@@ -99,6 +100,11 @@ interface StoredSession {
   cookie: string;
   savedAt: string;
   email?: string | null;
+  /**
+   * The User-Agent of the browser the session was pasted from, sent with every request so
+   * that the session and the identity carrying it agree. Null when no browser was involved.
+   */
+  userAgent?: string | null;
 }
 
 /**
@@ -107,7 +113,12 @@ interface StoredSession {
  * Returned as a `Secret`, never a bare string, so that it cannot reach a log by accident
  * anywhere downstream.
  */
-export async function loadSession(): Promise<{ session: Secret; savedAt: Date; email: string | null } | null> {
+export async function loadSession(): Promise<{
+  session: Secret;
+  savedAt: Date;
+  email: string | null;
+  userAgent: string | null;
+} | null> {
   if (process.env.CARE_ALBUM_SESSION || process.env.BRIGHTWHEEL_SESSION) {
     // Supported for Docker and CI, but the README explains why a mounted file is better:
     // environment variables leak into process listings, shell history and crash dumps.
@@ -115,7 +126,7 @@ export async function loadSession(): Promise<{ session: Secret; savedAt: Date; e
     // container or CI job does not stop working on an upgrade.
     const value = process.env.CARE_ALBUM_SESSION || process.env.BRIGHTWHEEL_SESSION || '';
     if (!COOKIE_OCTETS.test(value)) return null;
-    return { session: new Secret(value), savedAt: new Date(), email: null };
+    return { session: new Secret(value), savedAt: new Date(), email: null, userAgent: null };
   }
   const stored = await readJsonFile<StoredSession>(sessionPath());
   if (!stored?.cookie) return null;
@@ -126,14 +137,18 @@ export async function loadSession(): Promise<{ session: Secret; savedAt: Date; e
     session: new Secret(stored.cookie),
     savedAt: new Date(stored.savedAt),
     email: stored.email ?? null,
+    // Re-checked on the way in: this file can be edited by hand, and the value goes out as
+    // a header on every request.
+    userAgent: acceptableUserAgent(stored.userAgent),
   };
 }
 
-export async function saveSession(cookie: Secret, email: string | null): Promise<void> {
+export async function saveSession(cookie: Secret, email: string | null, userAgent: string | null = null): Promise<void> {
   const payload: StoredSession = {
     cookie: cookie.expose(),
     savedAt: new Date().toISOString(),
     email,
+    userAgent: acceptableUserAgent(userAgent),
   };
   await writeSecureFile(sessionPath(), JSON.stringify(payload, null, 2));
 }

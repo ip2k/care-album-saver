@@ -1,4 +1,5 @@
 import { Secret } from '../secrets.js';
+import { browserUserAgent } from './identity.js';
 import {
   ApiShapeError,
   assertJsonResponse,
@@ -21,6 +22,12 @@ export interface ClientOptions {
   maxRetries?: number;
   fetchImpl?: typeof fetch;
   onLog?: (message: string) => void;
+  /**
+   * The browser identity to send: the one the session was pasted from, when the setup page
+   * saw it. Absent or null means a stock desktop Chrome. See api/identity.ts for why the
+   * tool never sends a name of its own.
+   */
+  userAgent?: string | null;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -126,6 +133,7 @@ export class BrightwheelClient {
   private readonly maxRetries: number;
   private readonly doFetch: typeof fetch;
   private readonly log: (m: string) => void;
+  private readonly userAgent: string;
   private lastRequest = 0;
 
   constructor(private readonly options: ClientOptions) {
@@ -134,6 +142,7 @@ export class BrightwheelClient {
     this.maxRetries = options.maxRetries ?? 4;
     this.doFetch = options.fetchImpl ?? fetch;
     this.log = options.onLog ?? (() => {});
+    this.userAgent = options.userAgent || browserUserAgent();
   }
 
   /** Headers for an API call. The session cookie is exposed only here. */
@@ -143,7 +152,7 @@ export class BrightwheelClient {
       Accept: 'application/json',
       // The web client identifies itself as 'web'; an unrecognised value risks rejection.
       'X-Client-Name': 'web',
-      'User-Agent': 'care-album-saver (+https://github.com/)',
+      'User-Agent': this.userAgent,
     };
   }
 
@@ -158,7 +167,8 @@ export class BrightwheelClient {
    * should reach exactly one origin (the API) and no other.
    */
   mediaHeaders(): Record<string, string> {
-    return { 'User-Agent': 'care-album-saver (+https://github.com/)' };
+    // The same identity as the API calls: a browser fetches the pictures it is shown.
+    return { 'User-Agent': this.userAgent };
   }
 
   private async request(path: string, context: string): Promise<unknown> {
