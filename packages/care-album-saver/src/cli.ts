@@ -351,6 +351,7 @@ async function main(): Promise<number> {
           stdout.write('  Already up to date for today; nothing to do.\n');
           return 0;
         }
+        await schedule.appendLog(`${new Date().toISOString()}  START   scheduled run`);
       }
       const session = await loadSession();
       if (!session) {
@@ -415,6 +416,9 @@ async function main(): Promise<number> {
         // failure is written down, the tool has no way to answer "is this still working?"
         // — and an expired session looks exactly like an archive that is up to date.
         if (values.scheduled) {
+          await schedule.appendLog(
+            `${new Date().toISOString()}  FAILED  ${scrub(error instanceof Error ? error.message : String(error))}`,
+          );
           await schedule.recordRun({
             at: new Date().toISOString(),
             ok: false,
@@ -448,6 +452,10 @@ async function main(): Promise<number> {
                 (result.failed > 0 ? `, ${result.failed} could not be fetched.` : '.'),
           trigger: 'schedule',
         });
+        await schedule.appendLog(
+          `${new Date().toISOString()}  ${result.failed === 0 && !result.stopped ? 'OK     ' : 'PARTIAL'}  ` +
+            `${result.saved} saved, ${result.skipped} already had, ${result.failed} could not be fetched`,
+        );
       }
       stdout.write(
         `\n  ${result.stopped ? 'Stopped' : 'Done'}. ${result.saved} new, ${result.skipped} already had, ` +

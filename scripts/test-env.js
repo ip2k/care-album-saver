@@ -39,6 +39,12 @@ if (!process.env.CARE_ALBUM_DIR) {
 }
 process.env.BRIGHTWHEEL_ARCHIVE_DIR = process.env.CARE_ALBUM_DIR;
 
+// The daily log names a child and the archive path, and the setup page now shows its tail.
+// A test that reads it must not read the developer's real one.
+if (!process.env.CARE_ALBUM_LOG_DIR) {
+  process.env.CARE_ALBUM_LOG_DIR = mkdtempSync(join(tmpdir(), 'cas-test-logs-'));
+}
+
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
  *
