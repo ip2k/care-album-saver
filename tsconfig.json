@@ -1,7 +1,8 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/media-ferry" },
-    { "path": "./packages/care-album-saver" }
+    {
+      "path": "./packages/care-album-saver"
+    }
   ]
 }

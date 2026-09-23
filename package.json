@@ -1,5 +1,5 @@
 {
-  "name": "care-album-saver-monorepo",
+  "name": "care-album-saver",
   "private": true,
   "type": "module",
   "engines": {
@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "test": "node --test --import ./scripts/test-env.js packages/care-album-saver/test packages/media-ferry/test",
+    "test": "node --test --import ./scripts/test-env.js packages/care-album-saver/test",
     "clean": "tsc --build --clean"
   },
   "devDependencies": {

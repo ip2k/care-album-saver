@@ -1,5 +1,5 @@
 import { writeFile } from 'node:fs/promises';
-import { exifDateTime, exifOffset } from 'media-ferry';
+import { exifDateTime, exifOffset } from './ferry/index.js';
 import type { MediaActivity, Student } from './api/schema.js';
 
 export interface MetadataInput {

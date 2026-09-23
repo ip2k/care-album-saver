@@ -1,10 +1,14 @@
+// First, before anything that can read the config directory (see scripts/test-env.js).
+import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+assertIsolatedConfigDir();
 import {
   isoWeek, weekFolder, weekLabel, exifDateTime, exifOffset,
   safeStem, safeExtension, uniqueName,
   transferIdentity, sameRemoteFile,
-} from '../dist/index.js';
+} from '../dist/ferry/index.js';
 
 test('ISO week: the year-boundary cases that scatter an archive', () => {
   // 1 Jan 2027 is a Friday, which ISO 8601 places in week 53 of 2026.

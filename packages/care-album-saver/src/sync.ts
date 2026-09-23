@@ -11,7 +11,7 @@ import {
   uniqueName,
   weekFolder,
   weekLabel,
-} from 'media-ferry';
+} from './ferry/index.js';
 import type { ActivityListOptions, ActivityPage, BrightwheelClient } from './api/client.js';
 import type { MediaActivity, Student } from './api/schema.js';
 import type { Config } from './config.js';
