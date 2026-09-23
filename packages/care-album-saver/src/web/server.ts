@@ -12,6 +12,7 @@ import { photoAt, summarise } from '../gallery.js';
 import { createReadStream } from 'node:fs';
 import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
 import * as schedule from '../schedule.js';
+import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
 import { PAGE } from './page.js';
 
 /**
@@ -210,6 +211,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     // Never persist a destination without checking it. This endpoint previously
     // accepted any path at all and the tool wrote a child's photos there.
     let warning: string | undefined;
+    // Whether photos go to Apple — and from when — is decided by /api/photos, which asks
+    // the Mac for permission first. A settings patch cannot reach round that.
+    delete patch.addToPhotos;
+    delete patch.addToPhotosFrom;
     if (typeof patch.archiveDir === 'string') {
       patch.archiveDir = cleanPastedPath(patch.archiveDir);
       const verdict = checkArchiveDir(patch.archiveDir);
@@ -288,8 +293,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         // What the archive holds, so the page can answer "is this still working?" with the
         // photographs themselves rather than with a green tick that outlives the truth.
         const archive = await summarise(config).catch(() => null);
+        const photos = await photosStatus(config, { platform: options.native?.platform }).catch(() => null);
         json(200, {
           archive,
+          photos,
           hasSession: Boolean(session),
           sessionFingerprint: session?.session.fingerprint() ?? null,
           sessionSavedAt: session?.savedAt.toISOString() ?? null,
@@ -481,6 +488,47 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         return;
       }
 
+      /**
+       * Adding to Apple Photos: on, off, and "the earlier ones too".
+       *
+       * Its own route rather than a field in /api/config, because turning it on is not a
+       * setting being stored. It is the one choice that can send a child's photos off this
+       * computer (to the parent's iCloud, when iCloud Photos is on), so it does two things
+       * a tick box elsewhere does not: it asks the Mac for permission while the parent is
+       * looking, and it decides from when — the server's clock, not the page's — so that
+       * turning it on never pours the whole archive into Photos unasked.
+       */
+      if (req.method === 'POST' && url.pathname === '/api/photos') {
+        const body = JSON.parse(await readBody(req)) as { enabled?: unknown; earlier?: unknown };
+        const photoOptions = { platform: options.native?.platform, spawn: options.native?.spawn };
+        if (!photosSupported(photoOptions.platform)) {
+          json(400, { ok: false, error: 'Adding to Photos is only possible on a Mac.' });
+          return;
+        }
+        if (body.enabled === true) {
+          const access = await checkPhotosAccess(photoOptions);
+          if (!access.ok) {
+            json(400, { ok: false, error: scrub(access.error) });
+            return;
+          }
+        }
+        const config = await withConfigLock(async () => {
+          const current = await loadConfig();
+          if (body.enabled === true) {
+            current.addToPhotos = true;
+            current.addToPhotosFrom = new Date().toISOString();
+          } else if (body.enabled === false) {
+            current.addToPhotos = false;
+          } else if (body.earlier === true && current.addToPhotos) {
+            current.addToPhotosFrom = null;
+          }
+          await saveConfig(current);
+          return current;
+        });
+        json(200, { ok: true, photos: await photosStatus(config, photoOptions) });
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === '/api/sync') {
         if (running) {
           json(409, { ok: false, error: 'Already running.' });
@@ -515,8 +563,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         // nothing to abort, answer "nothing is running", and let the server be torn down
         // with a run about to start and no manifest saved.
         const done = (async () => {
+          let config: Config | null = null;
+          let result: Awaited<ReturnType<typeof sync>> | null = null;
           try {
-            const config = await loadConfig();
+            config = await loadConfig();
             const client = new BrightwheelClient({
               session: session.session,
               baseUrl: options.baseUrl,
@@ -526,10 +576,9 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             // before printing them. These go to /api/state, which the page polls and
             // renders: a warning built from an error somebody else's code wrote is the
             // one place a credential could arrive in a line nobody expected to hold one.
-            const result = await sync(client, config, (p) => {
+            result = await sync(client, config, (p) => {
               progress = { ...p, message: scrub(p.message) };
             }, { signal: controller.signal });
-            lastResult = { ...result, warnings: result.warnings.map(scrub) };
           } catch (error: unknown) {
             progress = {
               phase: 'error',
@@ -538,6 +587,36 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
               skipped: progress.skipped,
               failed: progress.failed,
             };
+          }
+          try {
+            // Then Photos, when the parent has turned it on — even after a run that failed
+            // part-way, because what it saved before failing is on disk and just as new.
+            // Not after a Stop, which means stop. The run's own last line is put back
+            // afterwards; a failed run's error is never replaced by a Photos message.
+            let photos: PhotosResult | null = null;
+            if (config?.addToPhotos && !controller.signal.aborted) {
+              const finished = progress;
+              photos = await addToPhotos(config, {
+                platform: options.native?.platform,
+                spawn: options.native?.spawn,
+                signal: controller.signal,
+                onProgress: (message) => {
+                  if (result) progress = { ...finished, phase: 'photos', message };
+                },
+              }).catch((error: unknown) => ({
+                // Nothing awaits this promise with a catch of its own, so a throw here would
+                // be an unhandled rejection — which ends the whole process, page and all.
+                ok: false,
+                added: 0,
+                remaining: 0,
+                missing: 0,
+                reason: 'failed' as const,
+                error: error instanceof Error ? error.message : String(error),
+              }));
+              progress = finished;
+              if (photos.error) photos.error = scrub(photos.error);
+            }
+            if (result) lastResult = { ...result, warnings: result.warnings.map(scrub), photos };
           } finally {
             running = false;
             current = null;

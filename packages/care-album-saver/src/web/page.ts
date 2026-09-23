@@ -32,6 +32,7 @@
  */
 import { COOKIE_HELP, COOKIE_HELP_CSS, COOKIE_HELP_SCRIPT } from './cookie-help.js';
 import { PASTE_CLIENT_SOURCE } from '../paste.js';
+import { PHOTOS_DOC_URL, PHOTOS_SCRIPT_URL } from '../photos.js';
 
 export const PAGE = String.raw`<!doctype html>
 <html lang="en">
@@ -156,6 +157,7 @@ export const PAGE = String.raw`<!doctype html>
   .gallery a {
     display: block; position: relative; aspect-ratio: 1; overflow: hidden;
     border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-sunken);
+    text-decoration: none; color: var(--text-muted);
   }
   .gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .gallery a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -313,6 +315,24 @@ export const PAGE = String.raw`<!doctype html>
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.secondary { background: var(--surface-sunken); color: var(--text); border-color: var(--border-strong); }
   button.secondary:hover:not(:disabled) { background: var(--border); }
+  /* What the hidden attribute means, everywhere. Without this, any rule that sets display —
+     .run-actions is flex — quietly beats it, and a control the script hid stays on screen. */
+  [hidden] { display: none !important; }
+  /* The dashboard has no step numbers, so its notes are not indented under one. */
+  .dash .hint { margin-left: 0; }
+  .nowrap { white-space: nowrap; }
+
+  /* A button that opens something on this page, dressed as the link beside it. Still a
+     button, so it is reachable and announced as one; it just does not shout. */
+  button.linkish {
+    background: none; border: 0; padding: 0; min-height: 0; font: inherit;
+    color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px;
+  }
+  button.linkish:hover:not(:disabled) { background: none; color: var(--accent-hover); }
+  .photos-links { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s2); margin: var(--s4) 0 0; }
+  /* The Photos card has no step number, so nothing to indent under. */
+  #card-photos .hint, #card-photos .body { margin-left: 0; }
+  .warn-text { color: var(--warn); font-weight: 600; }
 
   .msg { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--radius-sm); font-size: .9375rem; border: 1px solid transparent; }
   .msg.ok { background: var(--ok-tint); color: var(--ok); border-color: var(--ok); }
@@ -465,6 +485,7 @@ ${COOKIE_HELP_CSS}
       <button class="secondary" id="btn-dash-logs" type="button">View the log</button>
     </div>
     <p class="hint" id="dash-schedule"></p>
+    <p class="hint" id="dash-photos" hidden></p>
     <div id="dash-msg" role="status" aria-live="polite"></div>
   </section>
 
@@ -705,7 +726,37 @@ ${COOKIE_HELP_CSS}
     <h2 id="h-settings">Settings and Maintenance</h2>
     <button class="icon-btn" id="btn-settings-close" type="button">Close</button>
   </div>
-  <div class="dlg-body" id="settings-body"></div>
+  <div class="dlg-body" id="settings-body">
+    <div id="settings-flow"></div>
+
+    <!-- Settings-only, never part of the setup steps: it is nobody's first decision, and it
+         is the one choice that can send photos off this computer. Hidden where there is
+         no Photos app to add to. -->
+    <section class="card" id="card-photos" aria-labelledby="h-photos" hidden>
+      <div class="step-head">
+        <h2 id="h-photos">Also add them to Apple Photos</h2>
+      </div>
+      <p class="hint">Off unless you turn it on. Your photos are saved in your own folder either way; this also puts a copy of each new one in the Photos app.</p>
+      <div class="body">
+        <div class="opt">
+          <input type="checkbox" id="addToPhotos" aria-describedby="photos-why photos-status photos-msg">
+          <label for="addToPhotos">Add new photos to the Photos app after each run
+            <span class="why" id="photos-why">They go into a folder called <b>Brightwheel</b> in Photos, with the same folders and weekly albums as on disk. <b>If you use iCloud Photos, Photos then uploads them to your iCloud account</b> &mdash; the one way anything this tool saves leaves your computer. The first time, your Mac asks whether to allow it; choose <b>OK</b>.</span>
+          </label>
+        </div>
+        <p class="hint" id="photos-status" aria-live="polite"></p>
+        <div class="run-actions" id="photos-earlier-row" hidden>
+          <button class="secondary" id="btn-photos-earlier" type="button">Add the ones saved before you turned this on</button>
+        </div>
+        <div id="photos-msg" role="status" aria-live="polite"></div>
+        <p class="hint photos-links">
+          <button class="linkish" id="btn-photos-faq" type="button">How this works</button>
+          <span aria-hidden="true">&middot;</span>
+          <a class="ext" id="photos-script" href="${PHOTOS_SCRIPT_URL}" target="_blank" rel="noopener noreferrer">Read the script it runs <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a>
+        </p>
+      </div>
+    </section>
+  </div>
 </dialog>
 
 <!-- Everything a parent might wonder rather than do. -->
@@ -716,7 +767,7 @@ ${COOKIE_HELP_CSS}
   </div>
   <div class="dlg-body">
     <h3>Where your photos go</h3>
-    <p>From Brightwheel straight onto this computer, into <span class="path" id="p-dir">your chosen folder</span>. Nothing is uploaded anywhere else. There is no online account to sign up for, and nothing is collected about you.</p>
+    <p>From Brightwheel straight onto this computer, into <span class="path" id="p-dir">your chosen folder</span>. Nothing is uploaded anywhere else &mdash; unless you turn on adding them to Apple Photos and use iCloud Photos, which is described below. There is no online account to sign up for, and nothing is collected about you.</p>
     <p>This page is being served by the program running on your own computer &mdash; that is why the address starts with 127.0.0.1, which means <em>this machine only</em>. Nobody else on your network can open it, and it disappears when you stop the program.</p>
 
     <h3>Why does it want a cookie rather than my password?</h3>
@@ -730,6 +781,15 @@ ${COOKIE_HELP_CSS}
 
     <h3>What happens if the computer is off at the scheduled time?</h3>
     <p>The run happens the next time it is on. Each operating system has its own way of catching up on a job it missed, and this uses that rather than a timer of its own.</p>
+
+    <h3 id="faq-photos" tabindex="-1">Can it add them to Apple Photos or iCloud Photos?</h3>
+    <p>Yes, on a Mac, if you turn it on under <b>Settings and Maintenance</b>. It is off unless you do. After each run, the new photos are added to the Photos app in a folder called <b>Brightwheel</b>, with the same folders and weekly albums as on disk &mdash; for example <span class="nowrap">Brightwheel &rsaquo; Robin Maple &rsaquo; 2026-W38</span>.</p>
+    <p><b>If iCloud Photos is on, Photos uploads them to your iCloud account</b>, and from there to your iPhone and anything else signed in to it. That is Apple&rsquo;s service rather than this tool&rsquo;s, and it counts against your iCloud storage. The copies in your own folder stay where they are either way, and turning this off again stops new ones being added without removing any.</p>
+    <p>Turning it on covers photos saved from then on. The ones already in your folder are only added if you press <b>Add the ones saved before you turned this on</b>, because you may have put some of them into Photos yourself already, and those would then appear twice.</p>
+    <p>It works by running one short AppleScript, and that is all it ever asks Photos to do. You can read it before you turn this on:
+      <a class="ext" href="${PHOTOS_SCRIPT_URL}" target="_blank" rel="noopener noreferrer">add-to-photos.applescript <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a>.
+      The whole explanation, including what to do if your Mac says no, is in
+      <a class="ext" href="${PHOTOS_DOC_URL}" target="_blank" rel="noopener noreferrer">docs/PHOTOS.md <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a>.</p>
 
     <h3>Where is everything kept?</h3>
     <p>The photos go where you chose. The settings and your saved session live in a folder outside this one, which <span class="path">care-album-saver where</span> will print for you.</p>
@@ -1012,7 +1072,7 @@ function needsSetup(s) {
 function placeSetupFlow(inSettings) {
   const flow = $('setup-flow');
   const home = $('main');
-  const settings = $('settings-body');
+  const settings = $('settings-flow');
   const wanted = inSettings ? settings : home;
   if (flow.parentElement !== wanted) wanted.appendChild(flow);
   $('dash').hidden = inSettings === false;
@@ -1094,6 +1154,7 @@ async function refresh() {
   await loadSchedule();
   placeSetupFlow(!needsSetup(state));
   paintDashboard(state);
+  paintPhotos(state.photos);
   paint(state.progress, state.running, state.lastResult);
   // A run started before this page was opened (or before a reload) is still going in the
   // terminal. Without restarting the poll here the bar sits motionless, and HIG's
@@ -1181,6 +1242,112 @@ $('btn-settings-close').onclick = () => closeDialog('dlg-settings');
 $('btn-help').onclick = () => openDialog('dlg-help');
 $('btn-help-close').onclick = () => closeDialog('dlg-help');
 $('btn-logs-close').onclick = () => closeDialog('dlg-logs');
+
+/* ------------------------------------------------------------ adding to Apple Photos
+
+   Only in Settings, and only on a Mac. Turning it on is not stored like the other tick
+   boxes: the server first asks the Mac for permission, which can put a macOS question on
+   screen and wait for the answer, so the box stays disabled and says what it is waiting for
+   rather than looking as if nothing happened. */
+
+/** The last Photos status painted, so the buttons act on what the parent is looking at. */
+let photosNow = null;
+
+function paintPhotos(p) {
+  photosNow = p || null;
+  const card = $('card-photos');
+  card.hidden = !p || !p.supported;
+  // One line on the dashboard: that it is on, or — the case that matters — that it has
+  // stopped working, since nothing else on the main page would ever say so.
+  const dash = $('dash-photos');
+  const failing = Boolean(p && p.enabled && p.lastAttempt && !p.lastAttempt.ok);
+  dash.hidden = !(p && p.enabled);
+  dash.textContent = failing
+    ? 'The last photos could not be added to Photos. Open Settings and Maintenance to see why.'
+    : 'Each run also adds its new photos to Photos, in the Brightwheel folder.';
+  dash.classList.toggle('warn-text', failing);
+  if (card.hidden) return;
+  const box = $('addToPhotos');
+  box.checked = p.enabled;
+
+  let status = '';
+  if (p.enabled) {
+    status = p.pending > 0
+      ? p.pending + ' waiting to be added on the next run.'
+      : 'Up to date: everything saved since you turned this on is in Photos.';
+    const last = p.lastAttempt;
+    if (last && last.ok && last.added > 0) status += ' Last added ' + last.added + ' on ' + day(last.at) + '.';
+  }
+  $('photos-status').textContent = status;
+  const last = p.lastAttempt;
+  if (p.enabled && last && !last.ok) {
+    show($('photos-msg'), 'warn', '<b>The last photos could not be added.</b> ' + esc(last.error || ''));
+  }
+
+  const row = $('photos-earlier-row');
+  row.hidden = !(p.enabled && p.earlier > 0);
+  $('btn-photos-earlier').textContent = 'Add the ' + p.earlier + ' saved before you turned this on';
+}
+
+$('addToPhotos').onchange = async (e) => {
+  const box = e.target;
+  const on = box.checked;
+  box.disabled = true;
+  show($('photos-msg'), 'ok', on
+    ? 'Checking that this Mac allows it&hellip; If a box appears asking to let this control Photos, choose <b>OK</b>.'
+    : 'Turning it off&hellip;');
+  try {
+    const r = await api('/api/photos', { method: 'POST', body: JSON.stringify({ enabled: on }) });
+    const d = await r.json();
+    if (!d.ok) {
+      box.checked = !on;
+      show($('photos-msg'), 'err', esc(d.error || 'That did not work.'));
+      return;
+    }
+    show($('photos-msg'), 'ok', on
+      ? 'On. From now on, each run adds its new photos to Photos, in the <b>Brightwheel</b> folder.'
+      : 'Off. Nothing more will be added to Photos. What is already there stays.');
+    paintPhotos(d.photos);
+  } catch {
+    box.checked = !on;
+    show($('photos-msg'), 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
+  } finally {
+    box.disabled = false;
+  }
+};
+
+$('btn-photos-earlier').onclick = async () => {
+  const btn = $('btn-photos-earlier');
+  const n = (photosNow && photosNow.earlier) || 0;
+  // A real question, because the answer cannot be taken back from here: once they are in
+  // Photos (and iCloud), removing them is done in Photos, one selection at a time.
+  if (!window.confirm('Add ' + n + ' earlier photos and videos to Photos?\n\nIf you use iCloud Photos they will be uploaded too. If you already put some of them into Photos yourself, those will appear twice.')) return;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/photos', { method: 'POST', body: JSON.stringify({ earlier: true }) });
+    const d = await r.json();
+    if (!d.ok) { show($('photos-msg'), 'err', esc(d.error || 'That did not work.')); return; }
+    paintPhotos(d.photos);
+    // They go in with a run: a quick look for anything new, then Photos. When a run
+    // cannot start here, the next one — daily or by hand — picks them up.
+    if (!$('btn-run').disabled) {
+      show($('photos-msg'), 'ok', 'Adding them now, after a quick look for anything new. This can take a few minutes.');
+      $('btn-run').click();
+    } else {
+      show($('photos-msg'), 'ok', 'They will be added on the next run.');
+    }
+  } catch {
+    show($('photos-msg'), 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+$('btn-photos-faq').onclick = () => {
+  closeDialog('dlg-settings');
+  openDialog('dlg-help');
+  $('faq-photos').focus();
+};
 
 /**
  * The daily run's log, read into the page.
@@ -1439,12 +1606,20 @@ function paint(p, running, result) {
     fill.style.width = '100%';
     // "Nothing new" is the normal outcome of a daily run. It must read as success, not
     // as a zero that looks like failure.
+    const ph = result && result.photos;
+    // What happened in Photos, as a sentence to add. A run can save nothing new and still
+    // add earlier ones to Photos, so this is said whichever way the run itself went.
+    const photosLine = !ph ? ''
+      : ph.ok ? (ph.added > 0 ? ' Added <b>' + ph.added + '</b> to Photos, in the Brightwheel folder.' : '')
+      : ph.reason === 'busy' ? ''
+      : ' <br><br><b>Not added to Photos:</b> ' + esc(ph.error || 'no reason was given.');
+    const photosFailed = Boolean(ph && !ph.ok && ph.reason !== 'busy');
     if (result && result.saved === 0 && result.failed === 0) {
-      show($('run-result'), 'ok', 'You are up to date &mdash; there were no new photos to save.');
+      show($('run-result'), photosFailed ? 'warn' : 'ok', 'You are up to date &mdash; there were no new photos to save.' + photosLine);
     } else if (result) {
       let html = 'Saved <b>' + result.saved + '</b> new item' + (result.saved === 1 ? '' : 's') + '.';
       if (result.failed > 0) html += ' <b>' + result.failed + '</b> could not be fetched &mdash; press Start saving again to retry them.';
-      show($('run-result'), result.failed > 0 ? 'warn' : 'ok', html);
+      show($('run-result'), result.failed > 0 || photosFailed ? 'warn' : 'ok', html + photosLine);
     }
     // "Where did my photos go" is the question at the end of a run, so answer it with a
     // button rather than a path to copy out.
@@ -1467,6 +1642,7 @@ async function poll() {
   const s = await r.json();
   paint(s.progress, s.running, s.lastResult);
   if (s.running) setTimeout(poll, 700);
+  else paintPhotos(s.photos);
 }
 
 /* ------------------------------------------------------------------ step 4 and managing it
@@ -1529,6 +1705,16 @@ async function loadSchedule() {
 
 function paintSchedule() {
   if (!sched) return;
+  // The dashboard's one line about the daily run: when the next one is, or that there is
+  // none — the "when" a parent looks for without opening Settings.
+  const lost = sched.installed && sched.registered === false;
+  $('dash-schedule').textContent = !sched.installed
+    ? 'Photos are saved only when you press Save new photos. A daily run can be set up in Settings and Maintenance.'
+    : lost
+      ? 'A daily run was set up, but this computer no longer has it. Settings and Maintenance says how to put it back.'
+      : 'Saves new photos every day' + (sched.time ? ' at ' + sched.time : '') +
+        (sched.nextRun ? ' — next run ' + shortWhen(sched.nextRun) : '') + '.';
+  $('dash-schedule').classList.toggle('warn-text', lost);
   if (sched.time) $('schedule-time').value = sched.time;
   $('btn-schedule-off').hidden = !sched.installed;
   $('btn-schedule-on').textContent = sched.installed ? 'Change the time' : 'Save new photos every day';

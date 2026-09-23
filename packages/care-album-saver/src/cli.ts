@@ -13,6 +13,8 @@ import { startWebUi } from './web/server.js';
 import { formatReport, verify } from './verify.js';
 import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from './maintenance.js';
 import * as schedule from './schedule.js';
+import { addToPhotos, photosStatus, photosSupported, PHOTOS_FOLDER } from './photos.js';
+import type { Config } from './config.js';
 
 const HELP = `
 care-album-saver — save your own child's photos from Brightwheel
@@ -61,6 +63,40 @@ Your session is stored in your user config folder, never in this project folder:
  * same sentence was printed twice: once as a progress line, once by the catch below.
  */
 let failureAnnounced = false;
+
+/**
+ * After a run: hand its new photos to the Photos app, if the parent turned that on.
+ *
+ * Runs after a failed run as well as a finished one — what was saved before the failure is
+ * on disk and just as new — but never after Ctrl+C, which means stop. Its own failure never
+ * fails the run: the photos are safe in the folder either way, and are added next time.
+ */
+async function photosStep(config: Config, scheduled: boolean): Promise<void> {
+  if (!config.addToPhotos || !photosSupported()) return;
+  const before = await photosStatus(config).catch(() => null);
+  const outcome = await addToPhotos(config, { onProgress: (m) => stdout.write(`  ${m}\n`) }).catch((error: unknown) => ({
+    ok: false,
+    added: 0,
+    reason: 'failed' as const,
+    error: error instanceof Error ? error.message : String(error),
+  }));
+  if (outcome.ok) {
+    if (outcome.added > 0) stdout.write(`  Added ${outcome.added} to Photos, in the ${PHOTOS_FOLDER} folder.\n`);
+  } else {
+    stdout.write(`  Not added to Photos: ${scrub(outcome.error ?? 'no reason given')}\n`);
+  }
+  if (!scheduled) return;
+  if (outcome.ok && outcome.added === 0) return;
+  await schedule.appendLog(
+    `${new Date().toISOString()}  PHOTOS  ` +
+      (outcome.ok ? `added ${outcome.added} to Photos` : `not added: ${scrub(outcome.error ?? 'no reason given')}`),
+  );
+  // Said once, when it starts failing: a permission that was never granted would otherwise
+  // fail quietly every evening while the page is the only place that knows.
+  if (!outcome.ok && outcome.reason !== 'busy' && before?.lastAttempt?.ok !== false) {
+    await schedule.notify(schedule.PHOTOS_NOTICE).catch(() => false);
+  }
+}
 
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -318,6 +354,15 @@ async function main(): Promise<number> {
         /* optional */
       }
       stdout.write(`  ExifTool:      ${exif}\n`);
+      if (photosSupported()) {
+        const photos = await photosStatus(config);
+        const last = photos.lastAttempt;
+        stdout.write(
+          `  Add to Photos: ${photos.enabled ? `on (${photos.pending} waiting)` : 'off'}` +
+            (last && !last.ok ? ` — last attempt failed: ${scrub(last.error ?? '')}` : '') +
+            '\n',
+        );
+      }
       return check.ok ? 0 : 1;
     }
 
@@ -432,6 +477,8 @@ async function main(): Promise<number> {
           // desktop with no notifier just means the record is the only trace.
           await schedule.notify(schedule.FAILED_NOTICE).catch(() => false);
         }
+        process.off('SIGINT', onInterrupt);
+        if (!stop.signal.aborted) await photosStep(config, Boolean(values.scheduled)).catch(() => {});
         throw error;
       } finally {
         process.off('SIGINT', onInterrupt);
@@ -463,6 +510,7 @@ async function main(): Promise<number> {
       );
       if (result.stopped) stdout.write('  Run the same command again to carry on where it left off.\n');
       for (const w of result.warnings) stdout.write(`  Note: ${scrub(w)}\n`);
+      if (!result.stopped) await photosStep(config, Boolean(values.scheduled));
       return result.failed > 0 ? 1 : 0;
     }
 

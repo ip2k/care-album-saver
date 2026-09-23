@@ -170,6 +170,12 @@ export async function notify(message: string, env: ScheduleEnvironment = {}): Pr
 /** The one notice this tool sends. Fixed text, so nothing about a family can reach it. */
 export const FAILED_NOTICE = 'The daily photo run did not work. Open the setup assistant to see why.';
 
+/**
+ * The photos were saved but Photos would not take them — nearly always a permission macOS
+ * has not granted to the daily run. Shown once, when it starts failing, not every evening.
+ */
+export const PHOTOS_NOTICE = 'Your new photos were saved, but could not be added to Photos. Open the setup assistant to see why.';
+
 export interface TimeOfDay {
   hour: number;
   minute: number;

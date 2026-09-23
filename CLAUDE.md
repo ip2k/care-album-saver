@@ -59,11 +59,22 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 176 tests passing on `main` at 6527f06, no network required (`pnpm test`). The CI matrix
-  in `.github/workflows/ci.yml` is written for Ubuntu, macOS and Windows against Node 20,
-  22, 24 and 26 but **has never run: there is no git remote yet**. The win32 rehearsal
-  (`CARE_ALBUM_TEST_PLATFORM=win32 pnpm test`) is 176 tests, 174 passed,
-  2 skipped.
+- 228 tests passing on 2026-09-23, with the Apple Photos option merged, no network required
+  (`pnpm test`). The CI matrix in `.github/workflows/ci.yml` is written for Ubuntu, macOS
+  and Windows against Node 20, 22, 24 and 26 but **has never run**. The remote now exists —
+  `origin` is https://github.com/ip2k/care-album-saver, **public**, and still empty: nothing
+  has been pushed. Before the first push, scan the whole history, not just the tree: an
+  earlier commit's screenshots held the owner's home path (fixed later, still in history).
+  The win32 rehearsal (`CARE_ALBUM_TEST_PLATFORM=win32 pnpm test`) is 228 tests, 226
+  passed, 2 skipped.
+- **Adding to Apple Photos is off by default and must stay that way** (settled 2026-09-23).
+  It is the one setting that can send photos off the machine — with iCloud Photos on, Apple
+  uploads them — so it is turned on only through `/api/photos`, which asks macOS for
+  permission first and records *from when*; a settings patch cannot set it. Everything the
+  tool asks Photos to do is in `applescript/add-to-photos.applescript`, run with argv and
+  never with `-e`. Photos gets a `Brightwheel` folder mirroring the disk layout. No test may
+  drive the real Photos app: `scripts/test-env.js` sets `CARE_ALBUM_NO_PHOTOS`, and
+  `src/photos.ts` refuses to start osascript while it is set. See docs/PHOTOS.md.
 - **Proven by test, against real bytes:** what is written into a photo and into a video,
   read back out with ExifTool, and that the pixels and the video frame are unaltered; that
   every file is still saved, with a JSON sidecar, when ExifTool is absent; that a run which
@@ -104,8 +115,9 @@ The global rule is an audit every ~10,000 lines added since the last mark, so th
 is due at roughly **12,600** lines. An earlier edit here wrote 15,000, which did not follow
 from any recorded mark; 2,593 + 10,000 is where it actually falls.
 
-At 6527f06, with the four `ux/*` branches merged, the tree is **8,843** source lines —
-6,250 added since the mark, so the audit is not yet due but is past halfway. The
+At 6527f06, with the four `ux/*` branches merged, the tree was **8,843** source lines.
+On 2026-09-23, with the Apple Photos option merged, it is **10,850** — 8,257 added since
+the mark, so the audit is not yet due but is about 1,750 lines away. The
 2026-09-22 review (docs/DIRECTIONS-FOR-OPUS.md) already lists dead code to remove when it
 comes: the `openBrowser` option, `dist/api/login.*`, fourteen unused `media-ferry` exports.
 
