@@ -191,6 +191,25 @@ export const PAGE = String.raw`<!doctype html>
   }
   .field { margin-bottom: var(--s4); }
   label.field-label { display: block; font-size: .9375rem; font-weight: 550; margin-bottom: var(--s2); }
+  /* The time field.
+     It has always been <input type="time">, which is the operating system's own picker —
+     a spinner and a clock on every browser this tool supports, and the only control that
+     is already right for somebody using a screen reader or a phone. What it was not was
+     recognisable AS a control: at the body font size, in a plain bordered box, it read as
+     a text field somebody had typed "19:00" into. So it is now larger than the text around
+     it, tabular so the digits do not shift as they change, and given a visible focus ring;
+     step="300" makes the spinner move in five-minute jumps, because nobody schedules a
+     photo download for 19:03. */
+  .time-field {
+    font: 600 1.25rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    padding: .5rem .75rem; min-height: 2.875rem; max-width: 10rem;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text);
+  }
+  .time-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .field-hint { color: var(--text-muted); font-size: .875rem; margin: var(--s2) 0 0; }
+
   textarea, input[type=text], input[type=email], input[type=password], select {
     width: 100%; padding: .6875rem .8125rem;
     border: 1px solid var(--border-strong);
@@ -209,11 +228,15 @@ export const PAGE = String.raw`<!doctype html>
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
   :focus:not(:focus-visible) { outline: none; }
 
+  /* The label should fill the button it sits in. At .9375rem inside a 2.75rem-tall
+     control the text read as small and the padding as accidental; 1.0625rem with a
+     slightly tighter line box fills it, and the horizontal padding grows with it so the
+     proportions hold rather than the words simply getting bigger in the same box. */
   button {
     background: var(--accent); color: var(--accent-text);
     border: 1px solid transparent; border-radius: var(--radius-sm);
-    padding: .6875rem 1.25rem; font: 550 .9375rem/1.4 inherit;
-    cursor: pointer; min-height: 2.75rem; transition: background .15s;
+    padding: .625rem 1.5rem; font: 600 1.0625rem/1.3 inherit;
+    cursor: pointer; min-height: 2.875rem; transition: background .15s;
   }
   button:hover:not(:disabled) { background: var(--accent-hover); }
   button:disabled { opacity: .5; cursor: not-allowed; }
@@ -488,9 +511,8 @@ ${COOKIE_HELP_CSS}
           </p>
           <div class="field">
             <label class="field-label" for="schedule-time">What time each day?</label>
-            <input type="time" id="schedule-time" value="19:00" aria-describedby="schedule-msg"
-              style="max-width:11rem;padding:.6875rem .8125rem;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font:.9375rem/1.5 inherit;background:var(--surface);color:var(--text);min-height:2.75rem">
-            <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Evening works well: the nursery day is over, so the day&rsquo;s photos are all there.</p>
+            <input type="time" id="schedule-time" value="19:00" step="300" aria-describedby="schedule-msg schedule-time-hint" class="time-field">
+            <p class="field-hint" id="schedule-time-hint">Evening works well: the nursery day is over, so the day&rsquo;s photos are all there. If the computer is off or asleep then, the run happens the next time it is on.</p>
           </div>
           <div class="run-actions">
             <button id="btn-schedule-on" type="button">Save new photos every day</button>

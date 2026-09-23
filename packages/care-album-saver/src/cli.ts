@@ -339,6 +339,19 @@ async function main(): Promise<number> {
     }
 
     case 'run': {
+      // A scheduled invocation may be a catch-up rather than the schedule itself: launchd
+      // starts this at every login, cron at every boot, Task Scheduler whenever it notices
+      // a start it missed. Each of those is how a run the machine was off for eventually
+      // happens — and each would otherwise also fire on days when nothing was missed. So
+      // the first thing a scheduled run does is ask whether its occurrence is already
+      // covered, and if it is, it stops here having opened no session and sent no request.
+      if (values.scheduled) {
+        const due = schedule.isDue(config.schedule, await schedule.loadLastRun());
+        if (!due) {
+          stdout.write('  Already up to date for today; nothing to do.\n');
+          return 0;
+        }
+      }
       const session = await loadSession();
       if (!session) {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
