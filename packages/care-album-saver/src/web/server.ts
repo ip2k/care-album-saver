@@ -14,6 +14,7 @@ import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairMa
 import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
 import { PAGE } from './page.js';
+import { acceptableUserAgent } from '../api/identity.js';
 
 /**
  * The local setup assistant.
@@ -185,7 +186,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     if (chosen.length === 0) {
       return { ok: false, error: 'Tick at least one child. Photos are only saved for the children you tick.' };
     }
-    const known = await readChildren(new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl }));
+    const known = await readChildren(new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent }));
     const knownIds = new Set(known.map((s) => s.id));
     if (chosen.some((id) => !knownIds.has(id))) {
       return {
@@ -367,13 +368,17 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         const secret = new Secret(verdict.value);
-        const client = new BrightwheelClient({ session: secret, baseUrl: options.baseUrl });
+        // The browser this page is open in is, nearly always, the one the session was just
+        // copied out of. Its identity is kept with the session and sent with every request
+        // from now on, starting with this check — see api/identity.ts.
+        const userAgent = acceptableUserAgent(req.headers['user-agent']);
+        const client = new BrightwheelClient({ session: secret, baseUrl: options.baseUrl, userAgent });
         const check = await client.verifySession();
         if (!check.ok) {
           json(400, { ok: false, error: scrub(check.reason) });
           return;
         }
-        await saveSession(secret, check.email);
+        await saveSession(secret, check.email, userAgent);
         // A different account has different children.
         children = null;
         json(200, { ok: true, email: check.email, fingerprint: secret.fingerprint() });
@@ -479,7 +484,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           json(400, { ok: false, error: 'Not signed in yet.' });
           return;
         }
-        const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl });
+        const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
         const me = await client.me();
         // Always re-read here rather than serving the cache: this is the call the page
         // makes on load, and a child added to the account since should appear.
@@ -569,6 +574,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             config = await loadConfig();
             const client = new BrightwheelClient({
               session: session.session,
+              userAgent: session.userAgent,
               baseUrl: options.baseUrl,
               delayMs: config.delayMs,
             });
@@ -710,7 +716,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
                 json(400, { ok: false, error: 'Connect to your Brightwheel account first.' });
                 return;
               }
-              const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl });
+              const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
               const check = await checkChildren(client, config);
               // This call has just read the account, so whatever the cache above holds is
               // the older answer of the two. Dropped rather than patched: it holds full

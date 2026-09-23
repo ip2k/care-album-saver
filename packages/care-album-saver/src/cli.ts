@@ -183,7 +183,7 @@ async function main(): Promise<number> {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
-      const client = new BrightwheelClient({ session: session.session, baseUrl });
+      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
       const check = await checkChildren(client, config);
       stdout.write(`\n  ${check.summary}\n`);
       if (check.notIncluded.length > 0) {
@@ -315,7 +315,7 @@ async function main(): Promise<number> {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
-      const client = new BrightwheelClient({ session: session.session, baseUrl });
+      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
       const me = await client.me();
       const children = await client.students(me.id);
       const width = Math.max(...children.map((c) => c.fullName.length));
@@ -343,7 +343,7 @@ async function main(): Promise<number> {
       // The shape and length only — enough to tell "wrong row" from "expired", never the value.
       const shape = inspectCookiePaste(session.session.expose());
       stdout.write(`  Session shape: ${shape.kind} (${session.session.length} characters)\n`);
-      const client = new BrightwheelClient({ session: session.session, baseUrl });
+      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
       const check = await client.verifySession();
       stdout.write(`  Session works: ${check.ok ? 'yes' : `no — ${scrub(check.reason)}`}\n`);
       let exif = 'no (dates are saved in .json files next to each photo)';
@@ -373,7 +373,7 @@ async function main(): Promise<number> {
         return 1;
       }
       try {
-        const report = await verify(session.session, { baseUrl, deep: values.deep });
+        const report = await verify(session.session, { baseUrl, deep: values.deep, userAgent: session.userAgent });
         stdout.write(formatReport(report));
         stdout.write('  This output is safe to share.\n\n');
         return report.sessionValid ? 0 : 1;
@@ -405,6 +405,7 @@ async function main(): Promise<number> {
       }
       const client = new BrightwheelClient({
         session: session.session,
+        userAgent: session.userAgent,
         baseUrl,
         delayMs: config.delayMs,
       });

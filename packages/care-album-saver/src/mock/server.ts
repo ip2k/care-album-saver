@@ -254,20 +254,21 @@ export interface MockServer {
   port: number;
   close: () => Promise<void>;
   /** Every request served, in order. `search` is the query string, so a test can tell pages apart. */
-  requests: { method: string; path: string; search: string }[];
+  /** Every request, in order. `userAgent` is what it identified itself as. */
+  requests: { method: string; path: string; search: string; userAgent: string }[];
 }
 
 export async function startMockBrightwheel(options: MockOptions = {}): Promise<MockServer> {
   const validSession = options.validSession ?? 'test-session-value';
   const perStudent = options.activitiesPerStudent ?? 24;
-  const requests: { method: string; path: string; search: string }[] = [];
+  const requests: { method: string; path: string; search: string; userAgent: string }[] = [];
   let apiRequests = 0;
 
   let baseUrl = '';
 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', baseUrl || 'http://127.0.0.1');
-    requests.push({ method: req.method ?? 'GET', path: url.pathname, search: url.search });
+    requests.push({ method: req.method ?? 'GET', path: url.pathname, search: url.search, userAgent: req.headers['user-agent'] ?? '' });
 
     const cookie = req.headers.cookie ?? '';
     const isMedia = url.pathname.startsWith('/media/');

@@ -39,3 +39,4 @@ export {
   type PhotosResult,
   type PhotosStatus,
 } from './photos.js';
+export { acceptableUserAgent, browserUserAgent, chromeMajor } from './api/identity.js';
