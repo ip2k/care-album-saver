@@ -91,6 +91,12 @@ export interface WebUiOptions {
    * on the machine running it. Nothing in the product passes anything here.
    */
   native?: NativeOptions;
+  /**
+   * How the daily run is registered with the operating system's scheduler. The demo passes
+   * a stand-in, because a demo that pressed "Stop the daily run" would otherwise remove the
+   * real one from the machine it runs on. Nothing in the product passes anything here.
+   */
+  schedule?: schedule.ScheduleEnvironment;
 }
 
 export interface WebUiHandle {
@@ -655,14 +661,14 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       if (req.method === 'GET' && url.pathname === '/api/schedule') {
         const config = await loadConfig();
         const session = await loadSession();
-        const state = await schedule.status();
+        const state = await schedule.status(options.schedule);
         json(200, {
           ok: true,
           schedule: state,
           // "Already set up" is a session plus a schedule. Anything less is still setup,
           // and the page must not open on a management view for a tool that has never run.
           manage: Boolean(session) && state.installed,
-          proposed: await schedule.describe(state.time ?? config.schedule?.time ?? '19:00'),
+          proposed: await schedule.describe(state.time ?? config.schedule?.time ?? '19:00', options.schedule),
         });
         return;
       }
@@ -678,7 +684,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           // schedule is a read-modify-write of that file like any settings change, and the
           // settings save themselves on each control change — so without this, ticking a box
           // while the schedule is being written loses one of the two.
-          json(200, { ok: true, schedule: await withConfigLock(() => schedule.install(time)) });
+          json(200, { ok: true, schedule: await withConfigLock(() => schedule.install(time, options.schedule)) });
         } catch (error) {
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }
@@ -687,7 +693,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'POST' && url.pathname === '/api/schedule/off') {
         try {
-          json(200, { ok: true, schedule: await withConfigLock(() => schedule.remove()) });
+          json(200, { ok: true, schedule: await withConfigLock(() => schedule.remove(options.schedule)) });
         } catch (error) {
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }

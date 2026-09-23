@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "demo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/demo.js", "--port", "4719"],
+      "port": 4719,
+      "url": "http://127.0.0.1:4719"
+    }
+  ]
+}
