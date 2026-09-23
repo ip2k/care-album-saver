@@ -398,9 +398,28 @@ test('the setup page is structurally sound and accessible', async () => {
     const loads = html.match(/(?:src|<link[^>]+href)="https?:\/\/[^"]+"/g) || [];
     assert.deepEqual(loads, [], `page must not load from external origins: ${loads.join(', ')}`);
 
-    const outward = html.match(/<a\b[^>]+href="https?:\/\/[^"]+"/g) || [];
-    assert.equal(outward.length, 1, `exactly one outward link: ${outward.join(', ')}`);
-    assert.match(outward[0], /href="https:\/\/schools\.mybrightwheel\.com\//, 'and it goes to Brightwheel');
+    // Two destinations are allowed and no others: Brightwheel's own sign-in page, because
+    // the alternative is an address a parent retypes and mistypes, and the project's source,
+    // because a tool that handles children's photographs should be readable by the person
+    // running it. An allowlist rather than a count — a count says nothing about where a
+    // third link would go, which is the part that matters.
+    const ALLOWED = ['https://schools.mybrightwheel.com/', 'https://github.com/ip2k/care-album-saver'];
+    // The WHOLE tag, not just up to the href: the rel is asserted below, and a pattern that
+    // stopped at the closing quote of href would report every link as missing it.
+    const outward = (html.match(/<a\b[^>]*>/g) || []).filter((a) => /href="https?:\/\//.test(a));
+    const hrefs = outward.map((a) => /href="([^"]+)"/.exec(a)[1]);
+    for (const href of hrefs) {
+      assert.ok(ALLOWED.includes(href), `unexpected outward link: ${href}`);
+    }
+    for (const allowed of ALLOWED) {
+      assert.ok(hrefs.includes(allowed), `expected an outward link to ${allowed}`);
+    }
+    // Every one of them, not just the first: a new tab must get no handle on this page and
+    // no referrer, because this page's own address carries the setup token.
+    for (const a of outward) {
+      const rel = new Set((/rel="([^"]*)"/.exec(a)?.[1] ?? '').split(/\s+/).filter(Boolean));
+      assert.ok(rel.has('noopener') && rel.has('noreferrer'), `outward link needs noopener and noreferrer: ${a}`);
+    }
   } finally {
     await ui.close();
   }
