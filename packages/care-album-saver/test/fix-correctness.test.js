@@ -18,7 +18,7 @@ import {
   validateExtraction,
 } from '../dist/index.js';
 import { PAGES_PAST_THE_CUT_OFF } from '../dist/api/client.js';
-import { hashFile, Manifest } from '../../media-ferry/dist/index.js';
+import { hashFile, Manifest } from '../dist/ferry/index.js';
 import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 
 /**

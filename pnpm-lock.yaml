@@ -19,16 +19,10 @@ importers:
         version: 5.9.3
 
   packages/care-album-saver:
-    dependencies:
-      media-ferry:
-        specifier: workspace:*
-        version: link:../media-ferry
     optionalDependencies:
       exiftool-vendored:
         specifier: ^38.1.0
         version: 38.1.0
-
-  packages/media-ferry: {}
 
 packages:
 

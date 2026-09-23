@@ -22,7 +22,7 @@ import { promisify } from 'node:util';
 import { applyMetadata, BrightwheelClient, startMockBrightwheel, sync, Secret, DEFAULT_CONFIG, buildTags } from '../dist/index.js';
 import { closeMetadata } from '../dist/metadata.js';
 import { placeholderJpeg, placeholderMp4, MP4_CONTAINER_CREATED } from '../dist/mock/fixtures.js';
-import { exifDateTime, exifOffset } from 'media-ferry';
+import { exifDateTime, exifOffset } from '../dist/ferry/index.js';
 import { exifToolSkipReason } from '../../../scripts/test-env.js';
 
 const run = promisify(execFile);
