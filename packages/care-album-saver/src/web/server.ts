@@ -68,6 +68,28 @@ function crossSite(req: IncomingMessage): boolean {
   return false;
 }
 
+/**
+ * The one byte range a Range header asks for, clamped to the file; null to send the whole
+ * file; 'unsatisfiable' when it starts past the end. Only the single-range forms a <video>
+ * sends — "bytes=0-", "bytes=500-999", "bytes=-500" — are understood: a multi-range request
+ * or anything malformed is answered with the whole file, which RFC 9110 allows.
+ */
+export function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | 'unsatisfiable' {
+  const m = /^bytes=(\d*)-(\d*)$/.exec((header ?? '').trim());
+  if (!m || (m[1] === '' && m[2] === '')) return null;
+  if (m[1] === '') {
+    // The last N bytes.
+    const suffix = Number(m[2]);
+    if (suffix === 0) return 'unsatisfiable';
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(m[1]);
+  const end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (start >= size) return 'unsatisfiable';
+  if (end < start) return null;
+  return { start, end };
+}
+
 function tokenMatches(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
@@ -309,7 +331,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'",
+      // media-src is for the photo viewer's <video>: the page's own /photo route, nothing else.
+      "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'",
     );
 
     if (!hostAllowed(req.headers.host)) {
@@ -406,13 +429,49 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
           return;
         }
-        res.writeHead(200, {
+        const headers = {
           'content-type': found.type,
-          'content-length': String(found.bytes),
           // A child's photograph must not sit in a browser cache after the tool is closed.
           'cache-control': 'no-store, no-cache, must-revalidate, private',
-        });
+          'accept-ranges': 'bytes',
+        };
+        // A part of the file, when the browser asks for one. The photo viewer plays videos
+        // in the page, and a <video> asks for byte ranges to seek — Safari will not play one
+        // at all from a server that cannot answer them. One range only; anything else gets
+        // the whole file, which is always a correct answer to a Range request.
+        const range = parseRange(req.headers.range, found.bytes);
+        if (range === 'unsatisfiable') {
+          res.writeHead(416, { ...headers, 'content-range': `bytes */${found.bytes}` }).end();
+          return;
+        }
+        if (range) {
+          res.writeHead(206, {
+            ...headers,
+            'content-length': String(range.end - range.start + 1),
+            'content-range': `bytes ${range.start}-${range.end}/${found.bytes}`,
+          });
+          createReadStream(found.path, { start: range.start, end: range.end }).pipe(res);
+          return;
+        }
+        res.writeHead(200, { ...headers, 'content-length': String(found.bytes) });
         createReadStream(found.path).pipe(res);
+        return;
+      }
+
+      // Another page of the most recent run's photographs. The first page comes with
+      // /api/state; this is the rest, asked for when somebody pages through the dashboard or
+      // steps past the end of a page in the photo viewer.
+      if (req.method === 'GET' && url.pathname === '/api/gallery') {
+        const page = Number(url.searchParams.get('page') ?? 0);
+        const summary = await summarise(await loadConfig(), { page });
+        json(200, {
+          recent: summary.recent,
+          page: summary.page,
+          pages: summary.pages,
+          pageSize: summary.pageSize,
+          lastRunCount: summary.lastRunCount,
+          lastSavedAt: summary.lastSavedAt,
+        });
         return;
       }
 
