@@ -393,8 +393,9 @@ function changedReport(paths: readonly string[], added: number): string {
  * both hand the same files over. Returns the release, or null when another run holds it.
  *
  * Built as the folder's run lock is, from its parts in run-lock.ts (security review
- * processes-6): a lock left by a run that died is moved aside and removed only if it is still
- * the one judged stale, so of two runs that judge it at once only one goes on; a lock whose
+ * processes-6): a lock left by a run that died is removed by one taker at a time, and only if
+ * it is still the one judged stale, so of two runs that judge it at once only one goes on
+ * (see setAsideIfUnchanged); a lock whose
  * write failed is taken away again rather than left empty, where it would read as another
  * run's for 45 minutes; and the release removes the lock only while it is still this run's,
  * told apart by a random token in it.

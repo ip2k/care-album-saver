@@ -26,9 +26,9 @@ import { setTimeout as delay } from 'node:timers/promises';
  * when its process no longer exists, or when it has stopped being refreshed although a
  * process with its number does (see takeRunLock); from another computer sharing the folder,
  * when it has not been refreshed for STALE_MS, or was taken more than FOREIGN_MAX_MS ago.
- * Taking one over moves it aside first and removes it only if it is still the lock that was
- * judged abandoned (see setAsideIfUnchanged), so two runs that judge the same lock at once
- * cannot both end up holding the folder.
+ * Taking one over is done by one taker at a time, which removes it only if it is still the
+ * lock that was judged abandoned (see setAsideIfUnchanged), so runs that judge the same lock
+ * at once cannot both end up holding the folder.
  */
 
 export const RUN_LOCK_FILENAME = '.care-album-saver.lock';
