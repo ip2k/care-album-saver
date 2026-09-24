@@ -83,7 +83,8 @@ test('when `schedule on` fails, deploy.js says production was deployed and the d
   });
   const r = deploy(d);
   assert.equal(r.status, 1, r.out + r.err);
-  assert.match(r.err, /Not deployed: Deployed [0-9a-f]{7} to production, but the daily run was not moved there: `schedule on --at 07:30` failed/);
+  assert.match(r.err, /Deployed, but not finished: [0-9a-f]{7} is in production, but the daily run was not moved there: `schedule on --at 07:30` failed/);
+  assert.doesNotMatch(r.err, /Not deployed/, 'production was updated, so the message must not say it was not');
   assert.match(r.err, /To try again: node ".*cli\.js" schedule on --at 07:30 --replace/);
   assert.match(r.err, /Not set up: a stand-in scheduler said no\./, 'with what the tool printed');
   assert.doesNotMatch(r.err, /\bat (?:checkExecSyncError|execFileSync|file:\/\/)/, 'not a stack trace');
@@ -99,7 +100,8 @@ test('when the saved settings cannot be read, it says so in the same words', pos
   });
   const r = deploy(d);
   assert.equal(r.status, 1, r.out + r.err);
-  assert.match(r.err, /Not deployed: Deployed [0-9a-f]{7} to production, but the daily run was not moved there: its settings could not be read\./);
+  assert.match(r.err, /Deployed, but not finished: [0-9a-f]{7} is in production, but the daily run was not moved there: its settings could not be read\./);
+  assert.doesNotMatch(r.err, /Not deployed/, 'production was updated, so the message must not say it was not');
   assert.match(r.err, /stand-in: the settings are damaged/);
 });
 

@@ -64,6 +64,12 @@ const fail = (why) => {
   process.stderr.write(`\n  Not deployed: ${why}\n`);
   process.exit(1);
 };
+// For a failure after production is updated and marked: it was deployed, so "Not deployed"
+// would say the opposite of what happened. Only moving the daily run is left undone.
+const unfinished = (why) => {
+  process.stderr.write(`\n  Deployed, but not finished: ${why}\n`);
+  process.exit(1);
+};
 
 if (PROD === DEV || PROD.startsWith(DEV + '/')) fail('production must be a separate folder from this checkout.');
 
@@ -150,7 +156,7 @@ if (!dry || existsSync(join(PROD, '.git'))) {
   try {
     time = dry && !existsSync(cli) ? null : readScheduledTime();
   } catch (error) {
-    fail(`Deployed ${devMain.slice(0, 7)} to production, but the daily run was not moved there: its settings could not be read.\n  ${error.message}`);
+    unfinished(`${devMain.slice(0, 7)} is in production, but the daily run was not moved there: its settings could not be read.\n  ${error.message}`);
   }
   if (time) {
     say(`Moving the daily run (${time}) to production…`);
@@ -166,7 +172,7 @@ if (!dry || existsSync(join(PROD, '.git'))) {
       // than as a stack trace from execFileSync (security review sc-8). Its stderr has already
       // appeared above; its stdout is only in the error.
       const said = String(error.stdout ?? '').trim().split('\n').join('\n  ');
-      fail(`Deployed ${devMain.slice(0, 7)} to production, but the daily run was not moved there: ` +
+      unfinished(`${devMain.slice(0, 7)} is in production, but the daily run was not moved there: ` +
         `\`schedule on --at ${time}\` failed, and what it printed says where the daily run is now.\n` +
         `  To try again: node "${cli}" schedule on --at ${time} --replace` + (said ? `\n  ${said}` : ''));
     }
