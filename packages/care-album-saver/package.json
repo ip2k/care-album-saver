@@ -16,7 +16,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22"
   },
   "optionalDependencies": {
     "exiftool-vendored": "^38.1.0"

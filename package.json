@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc --build",
-    "test": "node --test --import ./scripts/test-env.js packages/care-album-saver/test",
+    "test": "node --test --import ./scripts/test-env.js \"packages/care-album-saver/test/*.test.js\"",
     "clean": "tsc --build --clean && node -e \"require('node:fs').rmSync('packages/care-album-saver/dist', { recursive: true, force: true })\""
   },
   "devDependencies": {
