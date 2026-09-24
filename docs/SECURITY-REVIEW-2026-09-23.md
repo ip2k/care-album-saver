@@ -10,8 +10,9 @@ reviewer ran the probes in §2 by hand. Review target: `main` at 894d820 (the de
 plus the handoff). Time-boxed to forty minutes at the owner's request: the filesystem and
 processes verifiers had reported when this was first written, and the outbound, page,
 supply-chain and docs verifiers before it was committed — every one of their reviewers'
-findings below was CONFIRMED or PLAUSIBLE, none refuted; only the web-server verifier was
-still running, so that lane's findings stand as the reviewer's reproductions.
+findings below was CONFIRMED or PLAUSIBLE, none refuted. The web-server verifier returned
+minutes after the deadline: lane BLOCK before the fixes, every finding CONFIRMED (web-12
+PLAUSIBLE), and two misses folded in below.
 
 ## 1. Verdict
 
@@ -88,7 +89,7 @@ proved it; **reproduced** = the reviewer did, verifier pending at the deadline.
 | id | what | fix |
 |---|---|---|
 | fs-1 (verified) | `findDuplicates`/`removeDuplicates` joined `record.path` under the archive with no containment: a crafted `archive.json` (a cloud-sync peer or any co-writer of the folder) made the remover delete a file **outside** the archive, and two spellings of one file were "duplicates", so it deleted a photo's only copy while reporting "the photos they were copies of are still here". | `src/contain.ts`: one `containedFile()` (realpath both sides, symlinks refused, `..` refused) used by every consumer of `archive.json` — gallery, duplicates, repair, Photos step; two spellings of one file are one file. |
-| web-1, web-2 (reproduced) | A suffix `Range` on a zero-byte file, or a file that stats but cannot be opened, raised an unhandled stream error after headers were sent and **killed the whole process** — the setup page and any run in progress. web-3: an abandoned range request leaked its file handle for the life of the process. | `parseRange` answers 416 for any range on an empty file; `/photo` opens the file before writing headers (500 if it cannot), handles stream errors, destroys the stream when the browser goes. |
+| web-1, web-2 (verified) | A suffix `Range` on a zero-byte file, or a file that stats but cannot be opened, raised an unhandled stream error after headers were sent and **killed the whole process** — the setup page and any run in progress. web-3: an abandoned range request leaked its file handle for the life of the process. | `parseRange` answers 416 for any range on an empty file; `/photo` opens the file before writing headers (500 if it cannot), handles stream errors, destroys the stream when the browser goes. |
 | sc-1 (verified; its verifier re-rated it WARNING, since a session still needed a `docker build` from a tree holding one), img (verified) | `.dockerignore` patterns were root-anchored: the host's `dist/`, `node_modules` and anything under `packages/` went into the image (the review image carried `dist/api/login.js`); no photo/sidecar rule at all. | Every pattern `**/`-anchored, archive folders and the production marker added; proven with planted markers. |
 
 Also fixed, from the audit's list and the review's WARNINGs (all reproduced): a malformed
@@ -119,7 +120,8 @@ Filesystem and processes (verifier: BLOCK before the fixes above, CONCERNS after
 - **missed-fs (verifier)** `repairManifest` and `removeDuplicates` rewrite `archive.json` without taking the run lock; a sync in another process loses the update. Fix: take the lock.
 - **missed-processes (verifier)** `remove()` ignores the exit code of every remover, not only cron: a failed `schtasks /Delete` leaves the task while the tool records it gone.
 
-Web server (reviewer findings; verifier pending at the deadline), page, outbound, supply chain and docs (all verified):
+Web server, page, outbound, supply chain and docs (all verified):
+- ★ **missed-web (verifier)** Any copy of the tool that is not marked development can replace the owner's real daily job: `schedule.install` writes the calling copy's own `cli.js` path into `~/Library/LaunchAgents/com.care-album-saver.daily.plist`, so a throwaway or extracted copy with no `.git` (an "installed" copy) that runs `schedule on` or the page's schedule route re-points the real job at itself. The development marker covers checkouts, not stray copies. Fix: refuse to install from any copy that is not production when a production marker exists elsewhere — or record the installing copy's path in the config and warn when it differs.
 - **web-5** The maintenance-versus-run guard is one-way: a run can start while a repair or duplicate removal is in progress. Fix: the run lock, as above.
 - ★ **outbound-3** `download()` compares the decoded byte count with the `Content-Length` of the encoded body, so any `Content-Encoding` (gzip) fails every download as "truncated". Fix: compare only when there is no content-encoding, or compare encoded sizes.
 - **outbound-2** `Retry-After` is honoured verbatim with no cap: a 429 can park a run for up to 24.8 days. Fix: cap at a few minutes.
