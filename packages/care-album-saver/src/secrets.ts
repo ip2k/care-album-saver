@@ -43,10 +43,6 @@ export class Secret {
     return this.#value.length;
   }
 
-  get isEmpty(): boolean {
-    return this.#value.length === 0;
-  }
-
   /**
    * A stable, non-reversible fingerprint, safe to log. Lets a user confirm "yes, that is
    * the session I saved on Tuesday" without ever revealing the session itself.
@@ -97,7 +93,7 @@ const SCRUB_PATTERNS: [RegExp, string][] = [
 /**
  * Remove anything that looks like a credential from arbitrary text.
  * Applied to every error message and progress line the CLI prints and the setup page is
- * shown. There is no `bug-report` command; an earlier version of this comment named one.
+ * shown.
  *
  * Note what it can and cannot recognise. It matches a value still attached to its
  * `_brightwheel_v2=` prefix and unbroken by whitespace — a BARE value is invisible to it,
