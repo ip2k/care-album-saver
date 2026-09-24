@@ -357,6 +357,37 @@ test('`run` stops on Ctrl+C, says so in words, and exits as the success it is', 
   }
 });
 
+test('`run` stops the same careful way on SIGTERM, which is how the scheduler says stop', async (t) => {
+  // Turning the daily run off, changing its time or reinstalling it sends SIGTERM to a run
+  // in progress. Node's default was to die on the spot: the list of what had been saved
+  // since the last 25 was lost, and the next run fetched those photos again as copies.
+  if (process.platform === 'win32') return t.skip('POSIX signals cannot be delivered to a child process on Windows');
+  const mock = await startMockBrightwheel({ activitiesPerStudent: 23, maxPageSize: 10 });
+  const archive = await cliArchiveDir();
+  const configDir = await signedInConfigDir();
+  try {
+    const child = spawn(process.execPath, [CLI, 'run', '--dir', archive, '--base-url', `${mock.url}/api/v1`], {
+      env: { ...process.env, CARE_ALBUM_CONFIG_DIR: configDir },
+    });
+    let out = '';
+    let terminated = false;
+    child.stdout.on('data', (chunk) => {
+      out += chunk;
+      if (!terminated && out.includes('Checking your Brightwheel session')) {
+        terminated = true;
+        child.kill('SIGTERM');
+      }
+    });
+    const code = await new Promise((resolve) => child.on('close', resolve));
+    assert.equal(code, 0, `a stop is not a failure:\n${out}`);
+    assert.match(out, /Stopping after the current photo…/);
+    assert.match(out, /Stopped\. \d+ item\(s\) saved so far are kept/);
+  } finally {
+    await rm(archive, { recursive: true, force: true });
+    await mock.close();
+  }
+});
+
 test('a mid-run failure is printed once, not once as progress and again as a crash', async () => {
   // me, students and page 0 are served; the session is dead by page 1, ten photos in.
   const mock = await startMockBrightwheel({ activitiesPerStudent: 23, maxPageSize: 10, expireSessionAfterRequests: 3 });
