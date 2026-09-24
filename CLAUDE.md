@@ -54,8 +54,8 @@ stores, and this tool is deliberately local-only with no cloud component.
   POSTED, which is the best date that exists, and the README no longer claims otherwise.
   `event_date` is still preferred over `created_at`, now only because it would be the
   likelier capture time if some other nursery's records ever distinguished them.
-- **Not hosted in Archive Ferry.** That repo is private, k3s-bound, and its sibling
-  adapters are adult-content sites. A children's-photo tool cannot ship from there.
+- **Not hosted in Archive Ferry.** That repo is private and k3s-bound; a tool other parents
+  will run cannot ship from there.
 
 ## Status
 
