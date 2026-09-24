@@ -616,6 +616,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         const done = (async () => {
           let config: Config | null = null;
           let result: Awaited<ReturnType<typeof sync>> | null = null;
+          // Another run held the archive folder, so this one did nothing at all.
+          let refused = false;
           try {
             config = await loadConfig();
             const client = new BrightwheelClient({
@@ -632,22 +634,35 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
               progress = { ...p, message: scrub(p.message) };
             }, { signal: controller.signal });
           } catch (error: unknown) {
-            const refused = error instanceof Error && error.name === 'SessionExpiredError';
-            progress = {
-              phase: 'error',
-              message: refused ? RUN_REFUSED : scrub(error instanceof Error ? error.message : String(error)),
-              saved: progress.saved,
-              skipped: progress.skipped,
-              failed: progress.failed,
-            };
+            if (error instanceof Error && error.name === 'RunInProgressError') {
+              // Not an error: the daily run (or another page) is saving into this folder,
+              // and it will finish the job. Said plainly, as the end of this run.
+              refused = true;
+              progress = { phase: 'stopped', message: error.message, saved: 0, skipped: 0, failed: 0 };
+            } else {
+              const sessionRefused = error instanceof Error && error.name === 'SessionExpiredError';
+              progress = {
+                phase: 'error',
+                message: sessionRefused ? RUN_REFUSED : scrub(error instanceof Error ? error.message : String(error)),
+                saved: progress.saved,
+                skipped: progress.skipped,
+                failed: progress.failed,
+              };
+              await schedule
+                .recordRun({ at: new Date().toISOString(), ok: false, saved: 0, failed: 0, message: progress.message, trigger: 'manual' })
+                .catch(() => {});
+            }
           }
+          // A run from the page counts as the day's: without this the daily run's missed-run
+          // catch-up (RunAtLoad) saw no run at all and started a full one at once.
+          if (result) await schedule.recordRun(schedule.finishedRun(result, 'manual')).catch(() => {});
           try {
             // Then Photos, when the parent has turned it on — even after a run that failed
             // part-way, because what it saved before failing is on disk and just as new.
             // Not after a Stop, which means stop. The run's own last line is put back
             // afterwards; a failed run's error is never replaced by a Photos message.
             let photos: PhotosResult | null = null;
-            if (config?.addToPhotos && !controller.signal.aborted) {
+            if (config?.addToPhotos && !controller.signal.aborted && !refused) {
               const finished = progress;
               photos = await addToPhotos(config, {
                 platform: options.native?.platform,
