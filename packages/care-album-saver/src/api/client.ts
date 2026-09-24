@@ -1,3 +1,4 @@
+import { BodyTooLargeError, readBodyText } from '../http-body.js';
 import { Secret } from '../secrets.js';
 import { browserUserAgent } from './identity.js';
 import {
@@ -32,6 +33,26 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** How many times a failed request is tried again. A rejected session never is. */
 const MAX_RETRIES = 4;
+
+/**
+ * The most of one answer this client will read: 16 MB (security review outbound-7).
+ *
+ * A page of a hundred posts is JSON measured in kilobytes, a few hundred at most, so this
+ * is far past any honest answer while still bounding what a broken or hostile one can make
+ * a parent's computer hold in memory. See http-body.ts.
+ */
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+/**
+ * An answer that asking again within this run cannot improve, so the retry loop hands it
+ * straight up instead of spending four more requests on it.
+ *
+ * Deliberately still an ApiShapeError by name: `sync` ends the run on that name rather than
+ * counting it against one photo and moving on to the next, and moving on is exactly what
+ * must not happen here — each following photo would ask again, for an answer already known
+ * to be no use, or of a Brightwheel that has asked to be left alone.
+ */
+export class NotThisRunError extends ApiShapeError {}
 
 /** Posts per listing request. Brightwheel may return fewer; it never returns more. */
 const DEFAULT_PAGE_SIZE = 100;
@@ -191,7 +212,16 @@ export class BrightwheelClient {
           continue;
         }
 
-        const body = await response.text();
+        let body: string;
+        try {
+          body = await readBodyText(response, MAX_RESPONSE_BYTES);
+        } catch (error) {
+          if (!(error instanceof BodyTooLargeError)) throw error;
+          throw new NotThisRunError(
+            `Brightwheel's answer for ${context} was larger than ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB, ` +
+              `far more than it ever sends, so it was not read. This usually means Brightwheel changed something.`,
+          );
+        }
         assertJsonResponse(response, body, context);
         try {
           return JSON.parse(body);
@@ -202,6 +232,7 @@ export class BrightwheelClient {
         // A session error is final — retrying cannot fix it, and hammering the endpoint
         // with an invalid session is exactly how an account gets flagged.
         if (error instanceof Error && error.name === 'SessionExpiredError') throw error;
+        if (error instanceof NotThisRunError) throw error;
         lastError = error;
       }
     }

@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import type { Config } from './config.js';
+import { BodyTooLargeError, readBodyText } from './http-body.js';
 import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 import { currentVersion, installKind, type InstallKind, type VersionInfo } from './version.js';
 
@@ -182,8 +183,23 @@ export async function checkForUpdate(
         ? 'GitHub is limiting how often it is asked. It will be asked again later.'
         : `GitHub answered ${response.status}.`;
     } else {
-      const text = await response.text();
-      const release = text.length <= MAX_BODY ? parseRelease(JSON.parse(text)) : null;
+      // Read up to MAX_BODY and no further: the limit used to be checked on the text after
+      // all of it had been read, which bounded nothing (security review outbound-7). An
+      // answer too long, or not JSON at all, is not a release — said as that, rather than as
+      // GitHub being unreachable when it plainly answered.
+      const release = await readBodyText(response, MAX_BODY).then(
+        (text) => {
+          try {
+            return parseRelease(JSON.parse(text));
+          } catch {
+            return null;
+          }
+        },
+        (error: unknown) => {
+          if (error instanceof BodyTooLargeError) return null;
+          throw error;
+        },
+      );
       if (!release) {
         next.error = 'GitHub\'s answer was not a release this tool recognises.';
       } else {
