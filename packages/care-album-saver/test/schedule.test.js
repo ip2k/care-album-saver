@@ -553,7 +553,7 @@ test('every platform gets its own catch-up, and none of them is ours', async () 
   assert.ok(lines.every((l) => l.includes('run --scheduled')), 'both run the same thing');
 });
 
-test('the crontab block is removed whole, including one written before it grew', async () => {
+test('the crontab block is removed whole', async () => {
   await freshConfigDir();
   const home = await freshHome();
   const seen = [];

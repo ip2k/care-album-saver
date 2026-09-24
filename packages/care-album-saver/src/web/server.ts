@@ -18,7 +18,7 @@ import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type Pho
 import { PAGE } from './page.js';
 import { acceptableUserAgent } from '../api/identity.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from '../environment.js';
-import { UPDATING_DOC_URL, updateStatus, updateSteps } from '../updates.js';
+import { updateStatus, updateSteps } from '../updates.js';
 import { productionSource, repositoryRoot, type InstallKind, type VersionInfo } from '../version.js';
 
 /**
@@ -406,7 +406,6 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           archive,
           photos,
           hasSession: Boolean(session),
-          sessionFingerprint: session?.session.fingerprint() ?? null,
           sessionSavedAt: session?.savedAt.toISOString() ?? null,
           email: session?.email ?? null,
           config,
@@ -684,7 +683,6 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             root: tildify(u.root ?? repositoryRoot().replace(/[\\/]$/, ''), homedir()),
             source: tildify(productionSource(), homedir()),
           }),
-          updatingDocUrl: UPDATING_DOC_URL,
         });
         return;
       }

@@ -2102,7 +2102,7 @@ function paint(p, running, result) {
   const fill = $('bar-fill');
   const stopped = p.phase === 'stopped';
   bar.dataset.stopped = stopped ? 'true' : 'false';
-  if ((running || stopped) && !p.total) {
+  if (running || stopped) {
     // We do not know how many photos there are until the feed has been walked. Showing a
     // percentage here would be an invention, so show motion without a number instead.
     bar.dataset.indeterminate = 'true';
@@ -2110,7 +2110,7 @@ function paint(p, running, result) {
     fill.style.width = '';
   } else {
     bar.dataset.indeterminate = 'false';
-    const done = p.total ? Math.round(((p.saved + p.skipped + p.failed) / p.total) * 100) : (p.phase === 'done' ? 100 : 0);
+    const done = p.phase === 'done' ? 100 : 0;
     bar.setAttribute('aria-valuenow', String(done));
     fill.style.width = done + '%';
   }

@@ -196,7 +196,7 @@ again and can leave you a second copy of a photo or two, named `…-2.jpg`.
 ```
 Care Album Photos/
 ├── archive.json                                   ← the list of what has been saved
-└── Robin Maple/
+└── Robin-Maple/
     └── 2026-W38/
         ├── README.md                              ← what this week is, in plain English
         ├── 2026-09-18_093214_7f3a9b21.jpg         ← the photo, date first so it sorts

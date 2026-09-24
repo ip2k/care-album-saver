@@ -34,12 +34,11 @@ import { loadConfig, saveConfig, type ScheduleMechanism, type ScheduleRecord } f
  * builds shell commands out of filesystem paths is one oddly-named home folder away from
  * running something it did not mean to, and the argument array makes that unrepresentable.
  *
- * And nothing here goes near `npx`. The README has to warn people that a scheduled job
- * cannot find a bare `npx` (its PATH is almost empty) and that Windows needs `npx.cmd`
- * rather than `npx`, because that is the advice for someone writing the crontab line by
- * hand. When the tool writes the entry itself it can do better: it records the absolute
- * path of the Node binary running right now and the absolute path of this tool's own
- * command-line entry point, so there is no PATH lookup, no shim, and nothing to get wrong.
+ * And nothing here goes near `npx`. A scheduled job cannot find a bare `npx` (its PATH is
+ * almost empty), and on Windows it would need `npx.cmd`. Writing the entry itself, the tool
+ * can do better than any advice about that: it records the absolute path of the Node binary
+ * running right now and the absolute path of this tool's own command-line entry point, so
+ * there is no PATH lookup, no shim, and nothing to get wrong.
  */
 
 /** The label, unit and task name. One job, one name, on every platform. */

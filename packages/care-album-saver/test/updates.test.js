@@ -240,7 +240,7 @@ test('over HTTP: the answer, the question, "Check now" only when on, and a setti
     assert.deepEqual([yes.body.asked, yes.body.enabled, yes.body.available, yes.body.latest.version], [true, true, true, '0.2.0']);
     assert.equal(gh.calls.length, 1, 'saying yes is the first check');
     assert.deepEqual(yes.body.how.commands, ['cd /somewhere/care-album-saver', 'git pull', 'pnpm install', 'pnpm build']);
-    assert.equal(yes.body.updatingDocUrl, 'https://github.com/ip2k/care-album-saver/blob/main/docs/UPDATING.md');
+    assert.ok(PAGE.includes('https://github.com/ip2k/care-album-saver/blob/main/docs/UPDATING.md'), 'the guide is linked from the page itself');
 
     const no = await call('/api/update', { enabled: false });
     assert.deepEqual([no.body.enabled, no.body.available, no.body.latest], [false, false, null], 'switched off, nothing shown');
