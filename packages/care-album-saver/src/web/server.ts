@@ -201,6 +201,34 @@ const PASTE_REFUSED =
   '_brightwheel_v2, from its Value column, and that all of it was copied.';
 const RUN_REFUSED = 'Brightwheel no longer accepts the saved session, so nothing more could be fetched.';
 
+/**
+ * The Content-Security-Policy, for the page when there is a nonce and for everything else
+ * when there is not.
+ *
+ * The page's one script runs because it carries this response's nonce, and nothing else can:
+ * no 'unsafe-inline' for scripts, so a string that ever did reach the page as markup could not
+ * bring an inline script or an onclick with it, and 'strict-dynamic' because the script loads
+ * nothing of its own that a host list would have to name (security review page-3). Every other
+ * response has no script-src at all, which default-src 'none' makes "no scripts". Styles stay
+ * inline — one stylesheet and a few style attributes — and cannot run anything; img-src keeps
+ * a style from fetching anything away from this computer. base-uri 'none', so that an injected
+ * <base> cannot move where the page's own addresses point.
+ */
+function contentSecurityPolicy(nonce?: string): string {
+  return [
+    "default-src 'none'",
+    "img-src 'self' data:",
+    // For the photo viewer's <video>: the page's own /photo route, nothing else.
+    "media-src 'self'",
+    "style-src 'unsafe-inline'",
+    ...(nonce ? [`script-src 'nonce-${nonce}' 'strict-dynamic'`] : []),
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
 const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -410,11 +438,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader(
-      'Content-Security-Policy',
-      // media-src is for the photo viewer's <video>: the page's own /photo route, nothing else.
-      "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'",
-    );
+    // No script may run in anything but the page, which sets its own below.
+    res.setHeader('Content-Security-Policy', contentSecurityPolicy());
 
     if (!hostAllowed(req.headers.host)) {
       res.writeHead(403, { 'content-type': 'text/plain' });
@@ -441,9 +466,20 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
     try {
       if (req.method === 'GET' && url.pathname === '/') {
+        // A fresh nonce for every response, in the header and on the page's script tag and
+        // nowhere else: a nonce that repeated would be one an attacker could learn and reuse
+        // (security review page-3).
+        const nonce = randomBytes(18).toString('base64');
+        res.setHeader('Content-Security-Policy', contentSecurityPolicy(nonce));
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         const banner = options.banner ? `<div class="demo-ribbon" role="note">${escapeHtml(options.banner)}</div>` : '';
-        res.end(PAGE.replace(/__TOKEN__/g, token).replace('<!--__BANNER__-->', banner));
+        // Function replacers, so that nothing spliced in is read as a replacement pattern: a
+        // "$&" or "$'" in the banner used to copy parts of the page into it.
+        res.end(
+          PAGE.replace(/__TOKEN__/g, () => token)
+            .replace(/__NONCE__/g, () => nonce)
+            .replace('<!--__BANNER__-->', () => banner),
+        );
         return;
       }
 

@@ -165,7 +165,8 @@ test('the page carries the shared checker, a live message under the box, and a p
   assert.match(html, /<textarea id="cookie"[^>]*spellcheck="false"/, 'no spell-check upload');
   assert.match(html, /<textarea id="cookie"[^>]*autocomplete="off"/, 'no autofill');
   assert.match(html, /<textarea id="cookie"[^>]*data-1p-ignore/, 'no password-manager offer');
-  const inline = html.match(/<script>([\s\S]*?)<\/script>/g).map((s) => s.replace(/<\/?script>/g, '')).join('\n');
+  // The script tag carries the response's CSP nonce (security review page-3).
+  const inline = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g).map((s) => s.replace(/<\/?script[^>]*>/g, '')).join('\n');
   new Script(inline); // still parses with the embedded functions in it
 });
 

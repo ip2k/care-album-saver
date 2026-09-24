@@ -1084,13 +1084,42 @@ ${COOKIE_HELP_CSS}
   </button>
 </dialog>
 
-<script>
+<!-- The page's one script. It runs because it carries this response's nonce, which the
+     Content-Security-Policy names, and nothing else in the page can run: there are no inline
+     event-handler attributes, and no 'unsafe-inline' (security review page-3). -->
+<script nonce="__NONCE__">
 const TOKEN = '__TOKEN__';
 const $ = (id) => document.getElementById(id);
 const api = (path, opts = {}) => fetch(path + (path.includes('?') ? '&' : '?') + 'token=' + TOKEN, {
   ...opts, headers: { 'content-type': 'application/json', 'x-setup-token': TOKEN, ...(opts.headers || {}) }
 });
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+/**
+ * An element, its attributes and what goes in it. A string (or a number) among the children
+ * is always a text node, so what the tool, Brightwheel or the disk says — a child's name, an
+ * error, a folder — is shown as written and never read as markup, whatever it contains.
+ * Null, undefined, false and empty strings are left out, so a part can hang on a condition,
+ * and arrays are flattened, so a list of parts can be passed as one.
+ *
+ * This is how anything that did not come from this file reaches the page (security review
+ * page-3). It replaced an escaper applied at each call site of innerHTML, which was right at
+ * all twenty of them and would have stopped being right the first time one was missed.
+ */
+const parts = (children) => children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false && c !== '');
+const h = (tag, attrs, ...children) => {
+  const el = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs || {})) el.setAttribute(name, value);
+  el.append(...parts(children));
+  return el;
+};
+/** Replace what is in el with children, taken as h() takes them. */
+const put = (el, ...children) => el.replaceChildren(...parts(children));
+const bold = (text) => h('b', null, text);
+/** A folder or file name, set in the monospaced pill. */
+const pathPill = (text) => h('span', { class: 'path' }, text);
+/** A message box whose parts are text or elements from h(): for anything with the tool's words in it. */
+const say = (el, kind, ...children) => put(el, h('div', { class: 'msg ' + kind }, ...children));
+/** A message box from markup written in this file, and only that: anything else goes through say(). */
 const show = (el, kind, html) => { el.innerHTML = '<div class="msg ' + kind + '">' + html + '</div>'; };
 
 /**
@@ -1226,7 +1255,7 @@ function applySaved(d) {
   }
   // Always the stored folder, never the typed one: this says where the photos will go.
   $('p-dir').textContent = d.config.archiveDir;
-  if (d.warning) show($('config-msg'), 'warn', esc(d.warning));
+  if (d.warning) say($('config-msg'), 'warn', d.warning);
   else savedNote();
 }
 
@@ -1238,7 +1267,7 @@ function savedNote() {
   // not fix it.
   const restore = () => {
     el.textContent = '';
-    if (dirError) el.innerHTML = '<div class="msg err">' + esc(dirError) + '</div>';
+    if (dirError) say(el, 'err', dirError);
   };
   // Emptied first, so the second "Saved" is announced as well as the first. The brief
   // blink is also the visual cue that something new was just stored.
@@ -1274,7 +1303,7 @@ function showSaveError(d, opts) {
     updateRunReady();
     return;
   }
-  show($('config-msg'), 'err', esc(text));
+  say($('config-msg'), 'err', text);
   if (d.field === 'archiveDir') {
     dirError = text;
     $('archiveDir').setAttribute('aria-invalid', 'true');
@@ -1512,7 +1541,7 @@ async function paintGallery() {
       openViewer(index);
     };
     if (item.kind === 'video') {
-      a2.innerHTML = '<span class="vid" aria-hidden="true">&#9654;</span><span class="cap">' + esc(when) + '</span>';
+      a2.append(h('span', { class: 'vid', 'aria-hidden': 'true' }, '▶'), h('span', { class: 'cap' }, when));
     } else {
       const img = document.createElement('img');
       img.src = photoHref(item);
@@ -1578,8 +1607,8 @@ async function showInViewer(index) {
     img.src = photoHref(item);
     img.alt = (item.child ? item.child + ', ' : '') + 'posted ' + postedOn(item);
   }
-  $('viewer-cap').innerHTML = (item.child ? '<b>' + esc(item.child) + '</b> · ' : '') +
-    'posted ' + esc(postedOn(item)) + ' · ' + (index + 1) + ' of ' + gallery.count;
+  put($('viewer-cap'), item.child && [bold(item.child), ' · '],
+    'posted ' + postedOn(item) + ' · ' + (index + 1) + ' of ' + gallery.count);
 
   // At either end the arrow goes, rather than sitting there doing nothing. If it had the
   // keyboard focus, the focus moves to the other arrow instead of falling out of the dialog.
@@ -1654,7 +1683,7 @@ async function refresh() {
   if (!answer.config) {
     const main = $('main');
     if (!$('state-error')) main.insertAdjacentHTML('afterbegin', '<div id="state-error" role="alert"></div>');
-    show($('state-error'), 'err', esc(answer.error || 'The tool could not read its own settings.'));
+    say($('state-error'), 'err', answer.error || 'The tool could not read its own settings.');
     return;
   }
   state = answer;
@@ -1669,11 +1698,11 @@ async function refresh() {
     sessionOk = true;
     setStep($('card-connect'), $('num-1'), $('connect-state'), 'complete',
       'Step 1 of 4, complete. Connected' + (state.email ? ' as ' + state.email : '') + '.');
-    show($('connect-msg'), 'ok', 'Connected' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') + '.');
+    say($('connect-msg'), 'ok', 'Connected', state.email && [' as ', bold(state.email)], '.');
     setStep($('card-run'), $('num-3'), $('run-state'), 'active', 'Step 3 of 4. Ready to start.');
     await loadChildren();
   } else if (state.sessionProblem) {
-    show($('connect-msg'), 'err', esc(state.sessionProblem));
+    say($('connect-msg'), 'err', state.sessionProblem);
   }
   updateRunReady();
   await loadSchedule();
@@ -1696,13 +1725,15 @@ async function loadChildren() {
   if (!d.ok) return;
   kids = d.children;
   const included = new Set(d.included);
-  // The element id is positional; the Brightwheel id travels in a data attribute, where
-  // any character is safe once escaped.
-  $('kids').innerHTML = kids.map((k, i) =>
-    '<li><label class="kid" for="kid-' + i + '">' +
-    '<input type="checkbox" id="kid-' + i + '" data-id="' + esc(k.id) + '"' + (included.has(k.id) ? ' checked' : '') + '>' +
-    esc(k.fullName) + '</label></li>').join('');
-  for (const box of document.querySelectorAll('#kids input')) box.addEventListener('change', onChildToggled);
+  // The element id is positional. The Brightwheel id travels in the dataset and the name is a
+  // text node beside the box, so neither is ever read as markup.
+  put($('kids'), kids.map((k, i) => {
+    const box = h('input', { type: 'checkbox', id: 'kid-' + i });
+    box.dataset.id = k.id;
+    box.checked = included.has(k.id);
+    box.addEventListener('change', onChildToggled);
+    return h('li', null, h('label', { class: 'kid', for: 'kid-' + i }, box, k.fullName));
+  }));
   describeSelection();
   setStep($('card-children'), $('num-2'), $('children-state'), 'complete',
     'Step 2 of 4. Found ' + kids.length + ' child' + (kids.length === 1 ? '' : 'ren') + '. Tick the ones to save photos for.');
@@ -1755,7 +1786,7 @@ function checkCookieField(rewrite) {
   cookieVerdict = v;
   if (v.ok && rewrite && v.value !== field.value) field.value = v.value;
   const notes = v.notes.length ? ' (' + v.notes.join('; ') + ')' : '';
-  out.innerHTML = '<span class="' + (v.level === 'err' ? 'bad' : v.level === 'warn' ? 'warn' : 'good') + '">' + esc(v.message) + '</span>' + esc(notes);
+  put(out, h('span', { class: v.level === 'err' ? 'bad' : v.level === 'warn' ? 'warn' : 'good' }, v.message), notes);
   field.setAttribute('aria-invalid', v.ok ? 'false' : 'true');
   btn.disabled = !v.ok;
 }
@@ -1810,9 +1841,9 @@ function paintPhotos(p) {
   $('photos-status').textContent = status;
   const last = p.lastAttempt;
   if (p.enabled && p.problem) {
-    show($('photos-msg'), 'warn', '<b>Nothing can be added to Photos until this is sorted out.</b> ' + esc(p.problem));
+    say($('photos-msg'), 'warn', bold('Nothing can be added to Photos until this is sorted out.'), ' ', p.problem);
   } else if (p.enabled && last && !last.ok) {
-    show($('photos-msg'), 'warn', '<b>The last photos could not be added.</b> ' + esc(last.error || ''));
+    say($('photos-msg'), 'warn', bold('The last photos could not be added.'), ' ', last.error);
   }
 
   const row = $('photos-earlier-row');
@@ -1832,7 +1863,7 @@ $('addToPhotos').onchange = async (e) => {
     const d = await r.json();
     if (!d.ok) {
       box.checked = !on;
-      show($('photos-msg'), 'err', esc(d.error || 'That did not work.'));
+      say($('photos-msg'), 'err', d.error || 'That did not work.');
       return;
     }
     show($('photos-msg'), 'ok', on
@@ -1857,7 +1888,7 @@ $('btn-photos-earlier').onclick = async () => {
   try {
     const r = await api('/api/photos', { method: 'POST', body: JSON.stringify({ earlier: true }) });
     const d = await r.json();
-    if (!d.ok) { show($('photos-msg'), 'err', esc(d.error || 'That did not work.')); return; }
+    if (!d.ok) { say($('photos-msg'), 'err', d.error || 'That did not work.'); return; }
     paintPhotos(d.photos);
     // They go in with a run: a quick look for anything new, then Photos. When a run
     // cannot start here, the next one — daily or by hand — picks them up.
@@ -1902,7 +1933,7 @@ $('btn-dash-logs').onclick = showLogs;
 $('btn-logs-open').onclick = async () => {
   try {
     const d = await (await api('/api/open-logs', { method: 'POST', body: '{}' })).json();
-    show($('logs-msg'), d.opened ? 'ok' : 'warn', esc(d.opened ? 'Opened.' : d.hint || 'There is no log viewer on this computer.'));
+    say($('logs-msg'), d.opened ? 'ok' : 'warn', d.opened ? 'Opened.' : d.hint || 'There is no log viewer on this computer.');
   } catch {
     show($('logs-msg'), 'err', 'Could not reach the tool.');
   }
@@ -1945,7 +1976,7 @@ $('btn-connect').onclick = async () => {
       }
     } else {
       field.setAttribute('aria-invalid', 'true');
-      show($('connect-msg'), 'err', esc(d.error));
+      say($('connect-msg'), 'err', d.error || 'That did not work.');
       field.focus();
     }
   } catch {
@@ -2046,15 +2077,17 @@ async function openArchiveFolder(btn, note) {
  * the button is useless on a computer with no file manager this tool can reach.
  */
 function offerOpenFolder() {
+  // The markup is this file's own; the folder goes in as text.
   $('run-result').insertAdjacentHTML('beforeend',
     '<div class="dir-actions" style="align-items:center">' +
     '<button class="secondary" id="btn-open-done" type="button">Open this folder</button>' +
-    '<span class="path">' + esc((state && state.archiveDirShown) || savedDir) + '</span></div>' +
+    '<span class="path" id="open-done-path"></span></div>' +
     '<p class="dir-note" id="open-done-note" role="status" aria-live="polite"></p>');
+  $('open-done-path').textContent = (state && state.archiveDirShown) || savedDir;
 }
 
 $('btn-open-dir').onclick = () => openArchiveFolder($('btn-open-dir'), $('dir-note'));
-// Delegated, because the summary the second button sits in is rebuilt by innerHTML.
+// Delegated, because the summary the second button sits in is rebuilt each time it is shown.
 $('run-result').addEventListener('click', (e) => {
   if (e.target.id === 'btn-open-done') openArchiveFolder(e.target, $('open-done-note'));
 });
@@ -2075,7 +2108,7 @@ $('btn-run').onclick = async () => {
   const r = await api('/api/sync', { method: 'POST', body: '{}' });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
-    show($('run-result'), 'err', esc(d.error || 'Could not start.'));
+    say($('run-result'), 'err', d.error || 'Could not start.');
     updateRunReady();
     return;
   }
@@ -2093,7 +2126,7 @@ $('btn-stop').onclick = async () => {
     const r = await api('/api/stop', { method: 'POST', body: '{}' });
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
-      show($('run-result'), 'err', esc(d.error || 'Could not stop it.'));
+      say($('run-result'), 'err', d.error || 'Could not stop it.');
       stopping = false;
       updateRunReady();
     }
@@ -2152,17 +2185,18 @@ function paint(p, running, result) {
     const ph = result && result.photos;
     // What happened in Photos, as a sentence to add. A run can save nothing new and still
     // add earlier ones to Photos, so this is said whichever way the run itself went.
-    const photosLine = !ph ? ''
-      : ph.ok ? (ph.added > 0 ? ' Added <b>' + ph.added + '</b> to Photos, in the Brightwheel folder.' : '')
-      : ph.reason === 'busy' ? ''
-      : ' <br><br><b>Not added to Photos:</b> ' + esc(ph.error || 'no reason was given.');
+    const photosLine = !ph ? []
+      : ph.ok ? (ph.added > 0 ? [' Added ', bold(ph.added), ' to Photos, in the Brightwheel folder.'] : [])
+      : ph.reason === 'busy' ? []
+      : [h('br'), h('br'), bold('Not added to Photos:'), ' ', ph.error || 'no reason was given.'];
     const photosFailed = Boolean(ph && !ph.ok && ph.reason !== 'busy');
     if (result && result.saved === 0 && result.failed === 0) {
-      show($('run-result'), photosFailed ? 'warn' : 'ok', 'You are up to date &mdash; there were no new photos to save.' + photosLine);
+      say($('run-result'), photosFailed ? 'warn' : 'ok', 'You are up to date — there were no new photos to save.', photosLine);
     } else if (result) {
-      let html = 'Saved <b>' + result.saved + '</b> new item' + (result.saved === 1 ? '' : 's') + '.';
-      if (result.failed > 0) html += ' <b>' + result.failed + '</b> could not be fetched &mdash; press Start saving again to retry them.';
-      show($('run-result'), result.failed > 0 || photosFailed ? 'warn' : 'ok', html + photosLine);
+      say($('run-result'), result.failed > 0 || photosFailed ? 'warn' : 'ok',
+        'Saved ', bold(result.saved), ' new item' + (result.saved === 1 ? '' : 's') + '.',
+        result.failed > 0 && [' ', bold(result.failed), ' could not be fetched — press Start saving again to retry them.'],
+        photosLine);
     }
     // "Where did my photos go" is the question at the end of a run, so answer it with a
     // button rather than a path to copy out.
@@ -2172,13 +2206,13 @@ function paint(p, running, result) {
     // Neither finished nor failed. Everything already saved is on disk and the next run
     // carries on from there, so this reads as an ordinary outcome, not as a warning.
     setStep($('card-run'), $('num-3'), $('run-state'), 'active', p.message);
-    show($('run-result'), 'ok', esc(p.message));
+    say($('run-result'), 'ok', p.message);
   }
   if (p.phase === 'error') {
-    show($('run-result'), 'err', esc(p.message) + ' <br><br>If your session has expired, paste a fresh value ' +
-      ($('setup-flow').hidden
-        ? 'under <button class="linkish" type="button" data-section="account">Account</button>.'
-        : 'in step 1 above.'));
+    say($('run-result'), 'err', p.message, h('br'), h('br'), 'If your session has expired, paste a fresh value ',
+      $('setup-flow').hidden
+        ? ['under ', h('button', { class: 'linkish', type: 'button', 'data-section': 'account' }, 'Account'), '.']
+        : 'in step 1 above.');
     $('card-run').dataset.state = 'active';
   }
 }
@@ -2219,9 +2253,9 @@ let dupes = null;
 
 /** A time of day on this computer's clock, in its own style: "7:00 PM", or "19:00". */
 const clockTime = (hhmm) => {
-  const [h, m] = String(hhmm).split(':').map(Number);
+  const [hours, minutes] = String(hhmm).split(':').map(Number);
   const d = new Date();
-  d.setHours(h, m, 0, 0);
+  d.setHours(hours, minutes, 0, 0);
   return isNaN(d.getTime()) ? String(hhmm) : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 };
 /** When the next run is, the way a person says it: "today at 7:00 PM", "Thursday at 7:00 PM". */
@@ -2281,32 +2315,30 @@ function paintSchedule() {
   // that starts itself every evening should not be a thing a parent cannot find again.
   const where = sched.location || (proposed && proposed.location);
   const found = where
-    ? '<br><span style="font-size:.875rem">' + (sched.installed ? 'Written down in ' : 'It would be written down in ') +
-      '<span class="path">' + esc(where) + '</span></span>'
-    : '';
+    ? [h('br'), h('span', { style: 'font-size:.875rem' },
+        sched.installed ? 'Written down in ' : 'It would be written down in ', pathPill(where))]
+    : null;
   if (!sched.installed) {
     // Not a warning. Choosing not to schedule it is a perfectly good answer, and a yellow
     // box would tell a parent they had got something wrong.
-    box.innerHTML =
-      '<p style="color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0">' +
-      'Not set up. Photos are saved only when you press Start saving.' + found + '</p>';
+    put(box, h('p', { style: 'color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0' },
+      'Not set up. Photos are saved only when you press Start saving.', found));
     setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active', 'Step 4 of 4. Optional, and not set up.');
     return;
   }
   if (sched.registered === false) {
-    show(box, 'warn', esc(sched.summary) + found);
+    say(box, 'warn', sched.summary, found);
     setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active',
       'Step 4 of 4. A daily run was set up but the computer no longer has it.');
     return;
   }
   if (sched.overdue) {
-    show(box, 'warn', esc(sched.summary) + found);
+    say(box, 'warn', sched.summary, found);
     setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active',
       'Step 4 of 4. A daily run is set up but has not saved anything yet.');
     return;
   }
-  show(box, 'ok',
-    esc(sched.summary) + (sched.nextRun ? '<br>Next run: <b>' + esc(nextWhen(sched.nextRun)) + '</b>.' : '') + found);
+  say(box, 'ok', sched.summary, sched.nextRun && [h('br'), 'Next run: ', bold(nextWhen(sched.nextRun)), '.'], found);
   setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'complete', 'Step 4 of 4, done. ' + sched.summary);
 }
 
@@ -2317,20 +2349,20 @@ function paintSchedule() {
  */
 function paintFacts() {
   if (!state) return;
-  $('dash-connected').innerHTML = state.hasSession
-    ? 'Connected to Brightwheel' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') +
-      (state.sessionSavedAt ? ', since ' + esc(fullWhen(state.sessionSavedAt)) : '') + '.'
-    : 'Not connected to Brightwheel.';
+  put($('dash-connected'), state.hasSession
+    ? ['Connected to Brightwheel', state.email && [' as ', bold(state.email)],
+      state.sessionSavedAt && ', since ' + fullWhen(state.sessionSavedAt), '.']
+    : 'Not connected to Brightwheel.');
   const last = sched && sched.lastRun;
-  // Whether it worked is said in words, not only in the presence of a number.
-  $('dash-last').innerHTML = last
-    ? (last.trigger === 'manual' ? 'Last run, which you started: <b>' : 'Last run on its own: <b>') +
-      esc(fullWhen(last.at)) + '</b> &mdash; ' +
-      (last.ok ? 'it worked' : 'it did not work') + '. ' + esc(last.message)
-    : (sched && sched.installed ? 'The daily run has not run on its own yet.' : '');
+  // Whether it worked is said in words, not only in the presence of a number. Nothing at all
+  // when there is nothing to say, so that the empty line is hidden (.dash-facts li:empty).
+  put($('dash-last'), last
+    ? [last.trigger === 'manual' ? 'Last run, which you started: ' : 'Last run on its own: ',
+      bold(fullWhen(last.at)), ' — ' + (last.ok ? 'it worked' : 'it did not work') + '. ', last.message]
+    : sched && sched.installed && 'The daily run has not run on its own yet.');
   // No full stop after the path: the pill carries its own padding, so one would sit on its
   // own with a visible gap in front of it.
-  $('dash-folder').innerHTML = 'Photos are in <span class="path">' + esc(state.archiveDirShown || state.config.archiveDir) + '</span>';
+  put($('dash-folder'), 'Photos are in ', pathPill(state.archiveDirShown || state.config.archiveDir));
 }
 
 /** Ask the tool to change the daily run. Returns the refusal, or null when it worked. */
@@ -2361,7 +2393,7 @@ $('btn-schedule-on').onclick = async () => {
   // then goes into the box it just rewrote.
   paintSchedule();
   paintFacts();
-  if (error) show($('schedule-msg'), 'err', esc(error));
+  if (error) say($('schedule-msg'), 'err', error);
   else if (!$('setup-flow').hidden) {
     $('schedule-msg').insertAdjacentHTML('beforeend',
       '<p style="color:var(--text-muted);font-size:.875rem;margin:var(--s3) 0 0">' +
@@ -2376,7 +2408,7 @@ $('btn-schedule-off').onclick = async () => {
   btn.disabled = false;
   paintSchedule();
   paintFacts();
-  if (error) show($('schedule-msg'), 'err', esc(error));
+  if (error) say($('schedule-msg'), 'err', error);
 };
 
 // ---------------------------------------------------------------- looking after the archive
@@ -2404,15 +2436,12 @@ $('m-children').onclick = async () => {
   try {
     const d = await maintenance('children');
     if (!d.ok) {
-      show(out, 'err', esc(d.error || 'That could not be checked.'));
+      say(out, 'err', d.error || 'That could not be checked.');
     } else {
       const r = d.result;
-      let html = esc(r.summary);
-      if (r.notIncluded.length > 0) {
-        html += '<div style="margin-top:var(--s3)"><button class="secondary" id="m-include" type="button">' +
-          'Save photos for everyone on the account</button></div>';
-      }
-      show(out, r.added.length > 0 || r.removed.length > 0 ? 'warn' : 'ok', html);
+      say(out, r.added.length > 0 || r.removed.length > 0 ? 'warn' : 'ok', r.summary,
+        r.notIncluded.length > 0 && h('div', { style: 'margin-top:var(--s3)' },
+          h('button', { class: 'secondary', id: 'm-include', type: 'button' }, 'Save photos for everyone on the account')));
       const include = $('m-include');
       if (include) {
         include.onclick = async () => {
@@ -2437,27 +2466,23 @@ $('m-check').onclick = async () => {
   try {
     const d = await maintenance('archive');
     if (!d.ok) {
-      show(out, 'err', esc(d.error || 'The folder could not be checked.'));
+      say(out, 'err', d.error || 'The folder could not be checked.');
     } else {
       const r = d.result;
-      let html = esc(r.summary);
       const examples = r.unrecorded.slice(0, 6).concat(r.missing.slice(0, 6));
-      if (examples.length > 0) {
-        html += '<ul style="margin:var(--s3) 0 0;padding-left:1.1rem">' +
-          examples.map((f) => '<li><span class="path">' + esc(f) + '</span></li>').join('') + '</ul>';
-      }
-      if (r.repairable) {
-        html += '<div style="margin-top:var(--s3)"><button class="secondary" id="m-repair" type="button">' +
-          'Fix the list</button><p style="font-size:.875rem;margin:var(--s2) 0 0">This changes only the ' +
-          'tool&rsquo;s own list of what it has saved. No photo is moved, changed or deleted.</p></div>';
-      }
-      show(out, r.repairable ? 'warn' : 'ok', html);
+      say(out, r.repairable ? 'warn' : 'ok', r.summary,
+        examples.length > 0 && h('ul', { style: 'margin:var(--s3) 0 0;padding-left:1.1rem' },
+          examples.map((f) => h('li', null, pathPill(f)))),
+        r.repairable && h('div', { style: 'margin-top:var(--s3)' },
+          h('button', { class: 'secondary', id: 'm-repair', type: 'button' }, 'Fix the list'),
+          h('p', { style: 'font-size:.875rem;margin:var(--s2) 0 0' },
+            'This changes only the tool’s own list of what it has saved. No photo is moved, changed or deleted.')));
       const repair = $('m-repair');
       if (repair) {
         repair.onclick = async () => {
           busy(repair, 'Fixing…');
           const fixed = await maintenance('repair');
-          show(out, fixed.ok ? 'ok' : 'err', esc(fixed.ok ? fixed.result.summary : fixed.error));
+          say(out, fixed.ok ? 'ok' : 'err', fixed.ok ? fixed.result.summary : fixed.error);
         };
       }
     }
@@ -2473,7 +2498,7 @@ $('m-dupes').onclick = async () => {
   busy(btn, 'Looking…');
   try {
     const d = await maintenance('duplicates');
-    if (!d.ok) show(out, 'err', esc(d.error || 'That could not be checked.'));
+    if (!d.ok) say(out, 'err', d.error || 'That could not be checked.');
     else { dupes = d.result; renderDupes(); }
   } catch {
     show(out, 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
@@ -2488,35 +2513,30 @@ $('m-dupes').onclick = async () => {
  */
 function renderDupes() {
   const out = $('m-dupes-out');
-  let html = esc(dupes.summary);
-  if (dupes.files > 0) {
-    html += '<ul style="margin:var(--s3) 0 0;padding-left:1.1rem">';
-    for (const g of dupes.groups) {
-      html += '<li style="margin-bottom:var(--s3)">keeping <span class="path">' + esc(g.keep) + '</span>';
-      for (const extra of g.extra) html += '<br>would delete <span class="path">' + esc(extra) + '</span>';
-      html += '</li>';
-    }
-    html += '</ul>';
-  }
-  if (dupes.files > 0) html += '<div id="m-dupes-actions" style="margin-top:var(--s3)"></div>';
-  show(out, dupes.files > 0 ? 'warn' : 'ok', html);
-  if (dupes.files === 0) return;
-  $('m-dupes-actions').innerHTML =
-    '<button class="secondary" id="m-dupes-go" type="button">' +
-    (dupes.files === 1 ? 'Delete the extra copy' : 'Delete the ' + dupes.files + ' extra copies') + '</button>';
+  const some = dupes.files > 0;
+  say(out, some ? 'warn' : 'ok', dupes.summary,
+    some && h('ul', { style: 'margin:var(--s3) 0 0;padding-left:1.1rem' }, dupes.groups.map((g) =>
+      h('li', { style: 'margin-bottom:var(--s3)' }, 'keeping ', pathPill(g.keep),
+        g.extra.map((extra) => [h('br'), 'would delete ', pathPill(extra)])))),
+    some && h('div', { id: 'm-dupes-actions', style: 'margin-top:var(--s3)' }));
+  if (!some) return;
+  put($('m-dupes-actions'), h('button', { class: 'secondary', id: 'm-dupes-go', type: 'button' },
+    dupes.files === 1 ? 'Delete the extra copy' : 'Delete the ' + dupes.files + ' extra copies'));
   $('m-dupes-go').onclick = confirmDupes;
 }
 
 /** The second press. The list above stays on screen while it is asked. */
 function confirmDupes() {
   const one = dupes.files === 1;
-  $('m-dupes-actions').innerHTML =
-    '<p style="margin:0 0 var(--s3)"><b>This deletes ' + dupes.files + ' file' + (one ? '' : 's') +
-    '</b> &mdash; exactly the ' + (one ? 'one' : 'ones') + ' marked &ldquo;would delete&rdquo; above, and nothing ' +
-    'else. ' + (one ? 'The photo it is a copy of stays where it is.' : 'The photos they are copies of stay where they are.') +
-    ' This cannot be undone.</p>' +
-    '<div class="run-actions"><button id="m-dupes-yes" type="button">Yes, delete them</button>' +
-    '<button class="secondary" id="m-dupes-no" type="button">Keep them</button></div>';
+  put($('m-dupes-actions'),
+    h('p', { style: 'margin:0 0 var(--s3)' },
+      bold('This deletes ' + dupes.files + ' file' + (one ? '' : 's')),
+      ' — exactly the ' + (one ? 'one' : 'ones') + ' marked “would delete” above, and nothing else. ' +
+      (one ? 'The photo it is a copy of stays where it is.' : 'The photos they are copies of stay where they are.') +
+      ' This cannot be undone.'),
+    h('div', { class: 'run-actions' },
+      h('button', { id: 'm-dupes-yes', type: 'button' }, 'Yes, delete them'),
+      h('button', { class: 'secondary', id: 'm-dupes-no', type: 'button' }, 'Keep them')));
   $('m-dupes-no').onclick = renderDupes;
   $('m-dupes-yes').onclick = async () => {
     const yes = $('m-dupes-yes');
@@ -2526,7 +2546,7 @@ function confirmDupes() {
     const paths = dupes.groups.reduce((all, g) => all.concat(g.extra), []);
     const done = await maintenance('duplicates/remove', { paths });
     dupes = null;
-    show($('m-dupes-out'), done.ok ? 'ok' : 'err', esc(done.ok ? done.result.summary : done.error));
+    say($('m-dupes-out'), done.ok ? 'ok' : 'err', done.ok ? done.result.summary : done.error);
   };
 }
 
