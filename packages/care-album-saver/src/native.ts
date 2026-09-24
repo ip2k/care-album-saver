@@ -71,7 +71,7 @@ const CHOOSER_TIMEOUT_MS = 10 * 60 * 1000;
 /** A file manager either appears or does not; it never waits for an answer. */
 const OPEN_TIMEOUT_MS = 20 * 1000;
 
-/** The real `execFile`, as a SpawnCommand. Shared with photos.ts, which needs the same guarantees. */
+/** The real `execFile`, as a SpawnCommand. Shared with photos.ts and scripts/demo.js, which need the same guarantees. */
 export const runProgram: SpawnCommand = (file, args, timeoutMs) =>
   new Promise((resolve) => {
     execFile(
@@ -86,8 +86,9 @@ export const runProgram: SpawnCommand = (file, args, timeoutMs) =>
         }
         if (err?.killed) {
           // The timeout fired. Not a refusal and not a crash, so it gets its own words
-          // rather than being reported as either.
-          resolve({ code: 124, stdout: '', stderr: 'The folder chooser was left open too long, so it was closed.' });
+          // rather than being reported as either. Any caller can hit it — the folder
+          // chooser, opening a folder, Photos — so the words name none of them.
+          resolve({ code: 124, stdout: '', stderr: 'It did not finish in time, so it was stopped.' });
           return;
         }
         resolve({
