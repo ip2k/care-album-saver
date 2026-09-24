@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { constants as fsConstants, type Stats } from 'node:fs';
-import { link, lstat, open, rename, rm, utimes, type FileHandle } from 'node:fs/promises';
+import { link, lstat, lutimes, open, rename, rm, type FileHandle } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -47,6 +47,32 @@ const STALE_MS = 30 * 60 * 1000;
  * large archive takes hours — so a day after it was taken, a lock from elsewhere is set aside.
  */
 const FOREIGN_MAX_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How far ahead of this computer's clock a lock's time may be and still count as a refresh.
+ * Clocks disagree a little between computers sharing a folder, and with a file server. Every
+ * holder sets the time to its own now, so a time further ahead was not written by a holder:
+ * a single `touch -t 2100…` would otherwise make a planted lock count as fresh for ever
+ * (security review §4.6, F2).
+ */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * How long a lock whose text cannot be read counts as one being written. writeLockOrRemove
+ * writes a lock straight after creating it, and no holder refreshes a lock it cannot read, so
+ * one unreadable for longer than this is not in use.
+ */
+const UNREADABLE_MS = 60 * 1000;
+
+/**
+ * Whether a lock last touched at `touched` was refreshed within `limit`, the way a holder
+ * refreshes: not longer ago than that, and not further in the future than CLOCK_SKEW_MS.
+ * For every lock that is judged by its age: this one, its takeover guard and Photos'.
+ */
+export function touchedWithin(touched: number, limit: number): boolean {
+  const age = Date.now() - touched;
+  return age >= -CLOCK_SKEW_MS && age <= limit;
+}
 
 /** A lock file is a line of JSON; anything larger at its name is not one this tool wrote. */
 const LOCK_MAX_BYTES = 64 * 1024;
@@ -344,7 +370,7 @@ async function takeGuard(guard: string): Promise<(() => Promise<void>) | null> {
     const seen = await sightLock(guard);
     if (!seen) continue;
     if (seen.notAFile !== undefined) throw new RunLockUnusableError(guard, seen.notAFile);
-    if (Date.now() - seen.touched < GUARD_STALE_MS) return null;
+    if (touchedWithin(seen.touched, GUARD_STALE_MS)) return null;
     await removeIfStill(guard, seen);
   }
   return null;
@@ -465,12 +491,20 @@ function judge(seen: Sighting): 'held' | 'abandoned' | 'unsure' {
   // whose process is here to speak for it — a run the lid closed on over a weekend, waking on
   // another network, is still going. (The limit is no defence against something that keeps
   // rewriting a lock it planted, startedAt included; nothing that can write the folder is.
-  // It ends a lock that is merely refreshed, by a run hung on another computer, or planted once.)
+  // It ends a lock that is merely refreshed, by a run hung on another computer, or planted
+  // once — with a time in the future too, which touchedWithin does not count as a refresh.)
   if (seen.holder !== null && !here && !perhapsHere && !recentEnough(seen.holder.startedAt)) return 'abandoned';
-  // An unreadable lock is NOT abandoned while it is fresh: the file exists, empty, for the
+  // An unreadable lock is NOT abandoned while it is new: the file exists, empty, for the
   // instant between its owner creating it and writing to it, and reading it in that instant
-  // must not be taken as licence to delete it. Only age decides for one of those.
-  if (Date.now() - seen.touched <= STALE_MS) return 'held';
+  // must not be taken as licence to delete it. Past UNREADABLE_MS it is not being written.
+  if (seen.holder === null) return touchedWithin(seen.touched, UNREADABLE_MS) ? 'held' : 'abandoned';
+  if (touchedWithin(seen.touched, STALE_MS)) return 'held';
+  // Dated further ahead than clocks disagree: planted, or written by a computer whose clock
+  // runs well ahead of this one's. The wait tells the two apart, because a real holder
+  // refreshes during it, so it is given the wait rather than honoured for ever or taken at once.
+  if (seen.touched > Date.now()) return 'unsure';
+  // Unrefreshed: one that may be this computer's gets the wait, which tells a sleeping
+  // holder, whose refreshes resume, from one that is gone.
   return here || perhapsHere ? 'unsure' : 'abandoned';
 }
 
@@ -566,7 +600,8 @@ function held(file: string, me: RunLockHolder, touchEveryMs: number): RunLock {
       .then((holder) => {
         if (!sameHolder(holder, me)) return;
         const now = new Date();
-        return utimes(file, now, now);
+        // lutimes: the lock's own time, never that of whatever a link at its name points to.
+        return lutimes(file, now, now);
       })
       .catch(() => {});
   }, touchEveryMs);

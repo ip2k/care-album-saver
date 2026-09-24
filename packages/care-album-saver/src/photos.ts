@@ -12,7 +12,7 @@ import { containedFile } from './contain.js';
 import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 import { checkArchiveDir } from './safety.js';
 import { savedFingerprints } from './fingerprints.js';
-import { RunLockUnusableError, setAsideIfUnchanged, sightLock, writeLockOrRemove } from './run-lock.js';
+import { RunLockUnusableError, setAsideIfUnchanged, sightLock, touchedWithin, writeLockOrRemove } from './run-lock.js';
 
 /**
  * Adding saved photos to the Photos app, on a Mac, when the parent has asked for it.
@@ -429,7 +429,8 @@ async function takeLock(): Promise<(() => Promise<void>) | null> {
     // Gone between the two calls means its owner just finished: try again at once.
     if (!seen) continue;
     if (seen.notAFile !== undefined) throw new RunLockUnusableError(file, seen.notAFile);
-    if (Date.now() - seen.touched < STALE_LOCK_MS) return null;
+    // touchedWithin, not a subtraction: a lock dated in the future is not a fresh one (§4.6, F2).
+    if (touchedWithin(seen.touched, STALE_LOCK_MS)) return null;
     await setAsideIfUnchanged(file, seen);
   }
   return null;

@@ -373,6 +373,22 @@ test('processes-6: a stale Photos lock is set aside, not deleted by name, and le
   }
 });
 
+test('§4.6 F2: a Photos lock dated 2100 is set aside, not honoured for ever', async () => {
+  const { dir, configDir, config } = await photosArchive();
+  const lock = join(configDir, 'photos.lock');
+  try {
+    await writeFile(lock, '99999 2100-01-01T00:00:00.000Z planted\n');
+    const future = new Date('2100-01-01T00:00:00Z');
+    await utimes(lock, future, future);
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: recorder().spawn });
+    assert.equal(result.ok, true, `not refused as busy: ${JSON.stringify(result)}`);
+    assert.ok(result.added > 0);
+    assert.equal(await exists(lock), false, 'released');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('processes-6: something at the Photos lock\'s name that is not a file is said, not taken for a busy run', async () => {
   const { dir, configDir, config } = await photosArchive();
   const lock = join(configDir, 'photos.lock');
