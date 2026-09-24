@@ -36,6 +36,7 @@ function manifest() {
     files.push({
       path: `Robin/2026-W38/old-${i}.jpg`,
       bytes: 10,
+      sha256: '0'.repeat(64),
       downloadedAt: new Date(RUN_END - 24 * 60 * MINUTE - i * MINUTE).toISOString(),
       provenance: { postedAt: '2026-09-15T10:00:00Z', studentName: 'Robin Maple' },
     });
@@ -44,6 +45,7 @@ function manifest() {
     files.push({
       path: `Sam/2026-W39/new-${String(i).padStart(2, '0')}.${i === 3 ? 'mp4' : 'jpg'}`,
       bytes: 10,
+      sha256: '0'.repeat(64),
       downloadedAt: new Date(RUN_END - (29 - i) * 5 * MINUTE).toISOString(),
       provenance: { postedAt: '2026-09-22T10:00:00Z', studentName: 'Sam Maple', kind: i === 3 ? 'video' : 'image' },
     });

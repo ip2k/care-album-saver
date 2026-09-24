@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import { containedFile } from './contain.js';
 import { MANIFEST_FILENAME, type ManifestRecord } from './ferry/index.js';
+import { usableRecord } from './ferry/manifest.js';
 import type { Config } from './config.js';
 import { walkArchive } from './maintenance.js';
 import { formatBytes } from './units.js';
@@ -71,15 +72,22 @@ export const GALLERY_PAGE_SIZE = 24;
  */
 const RUN_GAP = 30 * 60 * 1000;
 
-/** Every record in the archive's manifest, or none when there is no manifest it can read. */
+/**
+ * Every usable record in the archive's manifest, or none when there is no manifest it can read.
+ *
+ * An entry `usableRecord` refuses is passed over, here and so in everything built on this —
+ * the gallery, the photo route and the Photos count (security review fs-8, web-9): the
+ * dashboard shows what it can, and the refusal is the run's and maintenance's to report.
+ * The ids the page is given index this filtered list, and `photoAt` reads the same one.
+ */
 export async function records(config: Config): Promise<ManifestRecord[]> {
   try {
     const raw = await readFile(join(config.archiveDir, MANIFEST_FILENAME), 'utf8');
     // The array is `files` on disk. The type is called ManifestRecord, which is not the
     // same thing — reading the interface rather than an actual archive.json is how the
     // first version of this returned an empty gallery from a manifest with ten files in it.
-    const data = JSON.parse(raw) as { files?: ManifestRecord[] };
-    return Array.isArray(data.files) ? data.files : [];
+    const data = JSON.parse(raw) as { files?: unknown } | null;
+    return Array.isArray(data?.files) ? data.files.filter(usableRecord) : [];
   } catch {
     // No archive yet, or a manifest this build cannot read. Either way the dashboard shows
     // the empty state rather than an error: "nothing saved yet" is a true answer.
@@ -180,8 +188,11 @@ export async function summarise(
  * a future bug, does not get to make this serve `/etc/passwd`.
  */
 export async function photoAt(config: Config, id: string | null): Promise<{ path: string; bytes: number; type: string } | null> {
-  const index = typeof id === 'string' ? Number(id) : NaN;
-  if (!Number.isInteger(index) || index < 0) return null;
+  // Digits only, before Number() sees it: Number() also reads "0x1", "1e2", " 1 ", "1." and
+  // "+1" as whole numbers, and an index the page never wrote should find no photo (security
+  // review web-11).
+  if (typeof id !== 'string' || !/^\d{1,15}$/.test(id)) return null;
+  const index = Number(id);
 
   const all = await records(config);
   const record = all[index];
@@ -197,12 +208,40 @@ export async function photoAt(config: Config, id: string | null): Promise<{ path
   const info = await stat(absolute).catch(() => null);
   if (!info?.isFile()) return null;
 
-  const ext = (record.path.split('.').pop() ?? '').toLowerCase();
-  const type =
-    ext === 'png' ? 'image/png'
-    : ext === 'heic' ? 'image/heic'
-    : ext === 'mp4' || ext === 'm4v' ? 'video/mp4'
-    : ext === 'mov' ? 'video/quicktime'
-    : 'image/jpeg';
-  return { path: absolute, bytes: info.size, type };
+  const ext = /\.([^./]+)$/.exec(record.path)?.[1]?.toLowerCase() ?? '';
+  return { path: absolute, bytes: info.size, type: PHOTO_TYPES.get(ext) ?? 'application/octet-stream' };
 }
+
+/**
+ * The type the photo route serves each extension as. This map is a security boundary, so it
+ * is said here (security review page-9).
+ *
+ * The gallery's thumbnail is a real link to /photo that opens in a new tab, so the type given
+ * here is what the browser renders at the setup page's own origin, where the token is. A
+ * document type — HTML, SVG, XML, anything that can carry script or navigate — would turn a
+ * file in the archive, which anything that can write the folder can put there and list, into
+ * a page running beside the setup page. So the map names only the image and video formats
+ * sync saves (MEDIA_EXTENSIONS in sync.ts), each as the media type a browser displays, and
+ * anything else is application/octet-stream, which a browser offers to save and never renders
+ * (the server sends `nosniff` too). It never gains a type that is not media; a test holds it to
+ * that: no type photoAt returns contains svg, html or xml.
+ */
+const PHOTO_TYPES: ReadonlyMap<string, string> = new Map([
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['png', 'image/png'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+  ['heic', 'image/heic'],
+  ['heif', 'image/heif'],
+  ['avif', 'image/avif'],
+  ['tif', 'image/tiff'],
+  ['tiff', 'image/tiff'],
+  ['bmp', 'image/bmp'],
+  ['mp4', 'video/mp4'],
+  ['m4v', 'video/mp4'],
+  ['mov', 'video/quicktime'],
+  ['3gp', 'video/3gpp'],
+  ['webm', 'video/webm'],
+  ['avi', 'video/x-msvideo'],
+]);

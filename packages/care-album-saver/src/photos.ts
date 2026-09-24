@@ -251,9 +251,8 @@ async function sortOut(config: Config, all: readonly ManifestRecord[], state: Ph
   const seen = new Set<string>();
   let earlier = 0;
   for (const record of all) {
-    // The list is read as it is found, unchecked (gallery.ts's records), and the hash is
-    // now compared as text; an entry without a string for either is not one this tool wrote.
-    if (typeof record?.sha256 !== 'string' || typeof record.path !== 'string') continue;
+    // gallery.ts's records gives only entries `usableRecord` accepts (security review fs-8),
+    // so both are strings here; an entry with no hash names nothing to key the record by.
     if (!record.sha256 || state.added[record.sha256] || seen.has(record.sha256)) continue;
     seen.add(record.sha256);
     // A list edited by anything else that can write the folder could name a file outside
