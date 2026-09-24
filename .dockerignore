@@ -5,10 +5,12 @@
 # does. The first version of this file listed `dist`, `node_modules` and `session.json`
 # bare, so they matched only at the root, and the host's build output and node_modules
 # under packages/ went into the image (found by the 2026-09-23 audit).
-.git
-.claude
-docs
+#
+# No exceptions, not even for folders that only exist at the root: `**/` also matches at
+# the root, and test/dockerignore.test.js fails on any rule that does not start with it.
 **/.git
+**/.claude
+**/docs
 **/node_modules
 **/dist
 **/*.tsbuildinfo
