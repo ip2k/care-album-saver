@@ -377,8 +377,8 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
         options.futureDatedPosts,
       );
       // Honour the filters other clients say the real API supports. Whether action_type
-      // filters or is ignored is still open (docs/QUESTIONS-FOR-FABLE.md B1), and
-      // start_date/end_date are unprobed (B4-7 in docs/DIRECTIONS-FOR-OPUS.md). Because the
+      // filters or is ignored is still open (docs/DECISIONS.md, Q3), and
+      // start_date/end_date are unprobed (Q8 in the same file). Because the
       // mock filters, no test here can catch a live server that ignores action_type.
       const actionType = url.searchParams.get('action_type');
       if (actionType) all = all.filter((a) => a.action_type === actionType);

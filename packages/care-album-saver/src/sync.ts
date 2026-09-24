@@ -398,7 +398,7 @@ const hasExpired = (url: string) => {
 /**
  * Download one item, surviving an expired signature.
  *
- * Media URLs are signed and short-lived (docs/QUESTIONS-FOR-FABLE.md, B3). A long run —
+ * Media URLs are signed and short-lived (docs/DECISIONS.md, B3). A long run —
  * a first archive of years of photos, videos over a slow connection — outlives the ones on
  * its early pages, and the CDN then refuses a file that is perfectly available. The remedy
  * is to ask for the listing page again, which carries fresh signatures, and try that URL.
@@ -410,7 +410,7 @@ const hasExpired = (url: string) => {
  *
  * Bounded twice over, because a declared expiry is a claim, not a fact. Brightwheel's media
  * URLs are CloudFront's, whose `Expires` is Unix seconds, and that is read correctly
- * (QUESTIONS-FOR-FABLE B3). But another host that means "seconds of life" by `expires=`
+ * (docs/DECISIONS.md, B3). But another host that means "seconds of life" by `expires=`
  * would read as 1970 and so as permanently expired, and a CDN may disagree with the expiry
  * its own URL declares; either would buy a fresh listing page for every item on the page and
  * get the same parameter back each time. So a page may be re-fetched on the strength of a

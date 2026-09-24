@@ -6,13 +6,84 @@ Open a [private security advisory](../../security/advisories/new) rather than a 
 issue. Please do not include a real session cookie, a real photo, or a real child's name
 in a report — a redacted reproduction is always enough.
 
+The review made before the repository was first published, with its open findings and
+their fixes, is [docs/SECURITY-REVIEW-2026-09-23.md](docs/SECURITY-REVIEW-2026-09-23.md).
+The reasoning behind the design choices below, and the alternatives turned down, is in
+[docs/DECISIONS.md](docs/DECISIONS.md).
+
+## Threat model
+
+### What is worth protecting
+
+| Asset | Where it is | Why it matters |
+|---|---|---|
+| The Brightwheel session | `session.json` in the operating system's config folder | It reaches more than photos: the API hands back a child's pickup passcode and the family's phone numbers alongside them ([below](#what-the-api-hands-us-that-we-do-not-want)). |
+| The archive | the folder the parent chooses | Photographs of children, with — by default — the child's name, the nursery, the person who posted each one and the teacher's note written into the file. Every `.json` sidecar and `archive.json` record all of that whatever the switches say. |
+| The daily log | `~/Library/Logs/care-album-saver/` on a Mac, `~/.local/state/care-album-saver/` on Linux, a `logs` folder inside the config folder on Windows | It records each run in the tool's own words, so it names children and the archive folder. Lines pass through the scrubber on the way in; the file is `0600` in a `0700` folder. macOS diagnostic collection gathers `~/Library/Logs`. |
+| Signed media URLs | in memory during a run | Bearer credentials while they last: anyone holding one can fetch the photo. `redactUrl` and `scrub` keep them out of logs and messages. |
+| The setup token | the link `setup` prints | Anyone on this computer who has it can drive the setup page until the program stops. |
+| The parent's Photos library, and iCloud | only with the Photos option on | The one route by which photos leave the computer ([docs/PHOTOS.md](docs/PHOTOS.md)). |
+
+### Trust boundaries
+
+1. **The browser and the setup page.** The setup server listens on `127.0.0.1` only. Before
+   any routing, every request must pass the `Host` allowlist, the fetch-metadata and `Origin`
+   checks, and the per-launch token. Everything the page shows that came from outside — the
+   children's names, notes, file names, the account's email, staff names, GitHub release
+   notes — must reach the page as text, never as markup.
+2. **The tool and Brightwheel's API.** The session goes here and nowhere else, as a `Cookie`
+   header — unless whoever runs the tool points `--base-url` somewhere else, as the tests do,
+   in which case it goes there. Node's `fetch` keeps a hand-set `Cookie` header on a same-origin redirect and drops
+   it on a cross-origin one (checked on 23 September 2026), so a redirect off Brightwheel's
+   host does not carry it. Everything that comes back is untrusted input: names, notes, ids,
+   dates and file extensions become folder names, file names and metadata, so they pass
+   through `src/ferry/names.ts` on the way, and every response is checked for its type and
+   shape.
+3. **The tool and the media host.** The signed URLs Brightwheel hands back are fetched with
+   no cookie: the session never leaves the API's origin.
+4. **The tool and GitHub.** Only after the parent says yes to the update check. One `GET` of
+   this repository's latest release, with no cookie, no token and no User-Agent of the tool's
+   own; the answer is size-capped and validated, the release link must be this repository's
+   releases page, and the "how to update" steps are built by the tool from how it was
+   installed, never from the answer ([docs/UPDATE-CHECK.md](docs/UPDATE-CHECK.md)).
+5. **The tool and the files it reads back.** The archive folder can be written by something
+   else — a cloud-sync peer, another program — so every path read from `archive.json` is
+   resolved with `containedFile()` (real paths on both sides; symlinks and `..` refused)
+   before the gallery, the duplicate finder, repair or the Photos step touch it. A settings
+   change is accepted only as one of a fixed list of typed settings.
+6. **The tool and the programs it starts.** Always `execFile` with an argument array, never a
+   shell: the Photos AppleScript is a fixed file run with arguments, never `-e`; the folder
+   chooser and file-manager openers; the schedulers (`launchctl`, `systemctl --user`,
+   `crontab`, `schtasks`); desktop notifications, whose text is fixed. Two of those read a
+   file the tool writes — the crontab and the Task Scheduler XML — so the quoting of paths in
+   them matters, and is an open warning in the review. ExifTool's tag values come from the API;
+   a note containing a line break followed by an ExifTool option was written verbatim as the
+   note (checked on 23 September 2026).
+7. **The supply chain.** No runtime dependencies; `exiftool-vendored` is optional and runs a
+   bundled Perl ExifTool. GitHub Actions are pinned by tag, not by commit, and the Docker base
+   image (`node:22-slim`) is not pinned by digest.
+
+### Who this defends against, and who it does not
+
+It is built to hold against: a contributor or someone who forks this repository committing
+their own session by accident; a web page the parent visits trying to reach the setup page
+(cross-site requests, DNS rebinding); another account on the same computer (fully on a Mac
+or Linux, less so on Windows — see below); malformed or hostile data in Brightwheel's
+responses, including names and notes a nursery wrote; someone else who can write into the
+archive folder, crafting `archive.json`; and a hostile GitHub release.
+
+It does not try to hold against, and says so rather than implying otherwise: anyone who can
+use the parent's own account on the computer, to whom the photos and the session are ordinary
+files; a memory dump of the running tool (see the `Secret` row below); and Brightwheel
+itself.
+
 ## Design
 
 | Risk | Control |
 |---|---|
 | A contributor commits their own session | The session is never written into the project tree. It lives in the OS config directory, so there is nothing to commit. |
 | A session reaches a log, crash dump or issue report | Sessions are a `Secret` holding the value in a `#private` field, so no inspect option, spread, clone or serializer reaches it. `toString`, `Symbol.toPrimitive`, `toJSON` and `util.inspect` all redact. Probed on Node 26 against string coercion, `JSON.stringify`, `util.inspect` with `customInspect: false` and `showHidden`, `util.format` `%o/%O/%s/%j`, `structuredClone`, `v8.serialize`, spread, `Object.entries`, `Reflect.ownKeys`, an `Error` built from it or carrying it as `cause`, assertion failure messages, worker `postMessage`, uncaught-exception and unhandled-rejection output, and `process.report` — none leaked a byte. Reading the value requires an explicit, greppable `.expose()`, which happens in exactly four places: writing `session.json`, building the `Cookie` header in the client and in `verify`, and `doctor`'s shape check, which passes the value to `inspectCookiePaste` and prints only its kind and length. **Two things it cannot cover:** a V8 heap snapshot contains the plaintext, and so does the caller's own variable before the value is wrapped — which is why the paste is validated at the boundary (`src/paste.ts`) rather than trusted to the scrubber. |
-| A credential is committed anyway | `.gitignore` blocks `.har`, cookie, `.env` and session files, and `scripts/verify-ignores.sh` proves each rule rather than asserting it. `gitleaks` is configured to run on every PR (`.github/workflows/security.yml`) with custom rules for `_brightwheel_v2` and for signed media URLs, and `test/gitleaks-rules.test.js` proves those rules fire on a CloudFront-signed URL and on a session-shaped cookie. **Two honest limits.** The workflow has never run: the remote exists, but nothing has been pushed to it yet. And CI is a merge gate for *this* history, not a leak control for a fork — a commit on a fork is public before anything here can scan it. What protects someone who forks this repository is that the tool never writes a credential into the tree in the first place. |
+| A credential is committed anyway | `.gitignore` blocks `.har`, cookie, `.env` and session files, and `scripts/verify-ignores.sh` proves each rule rather than asserting it. `gitleaks` is configured to run on every PR (`.github/workflows/security.yml`) with custom rules for `_brightwheel_v2` and for signed media URLs, and `test/gitleaks-rules.test.js` proves those rules fire on a CloudFront-signed URL and on a session-shaped cookie. It runs on every push to `main` and every pull request. **One honest limit:** CI is a merge gate for *this* history, not a leak control for a fork — a commit on a fork is public before anything here can scan it. What protects someone who forks this repository is that the tool never writes a credential into the tree in the first place. |
 | A local file is published to npm | `package.json` uses a `files` allowlist, not `.npmignore`: `dist/`, `applescript/`, `README.md` and `LICENSE`. `dist/` is whatever `tsc` left there, which includes the mock server and any output whose source has since been deleted — `tsc --build` never removes those, which is how `dist/api/login.*` outlived its source — so anything published must be built from a clean `dist/`. |
 | A developer's session is baked into a Docker image | `.dockerignore` — and only `.dockerignore`. Every pattern in it starts with `**/`, so it applies at any depth: `node_modules`, `dist`, `.har`, `.env*`, `session.json`, `config.json`, `cookies.*` and the archive folders are kept out of the build context wherever they sit, so a session never enters it in the first place. (Until 2026-09-23 the patterns were bare, which Docker anchors at the context root; the host's `dist/` and `node_modules` under `packages/` went into the image.) The build being multi-stage does **not** add to this: the build stage copies `packages/` in and the runtime stage copies that same tree out of it, so anything the context carried would arrive in the published image anyway. Multi-stage is there to leave build tooling and dev dependencies behind, which is a size and attack-surface win, not a credential control. |
 | Another local account reads the session | Written with mode `0600` at creation, inside a `0700` directory. Windows has no owner-only file mode: there the session inherits the ACL of `%APPDATA%`, which already excludes other standard accounts on the PC but is weaker than `0600`. |
@@ -21,7 +92,7 @@ in a report — a redacted reproduction is always enough.
 | The setup UI is reachable from the network | Bound to `127.0.0.1` only. |
 | DNS rebinding against the setup UI | The `Host` header is checked against a localhost allowlist. Covered by a test that uses a raw HTTP client, because `fetch` cannot set `Host`. |
 | CSRF from a site the parent is visiting | `Sec-Fetch-Site` and `Origin` are both checked, plus a 24-byte token generated once per `setup` launch, compared in constant time, and dead with the process — the port changes with it. It is printed for the parent to paste, never placed on a command line and never set as a cookie. |
-| Children's names cached by the browser | `Cache-Control: no-store, no-cache, must-revalidate, private`, plus `Referrer-Policy: no-referrer`, `X-Content-Type-Options` and `X-Frame-Options`, set on every response before any routing. The CSP starts at `default-src 'none'` and opens only what the one page needs: its own images, `data:` images, and inline style and script. It loads nothing from the network, and `form-action` and `frame-ancestors` are `'none'`. |
+| Children's names cached by the browser | `Cache-Control: no-store, no-cache, must-revalidate, private`, plus `Referrer-Policy: no-referrer`, `X-Content-Type-Options` and `X-Frame-Options`, set on every response before any routing. The CSP starts at `default-src 'none'` and opens only what the one page needs: its own images, `data:` images, its own videos for the photo viewer, and inline style and script. It loads nothing from the network, and `form-action` and `frame-ancestors` are `'none'`. |
 | A malicious dependency | The code itself has no third-party runtime dependency: there is no `dependencies` entry at all. (Until 23 September 2026 there was one, on a sibling package in this repository — which would have resolved from the public registry on a published install, against a name nobody had registered. It is folded in.) `exiftool-vendored` is an `optionalDependencies` entry, and optional means "installation may fail", not "not installed" — a plain `npm install` fetches it plus six transitive packages (~30 MB, including a bundled Perl ExifTool), so the default install really does carry third-party code, and `--omit=optional` is what a reader who wants none must pass. Without it the tool degrades to JSON sidecars. The audit job installs with `--ignore-scripts` and runs `pnpm audit`; the test matrix installs normally, because it exercises the optional ExifTool. |
 | Silently archiving nothing after a session expires | The client asserts the response content type and JSON shape. An HTML login page returned with HTTP 200 raises `SessionExpiredError` instead of parsing as zero photos. |
 | Losing the record of what was saved when a run stops or fails | The manifest is written in a `finally`, so a stop, an expired session or a full disk still records every file already downloaded, and a manifest that cannot be written is reported on the progress stream rather than swallowed. A child's incremental cut-off advances only for a walk that reached the end with nothing left behind, so an interrupted run re-walks that feed rather than skipping past what it missed. |
