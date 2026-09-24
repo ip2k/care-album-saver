@@ -262,8 +262,9 @@ development (both markers are untracked; the development one is inside `.git`).
 
 ## 4. Where I would push hardest
 
-0. Six defects the audit found and did not change (each verified by an adversarial
-   reader; a fix branch is in progress and will say so here when merged):
+0. Six defects the audit found and did not change — **fixed in the merge of
+   `fix/2026-09-23@review-defects`, with a test each in `test/review-fixes.test.js`; the
+   review's report says what was verified.** They were:
    `.dockerignore` patterns are root-anchored, so the host's `dist/` and `node_modules`
    went into the image (the review image contains `dist/api/login.js`, which exists only
    on the host); a malformed JSON body to any POST route reaches the outer catch and the
