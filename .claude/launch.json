@@ -11,18 +11,6 @@
       ],
       "port": 4719,
       "url": "http://127.0.0.1:4719"
-    },
-    {
-      "name": "production-setup",
-      "runtimeExecutable": "node",
-      "runtimeArgs": [
-        "scripts/production.js",
-        "setup",
-        "--port",
-        "4720"
-      ],
-      "port": 4720,
-      "url": "http://127.0.0.1:4720"
     }
   ]
 }
