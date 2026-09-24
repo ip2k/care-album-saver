@@ -28,9 +28,9 @@ on disk. Which shape that is depends on the folder layout you chose in step 2:
 
 | Folder layout | In Photos |
 |---|---|
-| Each child, then a folder per week (the default) | Brightwheel › Robin Maple › **2026-W38** |
+| Each child, then a folder per week (the default) | Brightwheel › Robin-Maple › **2026-W38** |
 | One folder per week, all children together | Brightwheel › **2026-W38** |
-| Each week, then a folder per child | Brightwheel › 2026-W38 › **Robin Maple** |
+| Each week, then a folder per child | Brightwheel › 2026-W38 › **Robin-Maple** |
 
 The last name in each row is an album; the others are folders. Photos can only keep pictures
 in albums and albums in folders, so that is how a folder of photos on disk has to be spelled
@@ -98,7 +98,7 @@ After a run, the tool works out which saved files have not been handed to Photos
 them by album, and runs the script once per album, up to fifty files at a time:
 
 ```sh
-osascript add-to-photos.applescript Brightwheel "Robin Maple" 2026-W38 -- /path/one.jpg /path/two.mp4
+osascript add-to-photos.applescript Brightwheel Robin-Maple 2026-W38 -- /path/one.jpg /path/two.mp4
 ```
 
 The script finds each folder and the album, makes any that are missing, imports the files

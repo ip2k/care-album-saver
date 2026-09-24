@@ -281,7 +281,7 @@ test('the API never echoes a session back to the browser', async () => {
     });
     const state = await (await fetch(`http://127.0.0.1:${ui.port}/api/state?token=${ui.token}`)).text();
     assert.ok(!state.includes(SESSION), 'the session value must never be sent to the browser');
-    assert.ok(state.includes('sessionFingerprint'));
+    assert.equal(JSON.parse(state).hasSession, true);
   } finally {
     await ui.close();
   }

@@ -77,16 +77,11 @@ async function readHolder(file: string): Promise<RunLockHolder | null> {
 }
 
 /**
- * Take the folder's lock, or throw RunInProgressError. `now` and `isAlive` are for the tests.
+ * Take the folder's lock, or throw RunInProgressError.
  */
-export async function takeRunLock(
-  root: string,
-  options: { now?: () => number; isAlive?: (pid: number) => boolean } = {},
-): Promise<RunLock> {
+export async function takeRunLock(root: string): Promise<RunLock> {
   const file = join(root, RUN_LOCK_FILENAME);
-  const now = options.now ?? Date.now;
-  const isAlive = options.isAlive ?? alive;
-  const me: RunLockHolder = { pid: process.pid, host: hostname(), startedAt: new Date(now()).toISOString() };
+  const me: RunLockHolder = { pid: process.pid, host: hostname(), startedAt: new Date().toISOString() };
 
   // Twice at most: once, and once more after clearing a lock whose owner is gone.
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -94,7 +89,7 @@ export async function takeRunLock(
       const handle = await open(file, 'wx', 0o600);
       await handle.writeFile(JSON.stringify(me));
       await handle.close();
-      return held(file, me, now);
+      return held(file, me);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
@@ -106,20 +101,20 @@ export async function takeRunLock(
     // its owner creating it and writing to it, and reading it in that instant must not be
     // taken as licence to delete it. Only age decides for one of those.
     const abandoned =
-      now() - touched > STALE_MS ||
-      (holder !== null && holder.host === me.host && !isAlive(holder.pid));
+      Date.now() - touched > STALE_MS ||
+      (holder !== null && holder.host === me.host && !alive(holder.pid));
     if (!abandoned) throw new RunInProgressError(holder);
     await rm(file, { force: true });
   }
   throw new RunInProgressError(await readHolder(file));
 }
 
-function held(file: string, me: RunLockHolder, now: () => number): RunLock {
-  let lastTouch = now();
+function held(file: string, me: RunLockHolder): RunLock {
+  let lastTouch = Date.now();
   return {
     touch() {
-      if (now() - lastTouch < TOUCH_EVERY_MS) return;
-      lastTouch = now();
+      if (Date.now() - lastTouch < TOUCH_EVERY_MS) return;
+      lastTouch = Date.now();
       const t = new Date(lastTouch);
       utimes(file, t, t).catch(() => {});
     },

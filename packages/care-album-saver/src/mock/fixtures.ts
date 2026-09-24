@@ -95,6 +95,13 @@ function segment(marker: number, payload: Buffer): Buffer {
 }
 
 /**
+ * Every placeholder's size, in pixels. The MP4 repeats it in its track header and sample
+ * description, which describe the JPEG frame inside it, so the two must never disagree.
+ */
+const WIDTH = 64;
+const HEIGHT = 48;
+
+/**
  * A baseline JPEG of one solid colour.
  *
  * Structure, in order: SOI, APP0 (JFIF), DQT, SOF0, DHT (DC), DHT (AC), SOS, the
@@ -106,7 +113,7 @@ function segment(marker: number, payload: Buffer): Buffer {
  * block after the first in a component codes a DC difference of zero followed by
  * end-of-block: four bits per block. The whole file is a few hundred bytes.
  */
-export function placeholderJpeg(id: string, width = 64, height = 48): Buffer {
+export function placeholderJpeg(id: string): Buffer {
   const [r, g, b] = colourFor(id);
   // JFIF YCbCr, clamped to the 8-bit range.
   const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
@@ -120,7 +127,7 @@ export function placeholderJpeg(id: string, width = 64, height = 48): Buffer {
   const dqt = segment(0xdb, Buffer.concat([Buffer.from([0x00]), Buffer.alloc(64, 8)]));
   const sof0 = segment(
     0xc0,
-    Buffer.from([8, height >> 8, height & 0xff, width >> 8, width & 0xff, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]),
+    Buffer.from([8, HEIGHT >> 8, HEIGHT & 0xff, WIDTH >> 8, WIDTH & 0xff, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]),
   );
   const dhtDc = segment(0xc4, Buffer.from([0x00, ...DC_BITS, ...DC_VALUES]));
   const dhtAc = segment(0xc4, Buffer.from([0x10, ...AC_BITS, ...AC_VALUES]));
@@ -130,7 +137,7 @@ export function placeholderJpeg(id: string, width = 64, height = 48): Buffer {
   const eob = huffmanCodes(AC_BITS, AC_VALUES).get(0x00)!;
   const writer = new BitWriter();
   const predictor = [0, 0, 0];
-  const mcus = Math.ceil(width / 8) * Math.ceil(height / 8);
+  const mcus = Math.ceil(WIDTH / 8) * Math.ceil(HEIGHT / 8);
   for (let mcu = 0; mcu < mcus; mcu++) {
     for (let c = 0; c < 3; c++) {
       const coefficient = components[c]! - 128;
@@ -194,9 +201,9 @@ const IDENTITY_MATRIX = Buffer.concat([
 
 /**
  * QuickTime and MP4 count seconds from 1904-01-01 UTC, not 1970. This is the creation
- * time a transcoder would stamp on the container at upload, which is precisely the wrong
- * time this tool exists to correct — so the fixture carries it, and a test can prove it
- * was overwritten with the capture time.
+ * time a transcoder would stamp on the container at upload — the time the file was
+ * encoded, not when the photo was posted — so the fixture carries it, and a test can prove
+ * it was overwritten with the posted time.
  */
 export const MP4_CONTAINER_CREATED = new Date('2026-09-18T12:00:00Z');
 const EPOCH_1904 = Date.UTC(1904, 0, 1);
@@ -234,8 +241,6 @@ const EPOCH_1904 = Date.UTC(1904, 0, 1);
  */
 export function placeholderMp4(id: string): Buffer {
   const frame = placeholderJpeg(id);
-  const width = 64;
-  const height = 48;
   const timescale = 1000;
   const duration = 1000;
   const when = u32(Math.floor((MP4_CONTAINER_CREATED.getTime() - EPOCH_1904) / 1000));
@@ -253,7 +258,7 @@ export function placeholderMp4(id: string): Buffer {
     const tkhd = fullBox(
       'tkhd', 0, 7,
       when, when, u32(1), u32(0), u32(duration), Buffer.alloc(8),
-      u16(0), u16(0), u16(0), u16(0), IDENTITY_MATRIX, u32(width << 16), u32(height << 16),
+      u16(0), u16(0), u16(0), u16(0), IDENTITY_MATRIX, u32(WIDTH << 16), u32(HEIGHT << 16),
     );
     // 0x55c4 is the packed ISO 639-2 code "und" (undetermined language).
     const mdhd = fullBox('mdhd', 0, 0, when, when, u32(timescale), u32(duration), u16(0x55c4), u16(0));
@@ -265,7 +270,7 @@ export function placeholderMp4(id: string): Buffer {
     const jpeg = box(
       'jpeg',
       Buffer.alloc(6), u16(1), u16(0), u16(0), Buffer.alloc(12),
-      u16(width), u16(height), u32(0x00480000), u32(0x00480000), u32(0), u16(1),
+      u16(WIDTH), u16(HEIGHT), u32(0x00480000), u32(0x00480000), u32(0), u16(1),
       Buffer.alloc(32), u16(0x0018), u16(0xffff),
     );
     const stbl = box(

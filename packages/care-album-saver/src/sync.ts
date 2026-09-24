@@ -35,13 +35,13 @@ export interface SyncProgress {
   skipped: number;
   failed: number;
   /**
-   * How many items this run will handle, when that is knowable. It is not: Brightwheel's
-   * `count` is posts of every kind — check-ins, naps and meals as well as photos — and an
-   * incremental run stops early. A number here would turn into an invented percentage in
-   * the UI, so it stays undefined and the honest measures are `posts` and `examined`.
+   * Posts of every kind on the current child's feed, as Brightwheel counts them.
+   *
+   * These two are the honest measures of progress, and there is deliberately no total of
+   * items this run will handle, because that is not knowable: Brightwheel's `count` is posts
+   * of every kind — check-ins, naps and meals as well as photos — and an incremental run
+   * stops early. A number there would turn into an invented percentage in the UI.
    */
-  total?: number;
-  /** Posts of every kind on the current child's feed, as Brightwheel counts them. */
   posts?: number;
   /** How many of those this run has looked through so far. */
   examined?: number;
@@ -91,7 +91,7 @@ function archivePath(rel: string, filename: string): string {
  * The timezone this archive is filed under.
  *
  * Brightwheel hands us an instant and no timezone: `event_date` says *when* a photo was
- * taken, never *where*, and the students response carries the school's name but not its
+ * posted, never *where*, and the students response carries the school's name but not its
  * clock. So the day and week a photo is filed under can only come from a clock we choose,
  * and the only honest choice is the one the person can see: the clock of the computer doing
  * the archiving. That is right for a parent archiving at home and wrong for a machine set
@@ -160,11 +160,12 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     'recorded anywhere. For a nursery the two are usually minutes apart.',
     '',
     // Said out loud, in the folder, because the archive outlives the settings that made
-    // it: Brightwheel records the moment but not the timezone, so which day a photo lands
-    // under is decided by the clock of the machine that saved it. A reader years later —
-    // or a parent who archived a fortnight of photos from a hotel — can see which clock.
+    // it: Brightwheel records when it was posted but not the timezone, so which day a
+    // photo lands under is decided by the clock of the machine that saved it. A reader
+    // years later — or a parent who archived a fortnight of photos from a hotel — can see
+    // which clock.
     `Dates and times here follow one clock: ${archiveTimezone()}, the timezone of the`,
-    'computer that saved these files. Brightwheel records when a photo was taken but not',
+    'computer that saved these files. Brightwheel records when a photo was posted but not',
     'the timezone it was taken in, so files saved from a computer set to another timezone',
     'can land in the next day — or the next week — along from these.',
     '',
@@ -327,12 +328,15 @@ const hasExpired = (url: string) => {
  * the item is left for the next run rather than hammered. A refusal counts, a network error
  * does not — that is the caller's problem to report as it is.
  *
- * Bounded twice over, because `expires=` is a guess. Not every CDN means "Unix time" by it;
- * one that means "seconds of life" reads as 1970 and so as permanently expired, which would
- * buy a fresh listing page for every item on the page and get the same unreadable parameter
- * back each time. So a page may be re-fetched on the strength of a declared expiry once per
- * run — after that its URLs are treated as final and the CDN, which is the only authority
- * on the matter, gets to answer. A real refusal still buys the one re-fetch per item.
+ * Bounded twice over, because a declared expiry is a claim, not a fact. Brightwheel's media
+ * URLs are CloudFront's, whose `Expires` is Unix seconds, and that is read correctly
+ * (QUESTIONS-FOR-FABLE B3). But another host that means "seconds of life" by `expires=`
+ * would read as 1970 and so as permanently expired, and a CDN may disagree with the expiry
+ * its own URL declares; either would buy a fresh listing page for every item on the page and
+ * get the same parameter back each time. So a page may be re-fetched on the strength of a
+ * declared expiry once per run — after that its URLs are treated as final and the CDN,
+ * which is the only authority on the matter, gets to answer. A real refusal still buys the
+ * one re-fetch per item.
  */
 async function fetchMedia(walk: Walk, page: ActivityPage, activity: MediaActivity, target: string) {
   const headers = walk.client.mediaHeaders();
@@ -400,13 +404,18 @@ export async function sync(
   // held throws RunInProgressError having read and fetched nothing.
   const verdict = checkArchiveDir(config.archiveDir, { allowTemporary: options.allowTemporaryDir });
   if (!verdict.ok) throw new Error(verdict.error);
+  // 0700, not the default 0755. These are identified photographs of a child: the folder is
+  // named after them, the .json sidecar beside every file names them, and archive.json
+  // names them once per photo — all of which is true whatever the "label photos with names"
+  // switch says, because that switch governs only what goes *inside* the files. So other
+  // accounts on a shared family computer must not be able to read any of it.
   await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
   const lock = await takeRunLock(config.archiveDir);
   try {
     return await syncHoldingTheLock(client, config, (p) => {
       lock.touch();
       onProgress(p);
-    }, options);
+    }, options, verdict.warning);
   } finally {
     await lock.release();
   }
@@ -416,7 +425,8 @@ async function syncHoldingTheLock(
   client: BrightwheelClient,
   config: Config,
   onProgress: (p: SyncProgress) => void,
-  options: { allowTemporaryDir?: boolean; signal?: AbortSignal },
+  options: { signal?: AbortSignal },
+  archiveWarning?: string,
 ): Promise<SyncResult> {
   const result: SyncResult = {
     saved: 0,
@@ -440,24 +450,18 @@ async function syncHoldingTheLock(
   }
   result.students = students.map((s) => s.fullName);
 
-  // Refuse outright rather than quietly archiving to a folder the OS will empty.
-  const verdict = checkArchiveDir(config.archiveDir, { allowTemporary: options.allowTemporaryDir });
-  if (!verdict.ok) throw new Error(verdict.error);
-  if (verdict.warning) result.warnings.push(verdict.warning);
+  // What `sync` found worth saying about the folder it checked before taking the lock, such
+  // as one that a cloud service syncs.
+  if (archiveWarning) result.warnings.push(archiveWarning);
 
-  // 0700, not the default 0755. These are identified photographs of a child: the folder is
-  // named after them, the .json sidecar beside every file names them, and archive.json
-  // names them once per photo — all of which is true whatever the "label photos with names"
-  // switch says, because that switch governs only what goes *inside* the files. So other
-  // accounts on a shared family computer must not be able to read any of it.
-  await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
-  // ...and the same again for a folder that was already there, which `mkdir` leaves alone.
+  // A folder that already existed keeps its own mode, which `mkdir` leaves alone; make it
+  // owner-only too.
   await ensureOwnerOnly(config.archiveDir, result.warnings);
 
-  // The manifest gets the same treatment, spelled out here rather than left to media-ferry's
-  // default: it names every child, quotes every note and names whoever posted each photo, so
+  // The manifest is owner-only too, by the module's own default rather than anything asked
+  // for here: it names every child, quotes every note and names whoever posted each photo, so
   // it is as identifying as the photos it lists and belongs behind the same wall.
-  const manifest = await Manifest.open(config.archiveDir, 'brightwheel', { fileMode: 0o600 });
+  const manifest = await Manifest.open(config.archiveDir, 'brightwheel');
   const walked = walkedThrough(manifest);
   const gone = goneFromBrightwheel(manifest);
   const timezone = archiveTimezone();

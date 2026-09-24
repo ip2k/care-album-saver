@@ -19,7 +19,7 @@
  */
 
 export class ApiShapeError extends Error {
-  constructor(message: string, public readonly context?: string) {
+  constructor(message: string) {
     super(message);
     this.name = 'ApiShapeError';
   }
@@ -48,11 +48,10 @@ export function assertJsonResponse(response: Response, body: string, context: st
     throw new ApiShapeError(
       `Expected JSON from ${context} but got "${contentType || 'no content-type'}". ` +
         `This usually means Brightwheel changed something, or you are being asked to sign in again.`,
-      context,
     );
   }
   if (!response.ok) {
-    throw new ApiShapeError(`HTTP ${response.status} from ${context}`, context);
+    throw new ApiShapeError(`HTTP ${response.status} from ${context}`);
   }
 }
 
@@ -62,7 +61,6 @@ function req(obj: Record<string, unknown>, key: string, context: string): unknow
       `Brightwheel's response for ${context} is missing the "${key}" field. ` +
         `The API may have changed; please open an issue with the output of ` +
         `\`care-album-saver doctor\`.`,
-      context,
     );
   }
   return obj[key];
@@ -70,14 +68,14 @@ function req(obj: Record<string, unknown>, key: string, context: string): unknow
 
 function asObject(value: unknown, context: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new ApiShapeError(`Expected an object for ${context}, got ${typeof value}`, context);
+    throw new ApiShapeError(`Expected an object for ${context}, got ${typeof value}`);
   }
   return value as Record<string, unknown>;
 }
 
 function asArray(value: unknown, context: string): unknown[] {
   if (!Array.isArray(value)) {
-    throw new ApiShapeError(`Expected a list for ${context}, got ${typeof value}`, context);
+    throw new ApiShapeError(`Expected a list for ${context}, got ${typeof value}`);
   }
   return value;
 }
@@ -96,7 +94,10 @@ export interface MediaActivity {
   /** Brightwheel's own id for this post. The primary deduplication key. */
   id: string;
   studentId: string | null;
-  /** The moment the photo was taken, as reported by Brightwheel. */
+  /**
+   * When Brightwheel says the post was made (event_date, else created_at); not when the
+   * photo was taken, which the API does not carry.
+   */
   postedAt: Date;
   /** Note or caption written by the teacher, if any. */
   note: string | null;
@@ -118,7 +119,6 @@ export function parseMe(raw: unknown): { id: string; email: string | null } {
   if (id === null || id === undefined) {
     throw new ApiShapeError(
       'Brightwheel did not return an account id (expected "object_id"). The API may have changed.',
-      'users/me',
     );
   }
   return { id: String(id), email: str(user.email) };
@@ -172,7 +172,7 @@ export function parseStudents(raw: unknown): Student[] {
  * One entry must not decide the fate of the page by itself: the count of undated entries
  * is what `validateExtraction` weighs, and that gate is where the refusal belongs.
  */
-function pickCaptureTime(a: Record<string, unknown>): Date | null {
+function pickPostedTime(a: Record<string, unknown>): Date | null {
   for (const key of ['event_date', 'event_time', 'created_at', 'updated_at']) {
     const v = a[key];
     if (typeof v === 'string') {
@@ -206,12 +206,11 @@ function pickAuthor(actor: unknown, context: string): string | null {
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
-const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|heif|avif)(\?|$)/i;
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi)(\?|$)/i;
 
 /** What one page of the feed yielded, and what it could not. */
 export interface ParsedActivities {
-  /** The media posts this tool can file: they carry media and a readable capture time. */
+  /** The media posts this tool can file: they carry media and a readable posted time. */
   items: MediaActivity[];
   /**
    * How many entries carried media but no date this tool could read. Kept rather than
@@ -246,13 +245,12 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
     if (!media) continue; // Check-ins, naps, meals and notes carry no media. Skip silently.
 
     const isVideo = Boolean(videoUrl) || a.action_type === 'ac_video' || VIDEO_EXT.test(media);
-    if (!isVideo && !IMAGE_EXT.test(media) && !imageUrl) continue;
 
-    const postedAt = pickCaptureTime(a);
+    const postedAt = pickPostedTime(a);
     if (!postedAt) {
-      // A photo we cannot date is a photo we cannot file, and filing by capture time is
-      // the entire point of this tool. So it is counted, not quietly dropped and not
-      // stamped with a guess; `validateExtraction` decides what the count means.
+      // A photo we cannot date is a photo we cannot file, and filing by date is the point
+      // of this tool. So it is counted, not quietly dropped and not stamped with a guess;
+      // `validateExtraction` decides what the count means.
       undated += 1;
       continue;
     }
@@ -285,7 +283,6 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
 export interface ExtractionCheck {
   status: 'ok' | 'empty' | 'suspicious';
   message: string;
-  count: number;
 }
 
 export function validateExtraction(items: MediaActivity[], page: number, undated = 0): ExtractionCheck {
@@ -298,15 +295,13 @@ export function validateExtraction(items: MediaActivity[], page: number, undated
         `${undated} post${undated === 1 ? '' : 's'} on page ${page} carried a photo or video with ` +
         `no date this tool could read. Brightwheel may have renamed the date field; filing them by ` +
         `guesswork would put them in the wrong week, so the run stops instead.`,
-      count: items.length,
     };
   }
   if (items.length > 0) {
-    return { status: 'ok', message: `${items.length} media items on page ${page}`, count: items.length };
+    return { status: 'ok', message: `${items.length} media items on page ${page}` };
   }
   return {
     status: 'empty',
     message: page === 0 ? 'No media found at all' : `End of results at page ${page}`,
-    count: 0,
   };
 }

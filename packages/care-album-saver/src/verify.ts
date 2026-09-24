@@ -7,24 +7,26 @@ import type { Secret } from './secrets.js';
 /**
  * A bounded, read-only check of the live Brightwheel API that reveals SHAPE, never CONTENT.
  *
- * Every field name in this project was derived from other people's open-source clients and
- * sanitized fixtures. Nothing has been confirmed against the real service. This command
- * closes that gap without archiving anything and — importantly — without printing a single
- * child's name, photo, note or identifier.
+ * The field names in this project were first taken from other people's open-source clients
+ * and sanitized fixtures, and were checked against one live account on 2026-09-21 and
+ * 2026-09-22. This command is how anyone re-checks them on their own account, without
+ * archiving anything and — importantly — without printing a single child's name, photo,
+ * note or identifier.
  *
  * The rule it follows: report whether a field is PRESENT and what TYPE it is. Never report
  * its value. There are two deliberate exceptions, each the answer to a question the project
- * cannot settle any other way: whether event_date differs from created_at (the claim the
- * whole timestamp-correction feature rests on, reported as a difference in minutes), and
- * which company serves the media (reported as a domain, never the full host name — see
- * where it is pushed).
+ * cannot settle any other way: whether event_date differs from created_at (identical on
+ * every record of the one account checked; worth measuring on another nursery — reported as
+ * a count and the largest gap in minutes), and which company serves the media (reported as
+ * a domain, never the full host name — see where it is pushed).
  *
  * It also sends the session to exactly one place: the Brightwheel API. The obvious extra
  * check — "does the media CDN reject the session cookie?" — is the one thing this tool
  * promises never to do, so it is not done and the report says so instead.
  *
- * It makes four requests — three to the API, and one HEAD to the media host without the
- * session — and downloads no media.
+ * Without --deep it makes four requests (three to the API, one HEAD to the media host
+ * without the session) and downloads no media; with --deep it also downloads up to three
+ * photos to a temporary directory, reads them and deletes them.
  */
 
 export interface FieldCheck {
@@ -56,7 +58,6 @@ function check(obj: Record<string, unknown>, fields: string[]): FieldCheck[] {
   });
 }
 
-/** Raw fetch helper so we can inspect envelopes the typed client would discard. */
 /**
  * One read, with the failure named by a LABEL rather than by its URL.
  *
@@ -148,7 +149,7 @@ export async function verify(
   if (first?.student) report.findings.push('CONFIRMED: each entry nests the child under `.student`.');
   const studentId = studentObj ? String(studentObj.object_id ?? studentObj.id) : null;
 
-  // 3 — one small page of photo activities. Five records, no downloads.
+  // 3 — one page of up to 50 photo activities.
   if (studentId) {
     const query = new URLSearchParams({
       page: '0',
@@ -177,14 +178,18 @@ export async function verify(
         ...(items[0]
           ? check(items[0] as Record<string, unknown>, [
               'object_id', 'id', 'action_type', 'event_date', 'created_at',
-              'note', 'media', 'media.image_url', 'video_info', 'actor.name',
+              'note', 'media', 'media.image_url', 'video_info',
+              'actor.first_name', 'actor.last_name',
             ])
           : []),
       ],
     });
 
     if (items.length > 0) {
-      report.findings.push('CONFIRMED: the server accepts `action_type=ac_photo` filtering.');
+      report.findings.push(
+        'ACCEPTED, NOT CONFIRMED: `action_type=ac_photo` returned a non-empty page; whether the ' +
+          'server filters on it or ignores it is not checked here.',
+      );
     } else {
       report.warnings.push('`action_type=ac_photo` returned nothing — the filter value may differ.');
     }
@@ -213,33 +218,8 @@ export async function verify(
       });
     }
 
-    // Which field carries the name of whoever posted the photo. `actor.name` came from
-    // another project's fixtures and is absent on a real record, so the tool has been
-    // writing no author at all. Report which of the plausible spellings exist — names of
-    // fields, never the name in them.
-    if (items.length > 0) {
-      const candidates = [
-        'actor', 'actor.name', 'actor.first_name', 'actor.object_id',
-        'author', 'author.name', 'created_by', 'created_by.name', 'created_by.first_name',
-        'creator', 'creator.name', 'staff', 'staff.name', 'teacher', 'teacher.name',
-        'user', 'user.name', 'user.first_name', 'actor_name', 'creator_name',
-      ];
-      const present = new Set<string>();
-      for (const item of items) {
-        for (const c of check(item as Record<string, unknown>, candidates)) {
-          if (c.present) present.add(`${c.field} (${c.type})`);
-        }
-      }
-      report.findings.push(
-        present.size > 0
-          ? `Who posted a photo is carried by: ${[...present].sort().join(', ')}.`
-          : 'NOT FOUND: no field on any record names whoever posted the photo. The tool ' +
-            'writes no author, and `actor.name` — taken from another project — is not it.',
-      );
-    }
-
-    // The claim the entire timestamp-correction feature depends on, measured across every
-    // record the page returned rather than the first one that happened to come back.
+    // Whether event_date and created_at ever differ, across every record on the page. On the
+    // one account checked they never did.
     const pairs = items
       .map((item) => item as Record<string, unknown>)
       .filter((item) => typeof item.event_date === 'string' && typeof item.created_at === 'string')
@@ -280,17 +260,17 @@ export async function verify(
       }
     }
 
-    // 4 (only with --deep) — the question nothing else can answer.
+    // Only with --deep — the question nothing else can answer.
     //
     // event_date and created_at are the same on every record of a real account, so
     // Brightwheel's API does not tell us when a photo was TAKEN, only when it was posted.
     // If the moment survives anywhere it is inside the image, where the camera wrote it.
-    // Finding out means downloading one photo, which is why it is not the default: the rest
-    // of this command touches no media at all.
+    // Finding out means downloading up to three photos, which is why it is not the default:
+    // the rest of this command downloads no media.
     //
-    // The photo goes to a temporary file, its metadata is read, and the file is deleted in a
-    // finally. Nothing about it is printed except whether a capture date exists and how far
-    // it is from the posted time.
+    // The photos go to a temporary directory, their metadata is read, and the directory is
+    // deleted in a finally. Nothing about them is printed except whether a capture date
+    // exists, how far it is from the posted time, and whether GPS coordinates remain.
     if (options.deep) {
       const withMedia = items
         .map((item) => item as Record<string, unknown>)
@@ -371,7 +351,6 @@ export async function verify(
   return report;
 }
 
-/** Render the report as text that is safe to paste into a public issue. */
 /**
  * Download a few photos to a temporary directory, read the date the camera wrote, delete
  * them. Used only by `verify --deep`.
@@ -454,11 +433,12 @@ async function probeCaptureTimes(
   return out;
 }
 
+/** Render the report as text that is safe to paste into a public issue. */
 export function formatReport(report: VerifyReport): string {
   const lines: string[] = [
     '',
-    '  Brightwheel API verification (read-only, no photos downloaded)',
-    '  This report contains field names and types only - no names, photos or values.',
+    '  Brightwheel API verification (read-only; --deep also reads up to three photos, then deletes them)',
+    '  Mostly field names and types. Never a name, note, id or photo; the few values shown are listed in the README.',
     '',
     `  Reachable:     ${report.reachable ? 'yes' : 'no'}`,
     `  Session valid: ${report.sessionValid ? 'yes' : 'no'}`,

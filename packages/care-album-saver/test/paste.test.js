@@ -322,11 +322,14 @@ test('the login prompt never echoes the session into terminal scrollback', async
   const photos = await mkdtemp(join(tmpdir(), 'cas-echo-photos-'));
   const cli = new URL('../dist/cli.js', import.meta.url).pathname;
 
+  // A local mock that refuses this session at once, so the whole exchange — the prompt, the
+  // refusal and the message after it — is checked for the pasted value without the network,
+  // and without the fifteen seconds of retries a dead address would cost.
+  const { startMockBrightwheel } = await import('../dist/index.js');
+  const mock = await startMockBrightwheel({ validSession: 'some-other-session-value' });
   const output = await new Promise((resolve) => {
-    // baseUrl points nowhere on purpose: this is about what reaches the terminal before
-    // any request is made, so the sign-in failing afterwards is fine.
-    const child = spawn(process.execPath, [cli, 'login'], {
-      env: { ...process.env, CARE_ALBUM_CONFIG_DIR: config, CARE_ALBUM_DIR: photos, CARE_ALBUM_BASE_URL: 'http://127.0.0.1:1' },
+    const child = spawn(process.execPath, [cli, 'login', '--base-url', `${mock.url}/api/v1`], {
+      env: { ...process.env, CARE_ALBUM_CONFIG_DIR: config, CARE_ALBUM_DIR: photos },
     });
     let text = '';
     child.stdout.on('data', (d) => { text += d; });
@@ -335,8 +338,10 @@ test('the login prompt never echoes the session into terminal scrollback', async
     const giveUp = setTimeout(() => child.kill(), 15000);
     child.on('close', () => { clearTimeout(typed); clearTimeout(giveUp); resolve(text); });
   });
+  await mock.close();
 
   assert.ok(!output.includes(value), 'the pasted session is not printed back');
+  assert.match(output, /Could not sign in:/, 'and the refusal itself was reached, so its message was checked too');
   assert.match(output, /Paste it here/, 'but the prompt itself still is — a silent prompt is a hung program');
   assert.match(output, /it will not be shown/, 'and it says why nothing appears as you type');
 });
