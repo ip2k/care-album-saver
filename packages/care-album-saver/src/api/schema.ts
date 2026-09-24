@@ -19,7 +19,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { transferIdentity } from '../ferry/url.js';
+import { mediaUrlRefusal, transferIdentity } from '../ferry/url.js';
 
 export class ApiShapeError extends Error {
   constructor(message: string) {
@@ -38,24 +38,43 @@ export class SessionExpiredError extends Error {
 /**
  * Assert that a response really is JSON from the API, not a login page or an error page.
  * Called before any parsing.
+ *
+ * The "that is a sign-in page" guess is made only of a successful answer. It used to be
+ * made of any answer that was not JSON, before the status was looked at, so an HTML error
+ * page — a 404 or a 502 from something in between, a proxy asking for its own password —
+ * mentioning "log in" anywhere told the parent their session had expired and sent them off
+ * to copy it again, which could not help. An expired session that Brightwheel answers with
+ * its sign-in page answers 200 (or 401/403, which are read as expiry whatever the body);
+ * any other status is reported as the status it is, with what the body said it was
+ * (the outbound verifier's "sign-in heuristic").
  */
 export function assertJsonResponse(response: Response, body: string, context: string): void {
   if (response.status === 401 || response.status === 403) {
     throw new SessionExpiredError();
   }
   const contentType = response.headers.get('content-type') ?? '';
+  const shown = describeContentType(contentType);
+  if (!response.ok) {
+    throw new ApiShapeError(`HTTP ${response.status} from ${context} (${shown})`);
+  }
   if (!contentType.includes('json')) {
     // The single most common cause is an expired session redirecting to the sign-in page.
     const looksLikeLogin = /<html|sign\s*in|log\s*in|password/i.test(body.slice(0, 2000));
     if (looksLikeLogin) throw new SessionExpiredError();
     throw new ApiShapeError(
-      `Expected JSON from ${context} but got "${contentType || 'no content-type'}". ` +
+      `Expected JSON from ${context} but got "${shown}". ` +
         `This usually means Brightwheel changed something, or you are being asked to sign in again.`,
     );
   }
-  if (!response.ok) {
-    throw new ApiShapeError(`HTTP ${response.status} from ${context}`);
-  }
+}
+
+/**
+ * A response's content type as a message may quote it: the header is the server's to fill,
+ * so it is cut short and kept to printable characters before it goes anywhere a parent reads.
+ */
+export function describeContentType(contentType: string | null): string {
+  const shown = (contentType ?? '').replace(/[^\x20-\x7e]/g, '').trim().slice(0, 80);
+  return shown || 'no content-type';
 }
 
 /** The refusal for a field that is not there, worded for whoever has to fix it. */
@@ -81,7 +100,41 @@ function asArray(value: unknown, context: string): unknown[] {
   return value;
 }
 
-const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
+/**
+ * C0 control characters but tab, line feed and carriage return; DEL; and the C1 block. None
+ * belongs in a name or a note, and each does something to whatever prints it: an escape
+ * sequence repaints a terminal, a NUL makes ExifTool refuse the whole write (fs-12), a
+ * backspace rewrites the log line it is in.
+ */
+const CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+
+/**
+ * The one reader for every string from Brightwheel that a person will read — a child's and
+ * a teacher's name, the school, the account's address, a note — so that every printer of
+ * them (the terminal, the daily log, the setup page, the sidecar, the tags inside a photo)
+ * gets text that is already clean (security review processes-8, whose finding was child
+ * names that kept their control characters). Composed to NFC, so one name is one sequence
+ * of code points whichever keyboard typed it; the control characters above removed.
+ *
+ * `multiline` is for a note, whose line breaks and tabs are part of what the teacher wrote.
+ * Everywhere else a line break or tab becomes a space: a name that could end a log line
+ * could also forge the next one.
+ *
+ * Null when nothing is left, as for a string that was empty to begin with.
+ */
+function text(v: unknown, multiline = false): string | null {
+  if (typeof v !== 'string') return null;
+  let clean = v.normalize('NFC').replace(CONTROLS, '');
+  if (!multiline) clean = clean.replace(/[\t\n\r]/g, ' ');
+  return clean.length > 0 ? clean : null;
+}
+
+/**
+ * A media address, read exactly as sent. Not `text()`: a signed URL is a credential whose
+ * every byte is checked by the CDN, so it is never rewritten, only vetted — see
+ * `mediaUrlRefusal`, and redactUrl in ferry/download.ts for how one is ever shown.
+ */
+const address = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
 
 /**
  * The first of these that can serve as an id, exactly as it has always been written down —
@@ -160,7 +213,7 @@ export function parseMe(raw: unknown): { id: string; email: string | null } {
       'Brightwheel did not return an account id (expected "object_id"). The API may have changed.',
     );
   }
-  return { id, email: str(user.email) };
+  return { id, email: text(user.email) };
 }
 
 /** `GET /api/v1/guardians/{id}/students` */
@@ -171,8 +224,8 @@ export function parseStudents(raw: unknown): Student[] {
     const wrapper = asObject(entry, `students[${i}]`);
     // Observed: each entry may be {student: {...}} or the student object directly.
     const s = 'student' in wrapper ? asObject(wrapper.student, `students[${i}].student`) : wrapper;
-    const first = str(s.first_name) ?? '';
-    const last = str(s.last_name) ?? '';
+    const first = text(s.first_name) ?? '';
+    const last = text(s.last_name) ?? '';
     const school = s.school ? asObject(s.school, `students[${i}].school`) : null;
     // A child's id keys their cut-off and their place in the selection of children, so two
     // children with an empty one would share both. There is nothing to derive one from, so
@@ -184,7 +237,7 @@ export function parseStudents(raw: unknown): Student[] {
       firstName: first,
       lastName: last,
       fullName: [first, last].filter(Boolean).join(' ') || `Student ${i + 1}`,
-      schoolName: school ? str(school.name) : null,
+      schoolName: school ? text(school.name) : null,
     };
   });
 }
@@ -244,9 +297,9 @@ function pickPostedTime(a: Record<string, unknown>): Date | null {
 function pickAuthor(actor: unknown, context: string): string | null {
   if (!actor || typeof actor !== 'object' || Array.isArray(actor)) return null;
   const o = asObject(actor, context);
-  const whole = str(o.name);
+  const whole = text(o.name);
   if (whole) return whole;
-  const parts = [str(o.first_name), str(o.last_name)].filter(Boolean);
+  const parts = [text(o.first_name), text(o.last_name)].filter(Boolean);
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
@@ -262,14 +315,34 @@ export interface ParsedActivities {
    * a page of undated photos is indistinguishable from a page of no photos without it.
    */
   undated: number;
+  /**
+   * How many entries carried media at an address this tool will not fetch from
+   * (`mediaUrlRefusal`: not https, or this computer or the local network). Counted for the
+   * same reason as `undated`: dropped quietly, they would be photos missing from the archive
+   * with nothing said.
+   */
+  refused: number;
+  /** Why the first of those was refused, in words; null when none was. */
+  refusedBecause: string | null;
+}
+
+export interface ParseActivitiesOptions {
+  /**
+   * The one origin a media address may have without being https and public: the API's own,
+   * when that is this computer — the mock server, the demo and the tests. The client sets
+   * it (see `loopbackOrigin` in ferry/url.ts); nothing else should.
+   */
+  trustedMediaOrigin?: string | null;
 }
 
 /** `GET /api/v1/students/{id}/activities` — returns only the entries that carry media. */
-export function parseActivities(raw: unknown, studentId: string): ParsedActivities {
+export function parseActivities(raw: unknown, studentId: string, options: ParseActivitiesOptions = {}): ParsedActivities {
   const o = asObject(raw, 'activities');
   const list = asArray(o.activities ?? o.data ?? o.object ?? [], 'activities list');
   const out: MediaActivity[] = [];
   let undated = 0;
+  let refused = 0;
+  let refusedBecause: string | null = null;
 
   for (let i = 0; i < list.length; i++) {
     const a = asObject(list[i], `activities[${i}]`);
@@ -280,13 +353,22 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
     const videoObj =
       a.video_info && typeof a.video_info === 'object' ? (a.video_info as Record<string, unknown>) : null;
 
-    const videoUrl = videoObj ? str(videoObj.downloadable_url) ?? str(videoObj.url) : str(a.video_url);
+    const videoUrl = videoObj ? address(videoObj.downloadable_url) ?? address(videoObj.url) : address(a.video_url);
     const imageUrl = mediaObj
-      ? str(mediaObj.image_url) ?? str(mediaObj.url)
-      : str(a.media_url) ?? str(a.image_url);
+      ? address(mediaObj.image_url) ?? address(mediaObj.url)
+      : address(a.media_url) ?? address(a.image_url);
 
     const media = videoUrl ?? imageUrl;
     if (!media) continue; // Check-ins, naps, meals and notes carry no media. Skip silently.
+
+    // Before anything else is made of it: an address the tool will not fetch from is not an
+    // item, and it is counted rather than dropped. See ParsedActivities.refused.
+    const refusal = mediaUrlRefusal(media, options.trustedMediaOrigin);
+    if (refusal) {
+      refused += 1;
+      refusedBecause ??= refusal;
+      continue;
+    }
 
     const isVideo = Boolean(videoUrl) || a.action_type === 'ac_video' || VIDEO_EXT.test(media);
 
@@ -305,13 +387,13 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
       id: usableId(a.object_id, a.id) ?? idFromMedia(media),
       studentId,
       postedAt,
-      note: str(a.note) ?? str(a.description) ?? null,
+      note: text(a.note, true) ?? text(a.description, true) ?? null,
       url: media,
       kind: isVideo ? 'video' : 'image',
       author: pickAuthor(a.actor, `activities[${i}].actor`),
     });
   }
-  return { items: out, undated };
+  return { items: out, undated, refused, refusedBecause };
 }
 
 /**
@@ -325,24 +407,44 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
  * photos or videos that could not be dated — the shape of the failure Brightwheel renaming
  * `event_date` would produce. Without the `undated` count those posts look exactly like no
  * posts at all, and the caller would report "no new photos" every night for ever.
+ *
+ * A photo at an address the tool will not fetch from (`refused`) is weighed the same way and
+ * for the same reason: skipping it would leave a hole in the archive that nothing mentions.
+ * The run stops and says why, and the next one asks again.
  */
 export interface ExtractionCheck {
   status: 'ok' | 'empty' | 'suspicious';
   message: string;
 }
 
-export function validateExtraction(items: MediaActivity[], page: number, undated = 0): ExtractionCheck {
+export function validateExtraction(
+  items: MediaActivity[],
+  page: number,
+  undated = 0,
+  refused = 0,
+  refusedBecause: string | null = null,
+): ExtractionCheck {
   // Weighed first, and deliberately before the empty case: a page where every post was
-  // undated has no items, and reading that as "the feed has ended" is the silent failure.
+  // undated or refused has no items, and reading that as "the feed has ended" is the silent
+  // failure.
+  const posts = (n: number) => `${n} post${n === 1 ? '' : 's'} on page ${page}`;
+  const reasons: string[] = [];
   if (undated > 0) {
-    return {
-      status: 'suspicious',
-      message:
-        `${undated} post${undated === 1 ? '' : 's'} on page ${page} carried a photo or video with ` +
+    reasons.push(
+      `${posts(undated)} carried a photo or video with ` +
         `no date this tool could read. Brightwheel may have renamed the date field; filing them by ` +
         `guesswork would put them in the wrong week, so the run stops instead.`,
-    };
+    );
   }
+  if (refused > 0) {
+    reasons.push(
+      `${posts(refused)} carried a photo or video at an address this tool does not fetch from` +
+        `${refusedBecause ? `, because ${refusedBecause}` : ''}. Brightwheel's photos come from a public ` +
+        `https address, and fetching this one could reach something on your own network instead, so ` +
+        `the run stops here rather than leave them out without a word. The next run will ask again.`,
+    );
+  }
+  if (reasons.length > 0) return { status: 'suspicious', message: reasons.join(' ') };
   if (items.length > 0) {
     return { status: 'ok', message: `${items.length} media items on page ${page}` };
   }

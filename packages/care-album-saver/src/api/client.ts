@@ -1,9 +1,11 @@
+import { loopbackOrigin } from '../ferry/url.js';
 import { BodyTooLargeError, readBodyText } from '../http-body.js';
-import { Secret } from '../secrets.js';
+import { Secret, scrub } from '../secrets.js';
 import { browserUserAgent } from './identity.js';
 import {
   ApiShapeError,
   assertJsonResponse,
+  describeContentType,
   parseActivities,
   parseMe,
   parseStudents,
@@ -60,18 +62,51 @@ export const MAX_RETRY_AFTER_SECONDS = 5 * 60;
 export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 /**
+ * The most a `Retry-After` is read as: a year. Anything longer asks for the same thing — not
+ * this run — and a header of three hundred digits used to reach the sentence that ends a run
+ * as "wait Infinity days". It is capped where it is read, so no later arithmetic or message
+ * ever meets the raw number.
+ */
+const RETRY_AFTER_CEILING_SECONDS = 365 * 86_400;
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * The instant an IMF-fixdate names, in milliseconds, or null when `text` is not one.
+ *
+ * `Sun, 06 Nov 1994 08:49:37 GMT` and nothing looser: RFC 9110's preferred form, the one every
+ * current server sends. `Date.parse` is no judge of that — V8 reads "soon 1" as a date — so the
+ * shape is matched exactly and the fields are checked to name a real moment (no 31 February).
+ * The two obsolete HTTP-date forms (RFC 850, asctime) are deliberately not read: RFC 9110 asks
+ * recipients to accept them, but a server that sends one only loses its own wait, not
+ * correctness — the header then reads as absent and the client's own backoff applies.
+ */
+function imfFixdate(text: string): number | null {
+  const m = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), (\d{2}) ([A-Z][a-z]{2}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/.exec(text);
+  if (!m) return null;
+  const [day, month, year, hour, minute, second] = [Number(m[1]), MONTHS.indexOf(m[2]!), Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])];
+  if (month < 0 || hour > 23 || minute > 59 || second > 60) return null;
+  const at = Date.UTC(year, month, day, hour, minute, Math.min(second, 59));
+  // A day the month does not have rolls over into the next, and Date.UTC reads years 0–99 as
+  // 1900–1999; neither is the date that was sent.
+  const read = new Date(at);
+  return read.getUTCDate() === day && read.getUTCFullYear() === year ? at : null;
+}
+
+/**
  * How many seconds a `Retry-After` header asks for, or null when there is none it can read.
  *
- * Both forms the standard allows: a whole number of seconds, or a date — which is read only
- * when it looks like one, since `Date.parse` makes a date out of nearly anything. A date in
- * the past asks for no wait at all.
+ * Both forms the standard allows: a whole number of seconds, or an HTTP date — read only as
+ * an IMF-fixdate (see `imfFixdate`), since `Date.parse` makes a date out of nearly anything.
+ * A date in the past asks for no wait at all. Either form is capped at
+ * RETRY_AFTER_CEILING_SECONDS, which says the same to the caller as any larger number would.
  */
 export function retryAfterSeconds(header: string | null, now: number = Date.now()): number | null {
   const text = header?.trim() ?? '';
-  if (/^\d+$/.test(text)) return Number(text);
-  if (!/[A-Za-z]/.test(text)) return null;
-  const at = Date.parse(text);
-  return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - now) / 1000));
+  // More digits than any ceiling needs is the ceiling; `Number()` of hundreds is Infinity.
+  if (/^\d+$/.test(text)) return text.length > 10 ? RETRY_AFTER_CEILING_SECONDS : Math.min(Number(text), RETRY_AFTER_CEILING_SECONDS);
+  const at = imfFixdate(text);
+  return at === null ? null : Math.min(RETRY_AFTER_CEILING_SECONDS, Math.max(0, Math.ceil((at - now) / 1000)));
 }
 
 /** "2 hours", "90 minutes": how long a wait was asked for, for the sentence that ends a run. */
@@ -79,7 +114,8 @@ function describeWait(seconds: number): string {
   const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
   if (seconds < 2 * 60 * 60) return plural(Math.ceil(seconds / 60), 'minute');
   if (seconds < 2 * 24 * 60 * 60) return plural(Math.round(seconds / 3600), 'hour');
-  return plural(Math.round(seconds / 86_400), 'day');
+  if (seconds < RETRY_AFTER_CEILING_SECONDS) return plural(Math.round(seconds / 86_400), 'day');
+  return 'a year or more';
 }
 
 /**
@@ -196,6 +232,13 @@ export class BrightwheelClient {
   private readonly delayMs: number;
   private readonly doFetch: typeof fetch;
   private readonly userAgent: string;
+  /**
+   * The API's own origin when that is this computer, else null: the one place media may come
+   * from without being https and public (`mediaUrlRefusal` in ferry/url.ts). The default
+   * address is Brightwheel's, so for every normal install this is null; it is set for the
+   * mock server, the demo and the tests, which serve their pictures from where they answer.
+   */
+  private readonly trustedMediaOrigin: string | null;
   private lastRequest = 0;
 
   constructor(private readonly options: ClientOptions) {
@@ -203,6 +246,7 @@ export class BrightwheelClient {
     this.delayMs = options.delayMs ?? 400;
     this.doFetch = options.fetchImpl ?? fetch;
     this.userAgent = options.userAgent || browserUserAgent();
+    this.trustedMediaOrigin = loopbackOrigin(this.baseUrl);
   }
 
   /** Headers for an API call. The session cookie is exposed only here. */
@@ -261,6 +305,20 @@ export class BrightwheelClient {
           // No wait after the last attempt: there is no request left for it to be polite before.
           if (asked && attempt < MAX_RETRIES) await sleep(asked * 1000);
           continue;
+        }
+
+        // Every other refusal is final (security review outbound-9). A 404, a 400, a 410 is
+        // Brightwheel's considered answer to this request, and it used to be asked again four
+        // times over fifteen seconds for the same answer — each one a request against the
+        // parent's account. 401 and 403 are left to assertJsonResponse, which reads them as
+        // the session being refused. Nothing in the answer is read, so it is let go at once.
+        if (response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 403) {
+          const shown = describeContentType(response.headers.get('content-type'));
+          await response.body?.cancel().catch(() => {});
+          throw new NotThisRunError(
+            `HTTP ${response.status} from ${context} (${shown}). Asking again would only get the same answer, ` +
+              `so it was not asked again.`,
+          );
         }
 
         let body: string;
@@ -336,8 +394,10 @@ export class BrightwheelClient {
       `/students/${encodeURIComponent(studentId)}/activities?${query}`,
       `activities page ${page}`,
     );
-    const { items, undated } = parseActivities(raw, studentId);
-    const check = validateExtraction(items, page, undated);
+    const { items, undated, refused, refusedBecause } = parseActivities(raw, studentId, {
+      trustedMediaOrigin: this.trustedMediaOrigin,
+    });
+    const check = validateExtraction(items, page, undated, refused, refusedBecause);
     if (check.status === 'suspicious') {
       throw new ApiShapeError(check.message);
     }
@@ -416,9 +476,33 @@ export class BrightwheelClient {
     } catch (error) {
       return {
         ok: false,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: failureReason(error),
         rejected: error instanceof Error && error.name === 'SessionExpiredError',
       };
     }
   }
+}
+
+/**
+ * An error's message with what caused it, for a person to act on (security review
+ * outbound-11).
+ *
+ * Node's fetch reports every failure to connect as the same two words, "fetch failed", and
+ * keeps what happened in `cause`: `getaddrinfo ENOTFOUND schools.mybrightwheel.com` (no
+ * network, or a name that does not resolve), `connect ECONNREFUSED …`, a certificate the
+ * connection did not trust. The two words alone left a parent at the setup page with nothing
+ * to try. An AggregateError cause — IPv4 and IPv6 both refused — has an empty message, so its
+ * first error speaks for it. Scrubbed on the way out; the callers scrub again, which is free.
+ * Exported for its test: the retries in front of it take fifteen seconds to fail for real.
+ */
+export function failureReason(error: unknown): string {
+  if (!(error instanceof Error)) return scrub(String(error));
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause || typeof cause !== 'object') return scrub(error.message);
+  const c = cause as { code?: unknown; message?: unknown; errors?: unknown };
+  const firstOfMany = Array.isArray(c.errors) && c.errors[0] instanceof Error ? c.errors[0].message : '';
+  const message = (typeof c.message === 'string' && c.message) || firstOfMany;
+  const code = typeof c.code === 'string' ? c.code : '';
+  const detail = message && code && !message.includes(code) ? `${code}: ${message}` : message || code;
+  return scrub(detail ? `${error.message} (${detail.slice(0, 300)})` : error.message);
 }
