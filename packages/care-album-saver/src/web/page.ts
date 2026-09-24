@@ -33,6 +33,7 @@
 import { COOKIE_HELP, COOKIE_HELP_CSS, COOKIE_HELP_SCRIPT } from './cookie-help.js';
 import { PASTE_CLIENT_SOURCE } from '../paste.js';
 import { PHOTOS_DOC_URL, PHOTOS_SCRIPT_URL } from '../photos.js';
+import { UPDATING_DOC_URL } from '../updates.js';
 
 export const PAGE = String.raw`<!doctype html>
 <html lang="en">
@@ -263,6 +264,29 @@ export const PAGE = String.raw`<!doctype html>
     .viewer-stage { padding: calc(3.5rem + var(--s5)) var(--s2) var(--s5); }
   }
 
+  /* A newer version, in the header: seen on every visit and never in the way. Gold is the
+     palette's "look at this", and the dot says "new" to anyone who does not read the words
+     first. It stops pulsing for anyone who asks for less motion (the rule further down). */
+  .update-pill {
+    display: inline-flex; align-items: center; gap: .5rem;
+    background: var(--warn-tint); color: var(--warn-ink); border: 1px solid var(--warn);
+    border-radius: 999px; padding: .5rem 1.125rem; font-weight: 700;
+  }
+  .update-pill:hover:not(:disabled) { background: color-mix(in srgb, var(--rp-gold) 28%, var(--surface)); }
+  .update-pill .dot { width: .625rem; height: .625rem; border-radius: 50%; background: var(--rp-love); flex: none; animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .release-notes, .commands {
+    margin: 0; padding: var(--s3) var(--s4); white-space: pre-wrap; overflow-wrap: anywhere;
+    background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .release-notes { max-height: 14rem; overflow: auto; font: inherit; font-size: .9375rem; }
+  .commands { font-family: ui-monospace, Menlo, monospace; font-size: .9375rem; }
+  #dlg-update h3 { margin: var(--s5) 0 var(--s2); font-size: 1rem; }
+  #dlg-update .dlg-body > p { margin: var(--s2) 0; }
+  #dlg-update .run-actions { margin-top: var(--s3); }
+  .release-notes strong { display: block; margin-top: var(--s2); }
+  .release-notes strong:first-child { margin-top: 0; }
+
   /* Dialogs. */
   dialog {
     border: 1px solid var(--border-strong); border-radius: var(--radius);
@@ -378,6 +402,7 @@ export const PAGE = String.raw`<!doctype html>
   }
   .time-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .field-hint { color: var(--text-muted); font-size: .875rem; margin: var(--s2) 0 0; }
+  .field-title { margin: 0; font-size: 1rem; }
 
   textarea, input[type=text], input[type=email], input[type=password], select {
     width: 100%; padding: .6875rem .8125rem;
@@ -631,6 +656,9 @@ ${COOKIE_HELP_CSS}
   <header>
     <h1>Care Album Saver</h1>
     <div class="top-actions">
+      <button class="update-pill" id="btn-update" type="button" aria-haspopup="dialog" hidden>
+        <span class="dot" aria-hidden="true"></span><span id="update-pill-text">New version</span>
+      </button>
       <button class="icon-btn" id="btn-settings" type="button" aria-haspopup="dialog">
         <span class="ico" aria-hidden="true">&#9881;</span> Settings and Maintenance
       </button>
@@ -679,7 +707,12 @@ ${COOKIE_HELP_CSS}
       <li id="dash-last"></li>
       <li id="dash-folder"></li>
       <li id="dash-photos" hidden></li>
+      <!-- Asked once, then a switch in Settings, under Maintenance. Nothing is sent before the answer. -->
+      <li id="ask-updates" hidden><b>Check for new versions once a day?</b> Only GitHub is asked, and nothing about your account or your children is sent.
+        <button class="linkish" id="btn-updates-yes" type="button">Yes, check daily</button> <span aria-hidden="true">&middot;</span>
+        <button class="linkish" id="btn-updates-no" type="button">No, thanks</button></li>
     </ul>
+    </div>
     <div id="dash-msg" role="status" aria-live="polite"></div>
   </section>
 
@@ -935,6 +968,21 @@ ${COOKIE_HELP_CSS}
         <p class="field-hint">A run that was force-quit can fetch the same photo again under a new name. This finds copies that are identical down to the last byte. It only ever shows them &mdash; nothing is deleted unless you say so.</p>
         <div id="m-dupes-out" role="status" aria-live="polite"></div>
       </div>
+      <div class="field" id="updates-field">
+        <h3 class="field-title" id="h-updates">Updates</h3>
+        <p class="field-hint" id="version-line">This is Care Album Saver.</p>
+        <div class="opt">
+          <input type="checkbox" id="checkForUpdates" aria-describedby="updates-why updates-status">
+          <label for="checkForUpdates">Check for new versions once a day
+            <span class="why" id="updates-why">While this page is open, it asks GitHub which version is the newest. Nothing about your account, your children or your photos is sent, and the daily run never asks.</span>
+          </label>
+        </div>
+        <p class="hint" id="updates-status" aria-live="polite"></p>
+        <div class="run-actions">
+          <button class="secondary" id="btn-update-check" type="button">Check now</button>
+          <button class="secondary" id="btn-update-how" type="button" aria-haspopup="dialog" hidden>How to update</button>
+        </div>
+      </div>
     </section>
     <!-- The "Saved" line serves every section, so in Settings it sits under whichever shows. -->
     <div id="settings-status"></div>
@@ -974,6 +1022,10 @@ ${COOKIE_HELP_CSS}
       The whole explanation, including what to do if your Mac says no, is in
       <a class="ext" href="${PHOTOS_DOC_URL}" target="_blank" rel="noopener noreferrer">docs/PHOTOS.md <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a>.</p>
 
+    <h3>Does it check for new versions?</h3>
+    <p>Only if you say yes. The first time you see your archive it asks once; your answer is a switch under <b>Settings and Maintenance &rsaquo; Maintenance &rsaquo; Updates</b>, which also shows which version this is. If you say yes, this page asks GitHub once a day, while it is open, which version is the newest &mdash; the daily run never asks. GitHub learns your computer&rsquo;s internet address and nothing else: no account, no children, no photos. When there is a newer version, a gold button beside Settings shows what is new and the steps for the way you installed it.
+      <a class="ext" href="${UPDATING_DOC_URL}" target="_blank" rel="noopener noreferrer">The update guide <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a></p>
+
     <h3>Where is everything kept?</h3>
     <p>The photos go where you chose. The settings and your saved session live in a folder outside this one, which <span class="path">care-album-saver where</span> will print for you.</p>
 
@@ -996,6 +1048,30 @@ ${COOKIE_HELP_CSS}
       <button class="secondary" id="btn-logs-open" type="button">Open it in this computer&rsquo;s log viewer</button>
     </div>
     <div id="logs-msg" role="status" aria-live="polite"></div>
+  </div>
+</dialog>
+
+<!-- A newer version: what is in it, and how to update the copy this page is running from. -->
+<dialog id="dlg-update" aria-labelledby="h-update">
+  <div class="dlg-head">
+    <h2 id="h-update">A new version is available</h2>
+    <button class="icon-btn" id="btn-update-close" type="button">Close</button>
+  </div>
+  <div class="dlg-body">
+    <p id="update-versions"></p>
+    <h3>What&rsquo;s new</h3>
+    <pre class="release-notes" id="update-notes" tabindex="0"></pre>
+    <p class="hint"><a class="ext" id="update-release-link" href="${UPDATING_DOC_URL}" target="_blank" rel="noopener noreferrer">The release on GitHub <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a></p>
+    <h3>How to update</h3>
+    <p id="update-installed"></p>
+    <p id="update-before"></p>
+    <pre class="commands" id="update-commands" tabindex="0"></pre>
+    <div class="run-actions" id="update-copy-row">
+      <button class="secondary" id="btn-update-copy" type="button">Copy the commands</button>
+    </div>
+    <p id="update-after"></p>
+    <div id="update-copy-msg" role="status" aria-live="polite"></div>
+    <p class="hint"><a class="ext" href="${UPDATING_DOC_URL}" target="_blank" rel="noopener noreferrer">Installed some other way? The update guide covers each one <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a></p>
   </div>
 </dialog>
 
@@ -1613,6 +1689,7 @@ async function refresh() {
   paintDashboard(state);
   paintFacts();
   paintPhotos(state.photos);
+  paintUpdate();
   paint(state.progress, state.running, state.lastResult);
   // A run started before this page was opened (or before a reload) is still going in the
   // terminal. Without restarting the poll here the bar sits motionless, and HIG's
@@ -2462,7 +2539,120 @@ function confirmDupes() {
   };
 }
 
-refresh();
+/* ------------------------------------------------------------------ updates
+
+   Whether a newer version exists is the server's to find out (src/updates.ts): it asks
+   GitHub, once a day, only after the parent has said yes. This shows the answer — a pill in
+   the header when there is something newer, and the steps for the way this copy was
+   installed — and asks the question once, under the archive. */
+let update = null;
+
+async function loadUpdate(body) {
+  let r;
+  try {
+    r = await api('/api/update', body ? { method: 'POST', body: JSON.stringify(body) } : {});
+  } catch {
+    return;
+  }
+  const d = await r.json();
+  if (!r.ok) {
+    $('updates-status').textContent = d.error || 'That did not work.';
+    return;
+  }
+  update = d;
+  paintUpdate();
+}
+
+const whenChecked = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+function paintUpdate() {
+  const u = update;
+  if (!u) return;
+  const version = u.current.version + (u.current.commit ? ' (' + u.current.commit + ')' : '');
+  $('version-line').textContent = 'This is version ' + version + '.';
+  $('checkForUpdates').checked = u.enabled;
+  // Asked on the dashboard only: during first-time setup there is enough to decide.
+  $('ask-updates').hidden = u.asked || $('dash').hidden;
+  $('btn-update').hidden = !u.available;
+  $('btn-update-how').hidden = !u.available;
+  $('btn-update-check').disabled = !u.enabled;
+  $('updates-status').textContent =
+    !u.enabled ? 'Not checking, so nothing is sent to GitHub.'
+    : u.available ? 'Version ' + u.latest.version + ' is available. You have ' + u.current.version + '.'
+    : u.error ? u.error + (u.checkedAt ? ' The last answer, ' + whenChecked(u.checkedAt) + ', was that this is the newest version.' : '')
+    : u.checkedAt ? 'Checked ' + whenChecked(u.checkedAt) + ': this is the newest version.'
+    : 'Not checked yet.';
+  if (!u.available) return;
+
+  $('update-pill-text').textContent = 'New version ' + u.latest.version;
+  $('h-update').textContent = 'Version ' + u.latest.version + ' is available';
+  $('update-versions').textContent = 'You have ' + version + '.' +
+    (u.latest.publishedAt ? ' ' + u.latest.version + ' was released on ' + new Date(u.latest.publishedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) + '.' : '');
+  paintNotes($('update-notes'), u.latest.notes);
+  $('update-release-link').href = u.latest.url;
+  $('update-installed').textContent = 'This copy was installed as ' + u.how.installedAs + '.';
+  $('update-before').textContent = u.how.before;
+  $('update-commands').textContent = u.how.commands.join('\n');
+  $('update-commands').hidden = u.how.commands.length === 0;
+  $('update-copy-row').hidden = u.how.commands.length === 0;
+  $('update-after').textContent = u.how.after;
+}
+
+/**
+ * Release notes, as text. They are somebody else's writing fetched from the internet, so
+ * nothing in them is ever parsed as HTML: each line becomes a text node, a Markdown heading
+ * a bold line and a list item a bullet. Everything else about Markdown is left as typed.
+ */
+function paintNotes(el, notes) {
+  el.textContent = '';
+  const lines = notes.trim() ? notes.trim().split('\n') : ['The release has no notes.'];
+  const isHeading = (l) => l !== undefined && /^#{1,6}\s/.test(l);
+  lines.forEach((line, i) => {
+    // A heading brings its own space; a blank line beside one would double it.
+    if (!line.trim() && (isHeading(lines[i - 1]) || isHeading(lines[i + 1]))) return;
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    const item = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (heading) {
+      const b = document.createElement('strong');
+      b.textContent = heading[1];
+      el.appendChild(b);
+    } else {
+      el.appendChild(document.createTextNode((item ? '\u2022 ' + item[1] : line) + '\n'));
+    }
+  });
+}
+
+$('btn-updates-yes').onclick = async () => {
+  await loadUpdate({ enabled: true });
+  $('btn-dash-run').focus();
+};
+$('btn-updates-no').onclick = async () => {
+  await loadUpdate({ enabled: false });
+  $('btn-dash-run').focus();
+};
+$('checkForUpdates').onchange = () => loadUpdate({ enabled: $('checkForUpdates').checked });
+$('btn-update-check').onclick = async () => {
+  const b = $('btn-update-check');
+  b.disabled = true;
+  b.textContent = 'Checking…';
+  await loadUpdate({ check: true });
+  b.textContent = 'Check now';
+  b.disabled = !(update && update.enabled);
+};
+const openUpdate = () => { $('update-copy-msg').textContent = ''; openDialog('dlg-update'); };
+$('btn-update').onclick = openUpdate;
+$('btn-update-how').onclick = () => { closeDialog('dlg-settings'); openUpdate(); };
+$('btn-update-close').onclick = () => closeDialog('dlg-update');
+$('btn-update-copy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('update-commands').textContent);
+    $('update-copy-msg').textContent = 'Copied. Paste them into a terminal.';
+  } catch {
+    $('update-copy-msg').textContent = 'This browser would not copy them; select the commands and copy them by hand.';
+  }
+};
+
+refresh().then(() => loadUpdate());
 </script>
 </body>
 </html>`;

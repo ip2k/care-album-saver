@@ -18,6 +18,8 @@ import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type Pho
 import { PAGE } from './page.js';
 import { acceptableUserAgent } from '../api/identity.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from '../environment.js';
+import { RELEASES_URL, UPDATING_DOC_URL, updateStatus, updateSteps } from '../updates.js';
+import { productionSource, repositoryRoot, type InstallKind, type VersionInfo } from '../version.js';
 
 /**
  * The local setup assistant.
@@ -124,6 +126,19 @@ export interface WebUiOptions {
   schedule?: schedule.ScheduleEnvironment;
   /** A line shown across the top of the page. The demo labels itself with it; nothing else sets it. */
   banner?: string;
+  /**
+   * How GitHub is asked about new releases, and what this copy says it is. The demo passes a
+   * pretend release and the suite passes stand-ins, so that neither ever asks GitHub. Nothing
+   * in the product passes anything here.
+   */
+  updates?: {
+    fetch?: (url: string, init: RequestInit) => Promise<Response>;
+    version?: VersionInfo;
+    install?: InstallKind;
+    /** Where the copy lives, and for production the checkout it is deployed from. */
+    root?: string;
+    source?: string;
+  };
 }
 
 /**
@@ -281,6 +296,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     // the Mac for permission first. A settings patch cannot reach round that.
     delete patch.addToPhotos;
     delete patch.addToPhotosFrom;
+    // Likewise whether GitHub is asked about updates: /api/update, which is the parent's answer.
+    delete patch.checkForUpdates;
     if (typeof patch.archiveDir === 'string') {
       patch.archiveDir = cleanPastedPath(patch.archiveDir);
       // Full paths only, from the page. A relative one would be resolved against wherever the
@@ -627,6 +644,52 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
        * looking, and it decides from when — the server's clock, not the page's — so that
        * turning it on never pours the whole archive into Photos unasked.
        */
+      // Whether a newer release exists (src/updates.ts). GET reports, and asks GitHub only when
+      // the parent has said yes and a check is due. POST is the parent's answer to the
+      // dashboard's question or the switch in Settings ({ enabled }), or "Check now" ({ check }).
+      if (url.pathname === '/api/update' && (req.method === 'GET' || req.method === 'POST')) {
+        let force = false;
+        let config = await loadConfig();
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req)) as { enabled?: unknown; check?: unknown };
+          if (typeof body.enabled === 'boolean') {
+            const enabled = body.enabled;
+            config = await withConfigLock(async () => {
+              const current = await loadConfig();
+              current.checkForUpdates = enabled;
+              await saveConfig(current);
+              return current;
+            });
+            // Saying yes is also the first check, so the answer shows at once.
+            force = enabled;
+          } else if (body.check === true) {
+            if (config.checkForUpdates !== true) {
+              json(409, { ok: false, error: 'Checking for new versions is switched off. Switch it on first.' });
+              return;
+            }
+            force = true;
+          } else {
+            json(400, { ok: false, error: 'Expected { enabled: true | false } or { check: true }.' });
+            return;
+          }
+        }
+        const u = options.updates ?? {};
+        const status = await updateStatus(config, { fetch: u.fetch, version: u.version, install: u.install, force });
+        json(200, {
+          ok: true,
+          ...status,
+          // The steps for the way this copy was installed, with its folders written the way a
+          // person reads them.
+          how: updateSteps(status.install, {
+            root: tildify(u.root ?? repositoryRoot().replace(/[\\/]$/, ''), homedir()),
+            source: tildify(u.source ?? productionSource(), homedir()),
+          }),
+          releasesUrl: RELEASES_URL,
+          updatingDocUrl: UPDATING_DOC_URL,
+        });
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === '/api/photos') {
         const body = JSON.parse(await readBody(req)) as { enabled?: unknown; earlier?: unknown };
         const photoOptions = { platform: options.native?.platform, spawn: options.native?.spawn };
