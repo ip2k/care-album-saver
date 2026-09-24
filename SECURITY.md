@@ -49,14 +49,19 @@ The reasoning behind the design choices below, and the alternatives turned down,
 5. **The tool and the files it reads back.** The archive folder can be written by something
    else — a cloud-sync peer, another program — so every path read from `archive.json` is
    resolved with `containedFile()` (real paths on both sides; symlinks and `..` refused)
-   before the gallery, the duplicate finder, repair or the Photos step touch it. A settings
-   change is accepted only as one of a fixed list of typed settings.
+   before the gallery, the duplicate finder, repair or the Photos step touch it. The Photos
+   step goes further, because what it hands over can reach iCloud: it gives Photos private
+   copies, each checked against `fingerprints.json`, the record of what sync saved, which is
+   kept in the config directory where the archive's co-writers cannot edit it
+   ([docs/PHOTOS.md](docs/PHOTOS.md)). A settings change is accepted only as one of a fixed
+   list of typed settings.
 6. **The tool and the programs it starts.** Always `execFile` with an argument array, never a
-   shell: the Photos AppleScript is a fixed file run with arguments, never `-e`; the folder
+   shell, and `osascript` by its full path: the Photos AppleScript is a fixed file run with
+   arguments, never `-e`, which talks only to `/System/Applications/Photos.app`; the folder
    chooser and file-manager openers; the schedulers (`launchctl`, `systemctl --user`,
    `crontab`, `schtasks`); desktop notifications, whose text is fixed. Two of those read a
-   file the tool writes — the crontab and the Task Scheduler XML — so the quoting of paths in
-   them matters, and is an open warning in the review. ExifTool's tag values come from the API;
+   file the tool writes — the crontab and the Task Scheduler XML — and systemd reads a unit
+   file, so each path is quoted the way its reader reads it, and one it cannot carry is refused. ExifTool's tag values come from the API;
    a note containing a line break followed by an ExifTool option was written verbatim as the
    note (checked on 23 September 2026).
 7. **The supply chain.** No runtime dependencies; `exiftool-vendored` is optional and runs a

@@ -87,6 +87,15 @@ file was started.
 
 ### Fixed
 
+- **The page keeps going when the tool is briefly unreachable.** It says so at the top, tries
+  again by itself, and recovers, instead of freezing on its last answer. A saved session that
+  Brightwheel no longer accepts sends the page back to step 1 with what to do, rather than
+  showing "Connected" beside an empty list of children.
+- **Posts with an empty or missing id are each saved.** Before, the first one hid all the
+  others, which were then skipped as "already saved".
+- **Stop works while a run is checking whether an earlier one is still going.** That check
+  can take a minute. Stop now ends it at once, without asking Brightwheel anything.
+
 - **Privacy wording that promised more than is known.** The README said the tool talks to
   Brightwheel "and to nothing else"; with the optional update check switched on it also asks
   GitHub, at most once a day and only from the setup page, which version is the newest, and
@@ -178,6 +187,42 @@ file was started.
 
 ### Security
 
+- **Adding to Photos hands over only your photos, and only to Apple's Photos.** Photos is now
+  given a private copy of each photo, never the file in your folder, and only if it matches the
+  record this tool keeps, outside that folder, of every photo it saved. So nothing else that can
+  change your photos folder, such as another computer it syncs with, can choose what goes into
+  Photos and iCloud. A photo that was changed or put there by something else is left out and
+  named on the page. Before adding anything, the tool checks that the Photos app it is talking
+  to is Apple's own, in `/System/Applications`, and not another app using the same name. It also
+  runs macOS's own `osascript`, never whatever else is called that. **Keep Photos' "Copy items
+  to the Photos library" setting on** (it is on unless you turned it off): with it off, Photos
+  would point at the temporary copy, which is deleted afterwards. The first run after updating
+  takes a one-off record of the photos already saved, which can take a minute on a large
+  archive. [docs/PHOTOS.md](docs/PHOTOS.md).
+- **The daily run is written so that its scheduler reads every folder name as a name.** A folder
+  whose name held `$(…)`, a backtick, a quote or a `%` could be read as part of a command by
+  cron, systemd or Task Scheduler. Each path is now quoted the way its scheduler reads it. A
+  path that no quoting can carry safely (a line break in a folder name, or two `%` signs on
+  Windows) is refused in words, with nothing changed.
+- **Turning the daily run off turns it off, or says that it did not.** A refusal from launchd,
+  systemd or Task Scheduler used to be recorded as "off" while the job stayed in place. A daily
+  run that cannot be set up no longer leaves a job behind to start at the next login. A change of
+  time the computer refuses puts the old daily run back, rather than leaving none. Turning it
+  off, or changing its time, while a run is in progress waits the minute that run is given to
+  finish its photo, instead of failing.
+- **Only one thing rewrites your archive's list at a time.** "Fix the list" and "Remove
+  duplicates" now take the same lock a run does, in the page and from the command line, so a run
+  and a repair can no longer overwrite each other's list. A run that has been going for a long
+  time keeps the folder, and a Mac that slept in the middle of a run gets it back when it wakes,
+  instead of the missed daily run starting beside it.
+- **The setup page runs only its own script, and shows everything from Brightwheel or your disk
+  as text.** A child's name, a note, a folder or a release note can no longer be read as part of
+  the page.
+- **What the tool reads from Brightwheel and GitHub is capped as it arrives,** at 16 MB and
+  1 MB, including in `verify`. Brightwheel asking the tool to wait is obeyed for up to five
+  minutes; a longer ask ends the run and says so, and the next run carries on.
+- **The update steps quote your folder,** so a folder with a space, a quote or `$` in its name
+  is one folder to the shell.
 - **A damaged settings file no longer starts your archive over.** If `config.json` is ever
   damaged (by a full disk or a hand edit), the tool now stops and says which file and why,
   instead of quietly falling back to a fresh setup, which meant a new default folder and every
