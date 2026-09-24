@@ -1,10 +1,11 @@
 // First, like every test file: configDir() below must be the throwaway one.
 import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
+import { realpathSync } from 'node:fs';
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkArchiveDir, configDir } from '../dist/index.js';
 import { safeStem, uniqueName } from '../dist/ferry/index.js';
@@ -25,6 +26,14 @@ import { safeStem, uniqueName } from '../dist/ferry/index.js';
 before(assertIsolatedConfigDir);
 
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+/**
+ * An archive must not be in a temporary folder, so these tests make theirs inside this
+ * checkout. A checkout that is itself inside the temp folder cannot give them one, and they
+ * are skipped there, with this reason, rather than failing (§4.6, F12).
+ */
+const inTempCheckout = realpathSync(REPO_ROOT).startsWith(realpathSync(tmpdir()) + sep)
+  ? 'this checkout is inside the temporary folder, where every archive is refused'
+  : false;
 const posixOnly = process.platform === 'win32' ? 'symbolic links need a privilege on Windows' : false;
 
 /** A folder outside the temp directory, which the rules would accept as it is. */
@@ -36,7 +45,7 @@ async function plainFolder() {
 
 // ---------------------------------------------------------------- fs-11: where it really is
 
-test('fs-11: a link to a temporary folder is a temporary folder, and so is a folder not made yet beneath it', { skip: posixOnly }, async () => {
+test('fs-11: a link to a temporary folder is a temporary folder, and so is a folder not made yet beneath it', { skip: posixOnly || inTempCheckout }, async () => {
   const base = await plainFolder();
   const temp = await mkdtemp(join(tmpdir(), 'cas-notes-linked-temp-'));
   try {
@@ -54,7 +63,7 @@ test('fs-11: a link to a temporary folder is a temporary folder, and so is a fol
   }
 });
 
-test('fs-11: a link to a system folder, or to the whole home folder, is refused as what it points at', { skip: posixOnly }, async () => {
+test('fs-11: a link to a system folder, or to the whole home folder, is refused as what it points at', { skip: posixOnly || inTempCheckout }, async () => {
   const base = await plainFolder();
   try {
     await symlink('/etc', join(base, 'etc-link'));
@@ -72,7 +81,7 @@ test('fs-11: a link to a system folder, or to the whole home folder, is refused 
   }
 });
 
-test('fs-11: a link into a cloud-synced folder is warned about as that folder', { skip: posixOnly }, async () => {
+test('fs-11: a link into a cloud-synced folder is warned about as that folder', { skip: posixOnly || inTempCheckout }, async () => {
   const base = await plainFolder();
   try {
     await mkdir(join(base, 'Dropbox', 'Kids'), { recursive: true });
@@ -107,7 +116,7 @@ test('fs-11: the tool\'s own config folder is refused, and so is anything inside
   assert.equal(checkArchiveDir(join(homedir(), 'Care Album Photos'), { configDirs: [mac] }).ok, true);
 });
 
-test('fs-11: a link to the config folder is refused too', { skip: posixOnly }, async () => {
+test('fs-11: a link to the config folder is refused too', { skip: posixOnly || inTempCheckout }, async () => {
   const base = await plainFolder();
   try {
     const own = join(base, 'config');

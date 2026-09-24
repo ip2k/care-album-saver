@@ -1,10 +1,11 @@
 // First, before anything that can read the config directory or write an archive.
 import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
+import { realpathSync } from 'node:fs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BrightwheelClient,
@@ -37,6 +38,14 @@ import { RunLockUnusableError, runLockRefusal, setAsideIfUnchanged, sightLock, w
 
 const SESSION = 'test-session-value';
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+/**
+ * An archive must not be in a temporary folder, so these tests make theirs inside this
+ * checkout. A checkout that is itself inside the temp folder cannot give them one, and they
+ * are skipped there, with this reason, rather than failing (§4.6, F12).
+ */
+const inTempCheckout = realpathSync(REPO_ROOT).startsWith(realpathSync(tmpdir()) + sep)
+  ? 'this checkout is inside the temporary folder, where every archive is refused'
+  : false;
 
 let mock;
 before(assertIsolatedConfigDir);
@@ -242,7 +251,7 @@ test('a folder at the lock\'s name is the same clear failure, never a raw EISDIR
   }
 });
 
-test('a run meeting a folder at the lock\'s name fails with that message, and asks Brightwheel nothing', async () => {
+test('a run meeting a folder at the lock\'s name fails with that message, and asks Brightwheel nothing', { skip: inTempCheckout }, async () => {
   const dir = join(REPO_ROOT, 'node_modules', '.cache', `cas-notes-lockdir-${process.pid}-${Date.now()}`);
   await mkdir(join(dir, RUN_LOCK_FILENAME), { recursive: true });
   try {
@@ -328,7 +337,7 @@ function recorder(during = async () => {}) {
   return { calls, spawn };
 }
 
-test('processes-6: the Photos lock is released only while it is still this run\'s', async () => {
+test('processes-6: the Photos lock is released only while it is still this run\'s', { skip: inTempCheckout }, async () => {
   const { dir, configDir, config } = await photosArchive();
   const lock = join(configDir, 'photos.lock');
   try {
@@ -347,7 +356,7 @@ test('processes-6: the Photos lock is released only while it is still this run\'
   }
 });
 
-test('processes-6: a stale Photos lock is set aside, not deleted by name, and leaves nothing behind', async () => {
+test('processes-6: a stale Photos lock is set aside, not deleted by name, and leaves nothing behind', { skip: inTempCheckout }, async () => {
   const { dir, configDir, config } = await photosArchive();
   const lock = join(configDir, 'photos.lock');
   try {
@@ -373,7 +382,7 @@ test('processes-6: a stale Photos lock is set aside, not deleted by name, and le
   }
 });
 
-test('§4.6 F2: a Photos lock dated 2100 is set aside, not honoured for ever', async () => {
+test('§4.6 F2: a Photos lock dated 2100 is set aside, not honoured for ever', { skip: inTempCheckout }, async () => {
   const { dir, configDir, config } = await photosArchive();
   const lock = join(configDir, 'photos.lock');
   try {
@@ -389,7 +398,7 @@ test('§4.6 F2: a Photos lock dated 2100 is set aside, not honoured for ever', a
   }
 });
 
-test('processes-6: something at the Photos lock\'s name that is not a file is said, not taken for a busy run', async () => {
+test('processes-6: something at the Photos lock\'s name that is not a file is said, not taken for a busy run', { skip: inTempCheckout }, async () => {
   const { dir, configDir, config } = await photosArchive();
   const lock = join(configDir, 'photos.lock');
   try {

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chmod, mkdir, readFile, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import { writeAtomically } from './ferry/index.js';
 
 /**
@@ -129,11 +129,17 @@ export async function writeSecureFile(path: string, contents: string): Promise<v
  */
 async function makeOwnerOnly(folder: string): Promise<void> {
   if (platform() === 'win32' || typeof process.getuid !== 'function') return;
-  if (resolve(folder) === resolve(homedir())) return;
   try {
-    const { mode, uid } = await stat(folder);
+    // Compared, and changed, where each really is (§4.6, F25): a config folder that is a link
+    // to the home folder, or a home reached through a linked prefix, compared equal by
+    // spelling only when they were spelled alike, while stat and chmod followed the link and
+    // narrowed the home folder itself.
+    const [real, home] = await Promise.all([realpath(folder), realpath(homedir())]);
+    if (real === home) return;
+    const { mode, uid } = await stat(real);
     if (uid !== process.getuid() || (mode & 0o077) === 0) return;
-    await chmod(folder, mode & 0o700);
+    // The owner's bits and the special ones (setgid, sticky): only the others' go.
+    await chmod(real, mode & 0o7700);
   } catch {
     /* Left as it was; see above. */
   }

@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { writeAtomically } from './atomic.js';
 import { transferIdentity } from './url.js';
@@ -61,6 +62,25 @@ interface ManifestData {
 }
 
 const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * The text of the list file, read only when it is an ordinary file (§4.6, F13).
+ *
+ * A named pipe put at its name held a plain read open for ever: in a run, which had taken the
+ * lock and whose timer went on refreshing it, so every later run was skipped as well; in each
+ * look from the setup page, which tied up a thread. Opened without blocking, which opening a
+ * pipe does not do, and checked once open, so nothing swapped in after a look is read either.
+ * A link is followed, as it always was: only what it leads to must be a file.
+ */
+export async function readListText(file: string): Promise<string> {
+  const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error('it is not an ordinary file');
+    return await handle.readFile('utf8');
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
 
 const SHA256 = /^[0-9a-f]{64}$/i;
 
@@ -140,7 +160,7 @@ export async function readManifestFile(root: string): Promise<ManifestFile | nul
 
   let raw: string;
   try {
-    raw = await readFile(file, 'utf8');
+    raw = await readListText(file);
   } catch (error) {
     // Only "it is not there" is an ordinary first run. A permission error or a directory
     // in its place means a manifest may well exist and simply cannot be read.

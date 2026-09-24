@@ -120,7 +120,12 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
    */
   const spellings = (s: string): string[] => {
     const typed = p.resolve(s);
-    const real = local ? realSpelling(typed, p) : null;
+    // Where it really is is found from the path as given, `..` and all, not from `typed`:
+    // resolve() removes `link/..` by its spelling, while the system follows the link first and
+    // then climbs out of where it leads, so `~/x/link-to-/usr/share/man/../Photos` is
+    // /usr/share/Photos, not ~/x/Photos (§4.6, F11).
+    const asGiven = p.isAbsolute(s) ? s : `${process.cwd()}${p.sep}${s}`;
+    const real = local ? realSpelling(asGiven, p) : null;
     return real !== null && canon(real) !== canon(typed) ? [typed, real] : [typed];
   };
   const within = (where: string[], place: string): boolean => {
@@ -131,13 +136,16 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
   const raw = (input ?? '').trim();
   // Only a bare `~` or a `~/` prefix means the home folder. `~sam` means another user's
   // home on POSIX, which is nothing this tool should guess at.
-  const expanded = raw === '~' || /^~[/\\]/.test(raw) ? p.join(home, raw.slice(2)) : raw;
+  const tilde = raw === '~' || /^~[/\\]/.test(raw);
+  const expanded = tilde ? p.join(home, raw.slice(2)) : raw;
   const resolved = p.resolve(expanded);
+  // The same place with nothing removed by spelling, for where it really is: see spellings.
+  const asTyped = tilde ? `${home}${p.sep}${raw.slice(2)}` : raw;
 
   if (!raw) {
     return { ok: false, error: 'Please choose a folder to save the photos in.', resolved };
   }
-  const where = spellings(resolved);
+  const where = spellings(asTyped);
 
   // Where Windows keeps the operating system. `SystemRoot` is the authoritative answer;
   // the literal is for a process started with a scrubbed environment.

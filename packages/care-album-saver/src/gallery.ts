@@ -1,8 +1,8 @@
-import { readFile, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import { containedFile } from './contain.js';
 import { MANIFEST_FILENAME, type ManifestRecord } from './ferry/index.js';
-import { usableRecord } from './ferry/manifest.js';
+import { readListText, usableRecord } from './ferry/manifest.js';
 import type { Config } from './config.js';
 import { walkArchive } from './maintenance.js';
 import { formatBytes } from './units.js';
@@ -82,7 +82,8 @@ const RUN_GAP = 30 * 60 * 1000;
  */
 export async function records(config: Config): Promise<ManifestRecord[]> {
   try {
-    const raw = await readFile(join(config.archiveDir, MANIFEST_FILENAME), 'utf8');
+    // Never a plain read: see readListText, which a named pipe at the name cannot hold open.
+    const raw = await readListText(join(config.archiveDir, MANIFEST_FILENAME));
     // The array is `files` on disk. The type is called ManifestRecord, which is not the
     // same thing — reading the interface rather than an actual archive.json is how the
     // first version of this returned an empty gallery from a manifest with ten files in it.
