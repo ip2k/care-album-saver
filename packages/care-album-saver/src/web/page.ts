@@ -87,6 +87,22 @@ export const PAGE = String.raw`<!doctype html>
     --radius-sm: 8px;
     --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
     --shadow: 0 1px 2px color-mix(in srgb, var(--rp-text) 8%, transparent);
+
+    /* The photo viewer is dark in both modes, so it takes main Rosé Pine's values whatever
+       the computer is set to: a photograph is judged against a dark surround. Its scrim
+       lets a tenth of the page through on purpose — the dashboard faintly behind the photo
+       is what says "still this page", where an opaque black looks like the browser's own
+       image tab. Base, Overlay, Highlight Med and High, Subtle, Text and Iris, verbatim. */
+    --rp-main-base: #191724; --rp-main-overlay: #26233a; --rp-main-hl-med: #403d52;
+    --rp-main-hl-high: #524f67; --rp-main-subtle: #908caa; --rp-main-text: #e0def4;
+    --rp-main-iris: #c4a7e7;
+    --viewer-scrim: color-mix(in srgb, var(--rp-main-base) 90%, transparent);
+    --viewer-control: color-mix(in srgb, var(--rp-main-overlay) 90%, transparent);
+    --viewer-control-hover: var(--rp-main-hl-med);
+    --viewer-edge: var(--rp-main-hl-high);
+    --viewer-ink: var(--rp-main-text);
+    --viewer-ink-muted: var(--rp-main-subtle);
+    --viewer-focus: var(--rp-main-iris);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -177,12 +193,16 @@ export const PAGE = String.raw`<!doctype html>
 
   /* Thumbnails.
      The full photo is served and the browser scales it: this tool has no image library and
-     is not about to gain one for a strip of pictures read off a local disk. auto-fill keeps
-     the strip one or two rows on a wide screen, which is what the one-screen budget allows. */
+     is not about to gain one for a strip of pictures read off a local disk. A page is
+     twenty-four, so eight across makes three rows, which is what the one-screen budget
+     allows on a 1080p display — and the whole page is on screen at once, with no box of
+     its own to scroll. Narrower windows get fewer across and the page scrolls instead. */
   .gallery {
     display: grid; gap: var(--s2); margin-top: var(--s4);
-    grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
-    max-height: 21rem; overflow: auto;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+  @media (max-width: 60rem) {
+    .gallery { grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr)); }
   }
   .gallery a {
     display: block; position: relative; aspect-ratio: 1; overflow: hidden;
@@ -197,6 +217,50 @@ export const PAGE = String.raw`<!doctype html>
     position: absolute; left: 0; right: 0; bottom: 0; padding: .25rem .375rem;
     background: rgba(0,0,0,.55); color: #fff; font-size: .75rem; line-height: 1.3;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* More than a page of them: newest first, a page at a time, and where you are in words. */
+  .pager {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+    margin-top: var(--s3);
+  }
+  .pager-status { margin: 0; color: var(--text-muted); font-size: .9375rem; }
+
+  /* The photo viewer. A modal over the dashboard rather than a page of its own: the photo
+     sits on a scrim with the page faintly behind it, the arrows are at the edges of the
+     screen and the close button in the corner, and clicking the scrim, Escape, or the
+     close button all return to the page exactly as it was. */
+  dialog.viewer {
+    max-width: none; max-height: none; width: 100vw; height: 100vh; height: 100dvh;
+    margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden;
+    background: transparent; color: var(--viewer-ink);
+  }
+  dialog.viewer::backdrop { background: var(--viewer-scrim); }
+  html:has(dialog.viewer[open]) { overflow: hidden; }
+  .viewer-stage {
+    height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--s3); padding: var(--s6) calc(3.5rem + var(--s4) * 2);
+  }
+  .viewer-media {
+    display: block; max-width: 100%; max-height: calc(100dvh - 8rem); min-height: 0;
+    object-fit: contain; border-radius: var(--radius-sm);
+  }
+  .viewer-cap { margin: 0; font-size: .9375rem; color: var(--viewer-ink-muted); text-align: center; }
+  .viewer-cap b { color: var(--viewer-ink); font-weight: 600; }
+  .viewer-btn {
+    position: fixed; display: grid; place-items: center; padding: 0;
+    width: 3.5rem; height: 3.5rem; min-height: 0; border-radius: 50%;
+    background: var(--viewer-control); color: var(--viewer-ink); border: 1px solid var(--viewer-edge);
+  }
+  .viewer-btn:hover:not(:disabled) { background: var(--viewer-control-hover); }
+  /* border-radius again: the page-wide :focus-visible rule further down squares it off. */
+  .viewer-btn:focus-visible { outline: 3px solid var(--viewer-focus); outline-offset: 3px; border-radius: 50%; }
+  .viewer-btn svg { width: 1.5rem; height: 1.5rem; }
+  .viewer-prev { left: var(--s4); top: 50%; transform: translateY(-50%); }
+  .viewer-next { right: var(--s4); top: 50%; transform: translateY(-50%); }
+  .viewer-close { right: var(--s4); top: var(--s4); }
+  @media (max-width: 40rem) {
+    /* On a phone the arrows sit over the photo's edges rather than beside it. */
+    .viewer-stage { padding: calc(3.5rem + var(--s5)) var(--s2) var(--s5); }
   }
 
   /* Dialogs. */
@@ -595,7 +659,12 @@ ${COOKIE_HELP_CSS}
       <h2 id="h-dash">Your archive</h2>
       <p class="dash-stats" id="dash-stats"></p>
     </div>
-    <div class="gallery" id="gallery" aria-live="polite"></div>
+    <div class="gallery" id="gallery"></div>
+    <div class="pager" id="gallery-pager" hidden>
+      <button class="secondary" id="gallery-prev" type="button">&lsaquo; Newer</button>
+      <p class="pager-status" id="gallery-status" aria-live="polite"></p>
+      <button class="secondary" id="gallery-next" type="button">Older &rsaquo;</button>
+    </div>
     <p class="hint" id="dash-empty" hidden>Nothing has been saved yet. Press <b>Save new photos</b> to fetch what is there.</p>
     <div class="dash-actions">
       <button id="btn-dash-run" type="button">Save new photos</button>
@@ -928,6 +997,26 @@ ${COOKIE_HELP_CSS}
     </div>
     <div id="logs-msg" role="status" aria-live="polite"></div>
   </div>
+</dialog>
+
+<!-- The photo viewer. Arrow keys and the edge buttons step through the last run's photos;
+     Escape, the close button, or a click anywhere on the dark area around the photo close it. -->
+<dialog id="viewer" class="viewer" aria-label="Photo viewer">
+  <div class="viewer-stage" id="viewer-stage">
+    <img class="viewer-media" id="viewer-img" alt="">
+    <video class="viewer-media" id="viewer-video" controls playsinline preload="metadata" hidden></video>
+    <p class="viewer-cap" id="viewer-cap" aria-live="polite"></p>
+    <p class="viewer-cap" id="viewer-unplayable" role="status" hidden>This browser cannot play this video. It is saved in your folder, where the computer&rsquo;s own video player can.</p>
+  </div>
+  <button class="viewer-btn viewer-close" id="viewer-close" type="button" aria-label="Close the photo" title="Close (Esc)" autofocus>
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+  <button class="viewer-btn viewer-prev" id="viewer-prev" type="button" aria-label="Previous photo" title="Previous (&larr;)">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+  </button>
+  <button class="viewer-btn viewer-next" id="viewer-next" type="button" aria-label="Next photo" title="Next (&rarr;)">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+  </button>
 </dialog>
 
 <script>
@@ -1284,7 +1373,7 @@ const day = (iso) => {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
 };
 
-/** The archive, in one sentence and a strip of pictures. */
+/** The archive, in one sentence and every photo its last run saved, a page at a time. */
 function paintDashboard(s) {
   const a = s.archive;
   if (!a) return;
@@ -1292,28 +1381,85 @@ function paintDashboard(s) {
   stats.textContent = a.totalFiles === 0
     ? 'Nothing saved yet.'
     : a.totalFiles + ' photos and videos, ' + a.totalSize +
-      ' \u2014 newest posted ' + day(a.newestPostedAt) +
+      ' — newest posted ' + day(a.newestPostedAt) +
       '. Last run saved ' + a.lastRunCount + ', on ' + day(a.lastSavedAt) + '.';
 
+  // A different run from the one on screen starts again at its newest page. The same run —
+  // the page repainted after a settings change — stays on the page somebody was looking at.
+  const stamp = a.lastSavedAt + '|' + a.lastRunCount;
+  if (stamp !== gallery.stamp) {
+    gallery.stamp = stamp;
+    gallery.cache = new Map([[0, a.recent]]);
+    gallery.page = 0;
+  }
+  gallery.count = a.lastRunCount;
+  gallery.pages = a.pages;
+  gallery.size = a.pageSize;
+  $('dash-empty').hidden = a.lastRunCount > 0;
+  paintGallery();
+}
+
+/* ------------------------------------------------------------------ the last run's photos
+
+   Every photo the most recent run saved, newest first, twenty-four to a page. The first
+   page arrives with /api/state; the others are asked for when somebody pages to them or
+   steps past the end of a page in the viewer, and are kept until a different run replaces
+   them. An index here is a place in the run (0 is its newest photo), never a manifest id. */
+const gallery = { stamp: '', cache: new Map(), page: 0, pages: 1, count: 0, size: 24, painting: 0 };
+
+async function galleryPage(n) {
+  if (!gallery.cache.has(n)) {
+    const r = await api('/api/gallery?page=' + n);
+    if (!r.ok) return [];
+    const d = await r.json();
+    gallery.cache.set(n, d.recent);
+  }
+  return gallery.cache.get(n);
+}
+
+async function galleryItem(index) {
+  if (index < 0 || index >= gallery.count) return null;
+  const page = Math.floor(index / gallery.size);
+  const items = await galleryPage(page);
+  return items[index - page * gallery.size] || null;
+}
+
+const photoHref = (item) => '/photo?i=' + item.id + '&token=' + TOKEN;
+const postedOn = (item) => item.postedAt
+  ? new Date(item.postedAt).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+  : 'an unknown day';
+
+async function paintGallery() {
+  const run = ++gallery.painting;
+  const page = gallery.page;
+  const items = await galleryPage(page);
+  if (run !== gallery.painting) return;
   const g = $('gallery');
   g.innerHTML = '';
-  $('dash-empty').hidden = a.recent.length > 0;
-  for (const item of a.recent) {
-    const href = '/photo?i=' + item.id + '&token=' + TOKEN;
+  items.forEach((item, i) => {
+    const index = page * gallery.size + i;
     const a2 = document.createElement('a');
-    a2.href = href;
+    // Still a link, so a middle-click or Cmd-click opens the file in a tab of its own; a
+    // plain click opens the viewer over the page instead.
+    a2.href = photoHref(item);
     a2.target = '_blank';
     a2.rel = 'noopener';
+    a2.dataset.index = String(index);
     // The caption is what a screen reader gets, so it is the child and the date rather
     // than a filename. The note is not in it: notes name other people's children.
     const when = item.postedAt ? new Date(item.postedAt).toLocaleDateString() : '';
     a2.title = item.label;
-    a2.setAttribute('aria-label', (item.child || 'A photo') + ', ' + when);
+    a2.setAttribute('aria-label', (item.child || 'A photo') + ', ' + when + (item.kind === 'video' ? ', video' : ''));
+    a2.onclick = (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      openViewer(index);
+    };
     if (item.kind === 'video') {
       a2.innerHTML = '<span class="vid" aria-hidden="true">&#9654;</span><span class="cap">' + esc(when) + '</span>';
     } else {
       const img = document.createElement('img');
-      img.src = href;
+      img.src = photoHref(item);
       img.alt = '';
       img.loading = 'lazy';
       a2.appendChild(img);
@@ -1323,8 +1469,125 @@ function paintDashboard(s) {
       a2.appendChild(cap);
     }
     g.appendChild(a2);
+  });
+
+  $('gallery-pager').hidden = gallery.pages <= 1;
+  $('gallery-prev').disabled = page === 0;
+  $('gallery-next').disabled = page >= gallery.pages - 1;
+  const first = page * gallery.size + 1;
+  const last = Math.min(gallery.count, (page + 1) * gallery.size);
+  $('gallery-status').textContent = first + '–' + last + ' of ' + gallery.count + ', newest first';
+}
+
+const turnGalleryPage = (delta) => {
+  const next = Math.min(Math.max(gallery.page + delta, 0), gallery.pages - 1);
+  if (next === gallery.page) return;
+  gallery.page = next;
+  paintGallery();
+};
+$('gallery-prev').onclick = () => turnGalleryPage(-1);
+$('gallery-next').onclick = () => turnGalleryPage(1);
+
+/* ------------------------------------------------------------------ the photo viewer
+
+   A modal over the dashboard, so it is plainly still this page and not the browser's own
+   image tab. The arrows at the edges, or the arrow keys, step through the whole run — past
+   the end of one page into the next — and closing it leaves the grid on the page of the
+   photo that was last on screen, with that photo's thumbnail focused. */
+const viewer = { index: 0, showing: 0, pressedOutside: false };
+
+async function openViewer(index) {
+  await showInViewer(index);
+  if (!$('viewer').open) openDialog('viewer');
+}
+
+async function showInViewer(index) {
+  const run = ++viewer.showing;
+  const item = await galleryItem(index);
+  if (!item || run !== viewer.showing) return;
+  viewer.index = index;
+  const img = $('viewer-img');
+  const video = $('viewer-video');
+  video.pause();
+  $('viewer-unplayable').hidden = true;
+  if (item.kind === 'video') {
+    img.hidden = true;
+    img.removeAttribute('src');
+    video.hidden = false;
+    video.src = photoHref(item);
+  } else {
+    video.hidden = true;
+    video.removeAttribute('src');
+    img.hidden = false;
+    img.src = photoHref(item);
+    img.alt = (item.child ? item.child + ', ' : '') + 'posted ' + postedOn(item);
+  }
+  $('viewer-cap').innerHTML = (item.child ? '<b>' + esc(item.child) + '</b> · ' : '') +
+    'posted ' + esc(postedOn(item)) + ' · ' + (index + 1) + ' of ' + gallery.count;
+
+  // At either end the arrow goes, rather than sitting there doing nothing. If it had the
+  // keyboard focus, the focus moves to the other arrow instead of falling out of the dialog.
+  const prev = $('viewer-prev');
+  const next = $('viewer-next');
+  const hidePrev = index === 0;
+  const hideNext = index >= gallery.count - 1;
+  if ((hidePrev && document.activeElement === prev) || (hideNext && document.activeElement === next)) {
+    (hidePrev ? (hideNext ? $('viewer-close') : next) : prev).focus();
+  }
+  prev.hidden = hidePrev;
+  next.hidden = hideNext;
+
+  // The neighbours, fetched now so stepping to them is instant. Photos only: a video is
+  // not worth downloading on the chance that somebody steps onto it.
+  for (const n of [index + 1, index - 1]) {
+    galleryItem(n).then((it) => { if (it && it.kind === 'image') new Image().src = photoHref(it); });
   }
 }
+
+// A format the browser has no decoder for — an older phone's .mov, say — would otherwise be a
+// black box with dead controls and no word about why.
+$('viewer-video').addEventListener('error', () => {
+  if ($('viewer-video').getAttribute('src')) $('viewer-unplayable').hidden = false;
+});
+
+const stepViewer = (delta) => {
+  const target = viewer.index + delta;
+  if (target >= 0 && target < gallery.count) showInViewer(target);
+};
+
+$('viewer-prev').onclick = () => stepViewer(-1);
+$('viewer-next').onclick = () => stepViewer(1);
+$('viewer-close').onclick = () => closeDialog('viewer');
+$('viewer').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  // Before the video's own handling, which would otherwise seek it five seconds instead.
+  e.preventDefault();
+  stepViewer(e.key === 'ArrowLeft' ? -1 : 1);
+});
+// The dark area is everything that is not the photo, its caption or a button. Where the
+// press started counts as well as where it ended, so dragging out of the photo to select
+// nothing in particular does not close it.
+const outsideThePhoto = (target) => !target.closest('.viewer-media, .viewer-cap, .viewer-btn');
+$('viewer').addEventListener('pointerdown', (e) => { viewer.pressedOutside = outsideThePhoto(e.target); });
+$('viewer').addEventListener('click', (e) => {
+  if (viewer.pressedOutside && outsideThePhoto(e.target)) closeDialog('viewer');
+  viewer.pressedOutside = false;
+});
+// However it closed — Escape, the button, or the scrim — the video stops, and the grid
+// shows the page the last photo is on.
+$('viewer').addEventListener('close', async () => {
+  const video = $('viewer-video');
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  const page = Math.floor(viewer.index / gallery.size);
+  if (page !== gallery.page) {
+    gallery.page = page;
+    await paintGallery();
+  }
+  const thumb = document.querySelector('#gallery a[data-index="' + viewer.index + '"]');
+  if (thumb) thumb.focus();
+});
 
 async function refresh() {
   const r = await api('/api/state');
@@ -1854,7 +2117,11 @@ async function poll() {
   const s = await r.json();
   paint(s.progress, s.running, s.lastResult);
   if (s.running) setTimeout(poll, 700);
-  else paintPhotos(s.photos);
+  else {
+    paintPhotos(s.photos);
+    // What the run just saved is now the last run: the stats and the photos catch up.
+    paintDashboard(s);
+  }
 }
 
 /* ------------------------------------------------------------------ step 4, and after it
