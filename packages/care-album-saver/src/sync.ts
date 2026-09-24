@@ -490,12 +490,14 @@ export async function sync(
   // switch says, because that switch governs only what goes *inside* the files. So other
   // accounts on a shared family computer must not be able to read any of it.
   await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
-  const lock = await takeRunLock(config.archiveDir);
+  // The lock keeps itself fresh on a timer for as long as it is held, so a download that
+  // takes an hour reports nothing and still holds the folder (security review fs-6). Taking
+  // it waits, and says so, only when an earlier holder's lock looks abandoned but may not be.
+  const lock = await takeRunLock(config.archiveDir, {
+    onWait: (message) => onProgress({ phase: 'starting', message, saved: 0, skipped: 0, failed: 0 }),
+  });
   try {
-    return await syncHoldingTheLock(client, config, (p) => {
-      lock.touch();
-      onProgress(p);
-    }, options, verdict.warning);
+    return await syncHoldingTheLock(client, config, onProgress, options, verdict.warning);
   } finally {
     await lock.release();
   }
