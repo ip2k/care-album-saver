@@ -65,11 +65,17 @@ function stepsOf(jobLines) {
   return steps.map((lines) => lines.join('\n'));
 }
 
-test('there are workflows to check', () => {
-  assert.deepEqual(FILES, ['ci.yml', 'security.yml']);
+/** The workflows a pull request runs, a fork's included. */
+const PULL_REQUEST_WORKFLOWS = ['ci.yml', 'security.yml'];
+/** Run only when the owner publishes a release on GitHub; never by a pull request or a push. */
+const RELEASE_WORKFLOWS = ['release.yml'];
+
+test('there are workflows to check, and each is one kind or the other', () => {
+  // A new workflow has to be put in one of the two lists, and meet its rules.
+  assert.deepEqual(FILES, [...PULL_REQUEST_WORKFLOWS, ...RELEASE_WORKFLOWS].sort());
 });
 
-for (const { name, text } of workflows) {
+for (const { name, text } of workflows.filter((w) => PULL_REQUEST_WORKFLOWS.includes(w.name))) {
   test(`${name}: a fork's run gets the read-only token, never the privileged one`, () => {
     assert.match(text, /^ {2}pull_request:\s*$/m, 'it runs on pull requests');
     assert.doesNotMatch(text, /pull_request_target/, 'pull_request_target runs a fork\'s code with a write token and secrets');
@@ -81,6 +87,26 @@ for (const { name, text } of workflows) {
     assert.doesNotMatch(text, /:\s*write\b|write-all/, 'no permission is widened anywhere');
   });
 
+}
+
+for (const { name, text } of workflows.filter((w) => RELEASE_WORKFLOWS.includes(w.name))) {
+  test(`${name}: runs only when a release is published, never for a pull request or a push`, () => {
+    const on = /^on:\n((?: {2}.*\n?)+)/m.exec(text)?.[1] ?? '';
+    assert.equal(on.trim(), 'release:\n    types: [published]', 'its only trigger');
+    assert.doesNotMatch(text, /pull_request|workflow_run|workflow_dispatch/);
+  });
+
+  test(`${name}: the one widened permission is the OIDC token, in the job the npm environment guards`, () => {
+    assert.match(text, /^permissions:\n {2}contents: read\n(?! {2}\S)/m, 'top-level permissions are exactly contents: read');
+    const widened = [...text.matchAll(/^\s*([\w-]+):\s*write\b/gm)].map((m) => m[1]);
+    assert.deepEqual(widened, ['id-token'], 'trusted publishing needs id-token: write, and nothing more');
+    assert.doesNotMatch(text, /write-all/);
+    const [job] = Object.values(jobsOf(text)).filter((lines) => lines.some((l) => /id-token: write/.test(l)));
+    assert.ok(job.some((l) => /^ {4}environment: npm$/.test(l)), 'in the `npm` environment, the one npmjs.com trusts');
+  });
+}
+
+for (const { name, text } of workflows) {
   test(`${name}: no secret but the run's own token is named`, () => {
     // Every way an expression can reach the secrets: secrets.X, secrets['X'] and the whole
     // object at once (toJSON(secrets)). Only secrets.GITHUB_TOKEN is allowed. Only inside

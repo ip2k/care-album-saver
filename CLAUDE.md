@@ -59,7 +59,7 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 463 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+- 467 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
   because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
   of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
   24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
