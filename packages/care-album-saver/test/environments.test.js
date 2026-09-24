@@ -23,8 +23,12 @@ test('production and development are marked; anything else, a parent\'s clone in
   assert.equal(environment(root), 'installed', 'a clone made by following the README may set up the daily run');
   await writeFile(join(root, '.git', DEVELOPMENT_MARKER), 'development\n');
   assert.equal(environment(root), 'development');
-  await writeFile(join(root, PRODUCTION_MARKER), 'production\n');
-  assert.equal(environment(root), 'production', 'the production mark wins');
+  await writeFile(join(root, PRODUCTION_MARKER), 'production, deployed before markers named their folder\n');
+  assert.equal(environment(root), 'development', 'a marker that names no folder does not make production');
+  await writeFile(join(root, PRODUCTION_MARKER), `${tmpdir()}\nproduction\n`);
+  assert.equal(environment(root), 'development', 'nor does one that names another folder: a copy of production');
+  await writeFile(join(root, PRODUCTION_MARKER), `${root}\nproduction\n`);
+  assert.equal(environment(root), 'production', 'the production mark, naming its own folder, wins');
 });
 
 test('every worktree of the development checkout is development, through git\'s common folder', async () => {

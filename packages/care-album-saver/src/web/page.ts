@@ -1789,7 +1789,7 @@ function paintPhotos(p) {
   // One line on the dashboard: that it is on, or — the case that matters — that it has
   // stopped working, since nothing else on the main page would ever say so.
   const dash = $('dash-photos');
-  const failing = Boolean(p && p.enabled && p.lastAttempt && !p.lastAttempt.ok);
+  const failing = Boolean(p && p.enabled && ((p.lastAttempt && !p.lastAttempt.ok) || p.problem));
   dash.hidden = !(p && p.enabled);
   dash.textContent = failing
     ? 'The last photos could not be added to Photos. Open Settings and Maintenance to see why.'
@@ -1800,7 +1800,7 @@ function paintPhotos(p) {
   box.checked = p.enabled;
 
   let status = '';
-  if (p.enabled) {
+  if (p.enabled && !p.problem) {
     status = p.pending > 0
       ? p.pending + ' waiting to be added on the next run.'
       : 'Up to date: everything saved since you turned this on is in Photos.';
@@ -1809,7 +1809,9 @@ function paintPhotos(p) {
   }
   $('photos-status').textContent = status;
   const last = p.lastAttempt;
-  if (p.enabled && last && !last.ok) {
+  if (p.enabled && p.problem) {
+    show($('photos-msg'), 'warn', '<b>Nothing can be added to Photos until this is sorted out.</b> ' + esc(p.problem));
+  } else if (p.enabled && last && !last.ok) {
     show($('photos-msg'), 'warn', '<b>The last photos could not be added.</b> ' + esc(last.error || ''));
   }
 

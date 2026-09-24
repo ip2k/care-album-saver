@@ -9,11 +9,7 @@ export interface RemoteValidators {
   etag?: string | null;
   /** HTTP Last-Modified, verbatim. Never a local mtime. */
   lastModified?: string | null;
-  /**
-   * The file's length in bytes, from Content-Length — or null when the server gave none, or
-   * when the body came compressed in transit, since Content-Length then counts the
-   * compressed bytes rather than the file's.
-   */
+  /** The file's length in bytes, from Content-Length, when the server gave one. */
   size?: number | null;
 }
 
@@ -31,17 +27,30 @@ export interface DownloadOptions {
 
 function readValidators(h: Headers): RemoteValidators {
   const len = h.get('content-length');
-  // fetch undoes gzip, deflate and br before a byte reaches us, so what lands on disk is
-  // the decoded file while Content-Length measured the encoded one. Compared anyway, every
-  // compressed download failed as "truncated" (security review outbound-3).
-  const encoding = h.get('content-encoding')?.trim().toLowerCase();
-  const encoded = Boolean(encoding) && encoding !== 'identity';
   return {
     etag: h.get('etag'),
     lastModified: h.get('last-modified'),
-    size: len && !encoded ? Number(len) : null,
+    size: len ? Number(len) : null,
   };
 }
+
+/**
+ * What downloads ask for: the file as it is, never compressed in transit.
+ *
+ * Compression is where "is this the whole file?" stops having an answer. Content-Length then
+ * counts the compressed bytes, not the file's, so comparing them failed every compressed
+ * download as truncated (security review outbound-3). And fetch decompresses leniently — a
+ * gzip or brotli stream cut off in the middle, inside a response that is otherwise complete,
+ * comes out as a shorter file with no error at all, which would be saved, hashed, listed and
+ * never fetched again. So compression is refused both ways: asked against here, and a
+ * response that is compressed anyway is not saved (see download). Photographs and videos are
+ * compressed already, so nothing is lost, and CDNs do not compress them.
+ *
+ * The value is the one a browser sends for a video: the photo requests otherwise carry the
+ * browser identity the setup was given (BrightwheelClient.mediaHeaders), and a bare
+ * `identity`, which is what wget sends, would stand out in a log where this does not.
+ */
+const MEDIA_ACCEPT_ENCODING = 'identity;q=1, *;q=0';
 
 /**
  * Download a file to `<destination>.part` and rename it into place only once it is complete,
@@ -59,16 +68,25 @@ export async function download(options: DownloadOptions): Promise<DownloadResult
   await mkdir(dirname(destination), { recursive: true });
   await unlink(partPath).catch(() => {});
 
-  // Asked for uncompressed: photographs and videos are compressed already, so gzip gains
-  // nothing, and an uncompressed body is one whose length can be checked. A server that
-  // compresses anyway is handled in readValidators.
-  const response = await fetch(url, { headers: { 'Accept-Encoding': 'identity', ...headers }, redirect: 'follow' });
+  const response = await fetch(url, { headers: { 'Accept-Encoding': MEDIA_ACCEPT_ENCODING, ...headers }, redirect: 'follow' });
 
   if (!response.ok) {
     throw new DownloadError(`HTTP ${response.status} for ${redactUrl(url)}`, response.status);
   }
   if (!response.body) {
     throw new DownloadError(`Empty response body for ${redactUrl(url)}`, response.status);
+  }
+
+  const encoding = response.headers.get('content-encoding')?.trim().toLowerCase();
+  if (encoding && encoding !== 'identity') {
+    // Not saved, so it is fetched again next time: a compressed body cannot be checked for
+    // having arrived whole. See MEDIA_ACCEPT_ENCODING.
+    await response.body.cancel().catch(() => {});
+    throw new DownloadError(
+      `The server sent ${redactUrl(url)} compressed (${encoding.slice(0, 40)}) although it was asked not to, so it ` +
+        'could not be checked for having arrived whole and was not saved. It will be tried again next time.',
+      response.status,
+    );
   }
 
   const validators = readValidators(response.headers);
@@ -79,10 +97,24 @@ export async function download(options: DownloadOptions): Promise<DownloadResult
   const out = createWriteStream(partPath, { flags: 'wx' });
   const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
 
-  await pipeline(source, out);
+  try {
+    await pipeline(source, out);
+  } catch (error) {
+    // A connection that ends short of Content-Length is caught here, by fetch itself, which
+    // calls it only "terminated". Said in words, and the half-file is not left to be found.
+    await unlink(partPath).catch(() => {});
+    throw new DownloadError(
+      `The download of ${redactUrl(url)} stopped part-way (${error instanceof Error ? error.message : String(error)}). ` +
+        'Nothing was kept; it will be fetched again from the start next time.',
+      response.status,
+    );
+  }
 
+  // Belt and braces: through Node's fetch, a body shorter than its Content-Length ends in the
+  // catch above instead. Kept for any fetch that does not check.
   const finalSize = (await stat(partPath)).size;
   if (total !== null && finalSize !== total) {
+    await unlink(partPath).catch(() => {});
     throw new DownloadError(
       `Truncated download: expected ${total} bytes, got ${finalSize}. It will be fetched again from the start next time.`,
       response.status,

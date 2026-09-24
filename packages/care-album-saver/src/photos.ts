@@ -124,6 +124,12 @@ export interface PhotosStatus {
   earlier: number;
   lastAttempt: PhotosAttempt | null;
   scriptUrl: string;
+  /**
+   * Why nothing can be added until someone looks: the record of what was added cannot be
+   * read. The status still comes back, so the page can say so beside the switch that turns
+   * it off, rather than hiding the whole card as if this were not a Mac.
+   */
+  problem: string | null;
 }
 
 /**
@@ -218,8 +224,18 @@ async function sortOut(config: Config, all: readonly ManifestRecord[], state: Ph
 /** What the page shows: whether it is on, and what is waiting. */
 export async function photosStatus(config: Config, options: PhotosOptions = {}): Promise<PhotosStatus> {
   const supported = photosSupported(options.platform);
-  const state = await loadState();
-  const { due, earlier } = supported ? await sortOut(config, await records(config), state) : { due: [], earlier: 0 };
+  let state: PhotosState = { added: {}, lastAttempt: null };
+  let problem: string | null = null;
+  // Only where it can matter: a record left behind on a computer that cannot use it, or
+  // with the option off, is nobody's problem until the option is on.
+  if (supported) {
+    try {
+      state = await loadState();
+    } catch (error) {
+      if (config.addToPhotos) problem = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const { due, earlier } = supported && !problem ? await sortOut(config, await records(config), state) : { due: [], earlier: 0 };
   return {
     supported,
     enabled: supported && config.addToPhotos,
@@ -229,6 +245,7 @@ export async function photosStatus(config: Config, options: PhotosOptions = {}):
     earlier,
     lastAttempt: state.lastAttempt ?? null,
     scriptUrl: PHOTOS_SCRIPT_URL,
+    problem,
   };
 }
 

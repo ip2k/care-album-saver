@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,10 +29,30 @@ export const PRODUCTION_MARKER = '.care-album-saver-production';
 export const DEVELOPMENT_MARKER = 'care-album-saver-development';
 
 export function environment(root: string = ROOT): Environment {
-  if (existsSync(join(root, PRODUCTION_MARKER))) return 'production';
+  if (isProductionRoot(root)) return 'production';
   const common = gitCommonDir(root);
   if (common && existsSync(join(common, DEVELOPMENT_MARKER))) return 'development';
   return 'installed';
+}
+
+/**
+ * Whether the copy at `root` is the production copy: it holds the marker, and the marker
+ * names this very folder.
+ *
+ * The marker used to count wherever it was found, so a copy of production — a Finder
+ * duplicate, a backup restored elsewhere, the old folder after deploying `--to` a new one —
+ * was production too, and as production it could take the daily run from the real one
+ * without asking (security review, adversarial pass). deploy.js now writes the production
+ * folder's own real path on the marker's first line; a marker that names another folder, or
+ * none (one written before this), does not make a copy production.
+ */
+export function isProductionRoot(root: string): boolean {
+  try {
+    const named = readFileSync(join(root, PRODUCTION_MARKER), 'utf8').split(/\r?\n/)[0]?.trim() ?? '';
+    return isAbsolute(named) && realpathSync.native(named) === realpathSync.native(root);
+  } catch {
+    return false;
+  }
 }
 
 /**

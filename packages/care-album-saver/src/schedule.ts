@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 import { scrub } from './secrets.js';
 import { logTimestamp } from './log-lines.js';
-import { loadConfig, saveConfig, type ScheduleMechanism, type ScheduleRecord } from './config.js';
-import { PRODUCTION_MARKER } from './environment.js';
+import { ConfigUnusableError, loadConfig, saveConfig, type Config, type ScheduleMechanism, type ScheduleRecord } from './config.js';
+import { isProductionRoot } from './environment.js';
 
 /**
  * The daily run: installing it, asking after it, and taking it away again.
@@ -775,7 +775,7 @@ function copyRoot(cliPath: string): string {
 }
 
 function isProductionCopy(cliPath: string): boolean {
-  return existsSync(join(copyRoot(cliPath), PRODUCTION_MARKER));
+  return isProductionRoot(copyRoot(cliPath));
 }
 
 function samePath(a: string, b: string): boolean {
@@ -792,13 +792,16 @@ function samePath(a: string, b: string): boolean {
 /**
  * Refuse to change a daily run that runs another copy, unless told to. A copy that no longer
  * exists owns nothing — its job cannot run — and a record from before copies were written
- * down names no owner, so neither stops anything. The production copy may always take it:
- * that is what deploying does.
+ * down names no owner, so neither stops anything. The production copy may take it from any
+ * copy that is not production: that is what deploying does. From another production copy —
+ * the folder production was before a `deploy.js --to` — only deploy.js, which says --replace.
  */
 function assertMayChange(record: ScheduleRecord | null, e: Resolved, options: OwnershipOptions, action: 'install' | 'remove'): void {
-  const owner = record?.cliPath;
-  if (!owner || samePath(owner, e.cliPath) || !existsSync(owner) || isProductionCopy(e.cliPath)) return;
+  // The settings file can be edited by hand; anything but a path names no owner.
+  const owner = typeof record?.cliPath === 'string' && record.cliPath !== '' ? record.cliPath : null;
+  if (!owner || samePath(owner, e.cliPath) || !existsSync(owner)) return;
   const production = isProductionCopy(owner);
+  if (!production && isProductionCopy(e.cliPath)) return;
   if (production ? options.replaceProduction : action === 'remove' || options.replace || options.replaceProduction) return;
   // The package folder, not `dist/cli.js`, and from the home folder where it is under it.
   const folder = resolve(dirname(owner), '..');
@@ -913,13 +916,22 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
  */
 export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOptions = {}): Promise<ScheduleStatus> {
   const e = resolveEnv(env);
-  const config = await loadConfig();
+  // Turning the daily run off must work when the settings cannot be read: it is the first
+  // thing to do about damaged settings, because the job would otherwise go on starting every
+  // evening only to refuse. Then the scheduler is asked directly and the settings are left
+  // exactly as they are — writing them would replace what is there with the defaults.
+  let config: Config | null = null;
+  try {
+    config = await loadConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigUnusableError)) throw error;
+  }
   // Turning off another copy's daily run is allowed — it is the safe direction — except a
   // production copy's, which a stray copy must not be able to silence.
-  assertMayChange(config.schedule, e, options, 'remove');
+  assertMayChange(config?.schedule ?? null, e, options, 'remove');
   // Whatever installed it is what has to remove it — a machine that has since gained
   // systemd must still be able to clear the crontab line left by the version that had not.
-  const mechanism = config.schedule?.mechanism ?? (await chooseMechanism(env));
+  const mechanism = config?.schedule?.mechanism ?? (await chooseMechanism(env));
 
   switch (mechanism) {
     case 'launchd':
@@ -946,6 +958,18 @@ export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOp
       break;
   }
 
+  if (!config) {
+    return {
+      installed: false,
+      mechanism: null,
+      time: null,
+      nextRun: null,
+      lastRun: await loadLastRun(),
+      registered: null,
+      location: null,
+      summary: 'The daily run is off. Your settings still cannot be read, and have been left as they are.',
+    };
+  }
   await saveConfig({ ...(await loadConfig()), schedule: null });
   return status(env);
 }

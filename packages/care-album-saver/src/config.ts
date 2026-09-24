@@ -115,7 +115,7 @@ export class ConfigUnusableError extends Error {
       `Your settings (${path}) cannot be used: ${reason}. Nothing has been changed and nothing ` +
         'has been downloaded — without them this tool would not know which folder your photos are ' +
         'in or which children to save. Correct the file, or move it somewhere safe and set the tool ' +
-        'up again.',
+        'up again in the setup assistant; until then the daily run saves nothing.',
     );
     this.name = 'ConfigUnusableError';
   }
@@ -133,7 +133,25 @@ export async function loadConfig(): Promise<Config> {
   if (typeof stored !== 'object' || Array.isArray(stored)) {
     throw new ConfigUnusableError(configPath(), 'it does not contain settings');
   }
+  const wrong = wronglyTyped(stored as Record<string, unknown>);
+  if (wrong) throw new ConfigUnusableError(configPath(), `its "${wrong}" setting is not the kind of value it should be`);
   return { ...DEFAULT_CONFIG, ...(stored as Partial<Config>) };
+}
+
+/**
+ * The first setting whose value would change what a run does if it were ignored: the
+ * folder, the choice of children, the daily run's record. Checked because the fallback is not
+ * harmless — `includeStudents: "Robin"` read as "not a list" meant every child on the
+ * account, and a folder that is not a string meant the default one.
+ */
+function wronglyTyped(stored: Record<string, unknown>): string | null {
+  const present = (key: string) => key in stored && stored[key] !== undefined;
+  if (present('archiveDir') && (typeof stored.archiveDir !== 'string' || stored.archiveDir === '')) return 'archiveDir';
+  if (present('includeStudents') && !(Array.isArray(stored.includeStudents) && stored.includeStudents.every((s) => typeof s === 'string'))) {
+    return 'includeStudents';
+  }
+  if (present('schedule') && stored.schedule !== null && (typeof stored.schedule !== 'object' || Array.isArray(stored.schedule))) return 'schedule';
+  return null;
 }
 
 export async function saveConfig(config: Config): Promise<void> {
@@ -179,14 +197,19 @@ export async function loadSession(): Promise<{
     if (error instanceof UnreadableFileError) throw new SessionUnusableError(error.path, error.reason);
     throw error;
   }
-  if (!stored?.cookie) return null;
-  // A saved value that could not be sent as a cookie header is treated as no session at
-  // all: an HTTP client asked to send it would refuse, quoting it back in its complaint.
-  if (typeof stored.cookie !== 'string' || !COOKIE_OCTETS.test(stored.cookie)) return null;
+  if (stored === null) return null;
+  // A file that is there but holds no usable session is damaged, not "never connected" —
+  // including a value that could not be sent as a cookie header, which an HTTP client would
+  // refuse while quoting it back. The message names none of it.
+  const cookie = (stored as { cookie?: unknown } | null)?.cookie;
+  if (typeof cookie !== 'string' || !COOKIE_OCTETS.test(cookie)) {
+    throw new SessionUnusableError(sessionPath(), 'it does not hold a session this tool can use');
+  }
   return {
-    session: new Secret(stored.cookie),
+    session: new Secret(cookie),
+    // An unreadable date is an Invalid Date, which callers that print it must check for.
     savedAt: new Date(stored.savedAt),
-    email: stored.email ?? null,
+    email: typeof stored.email === 'string' ? stored.email : null,
     // Re-checked on the way in: this file can be edited by hand, and the value goes out as
     // a header on every request.
     userAgent: acceptableUserAgent(stored.userAgent),
@@ -203,7 +226,10 @@ export async function loadSession(): Promise<{
  */
 export class SessionUnusableError extends Error {
   constructor(public readonly path: string, reason: string) {
-    super(`The saved Brightwheel session (${path}) cannot be read: ${reason}. Connect again to replace it.`);
+    super(
+      `The saved Brightwheel session (${path}) cannot be read: ${reason}. Connect again to replace it: ` +
+        'step 1 of the setup assistant, or care-album-saver login.',
+    );
     this.name = 'SessionUnusableError';
   }
 }

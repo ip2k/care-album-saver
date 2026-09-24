@@ -466,7 +466,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           photos,
           hasSession: Boolean(session),
           sessionProblem,
-          sessionSavedAt: session?.savedAt.toISOString() ?? null,
+          // A hand-edited file can hold a date that is not one; toISOString would throw on it.
+          sessionSavedAt: session && Number.isFinite(session.savedAt.getTime()) ? session.savedAt.toISOString() : null,
           email: session?.email ?? null,
           config,
           // The folder as a parent reads it, from their home folder. See tildify.

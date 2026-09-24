@@ -24,7 +24,7 @@
  * build of a branch in progress went live at the next scheduled run.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -123,17 +123,26 @@ if (!dry || existsSync(join(PROD, '.git'))) {
   // and which every worktree of the checkout shares. Nothing else marks a copy development,
   // so a parent's clone of the repository is simply an installed copy.
   if (!dry) {
-    writeFileSync(join(PROD, MARKER), `production, deployed ${new Date().toISOString()} at ${devMain}\n`);
+    // The first line is the folder itself: a copy of this folder carries a marker that names
+    // somewhere else, and is not production (isProductionRoot in src/environment.ts).
+    writeFileSync(join(PROD, MARKER), `${realpathSync(PROD)}\nproduction, deployed ${new Date().toISOString()} at ${devMain}\n`);
     const common = resolve(DEV, run('git', ['rev-parse', '--git-common-dir'], DEV, { quiet: true }));
     writeFileSync(join(common, DEVELOPMENT_MARKER), `development: deploys to ${PROD}\n`);
   }
 
   // 5. The daily run, reinstalled from production at the same time of day.
   const cli = join(PROD, 'packages', 'care-album-saver', 'dist', 'cli.js');
-  const time = dry && !existsSync(cli) ? null : readScheduledTime();
+  let time;
+  try {
+    time = dry && !existsSync(cli) ? null : readScheduledTime();
+  } catch (error) {
+    fail(`Deployed ${devMain.slice(0, 7)} to production, but the daily run was not moved there: its settings could not be read.\n  ${error.message}`);
+  }
   if (time) {
     say(`Moving the daily run (${time}) to production…`);
-    say(run(process.execPath, [cli, 'schedule', 'on', '--at', time], PROD, { mutates: true }).split('\n').join('\n  '));
+    // --replace: moving the daily run between copies is what deploying is for, including
+    // from an earlier production folder, which the tool otherwise refuses to take it from.
+    say(run(process.execPath, [cli, 'schedule', 'on', '--at', time, '--replace'], PROD, { mutates: true }).split('\n').join('\n  '));
   } else {
     say('No daily run is set up, so there is nothing to move.');
   }

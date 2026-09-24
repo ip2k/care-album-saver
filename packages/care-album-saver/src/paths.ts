@@ -121,18 +121,31 @@ export class UnreadableFileError extends Error {
   }
 }
 
+/** Why a file that is there could not be read, in words, for the errors people actually meet. */
+const UNREADABLE: Record<string, string> = {
+  EACCES: 'this account is not allowed to read it',
+  EPERM: 'this account is not allowed to read it',
+  EISDIR: 'it is a folder, not a file',
+  ELOOP: 'it is a link that leads round in a circle',
+  EIO: 'the disk it is on could not be read',
+};
+
 /** Read one of this tool's JSON files: `null` only when it does not exist. See UnreadableFileError. */
 export async function readJsonFile<T>(path: string): Promise<T | null> {
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw new UnreadableFileError(path, (error as NodeJS.ErrnoException).code ?? String(error));
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return null;
+    throw new UnreadableFileError(path, UNREADABLE[code ?? ''] ?? `it could not be opened (${code ?? String(error)})`);
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    // A byte-order mark is what Notepad and some other Windows editors put at the start of a
+    // file they save as UTF-8. The JSON after it is fine, and JSON.parse is the only thing
+    // that minds.
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
   } catch {
     // Not the parser's message: it can quote the file's contents, and this one holds a session.
     throw new UnreadableFileError(path, 'it is not valid JSON');
