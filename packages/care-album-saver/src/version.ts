@@ -1,3 +1,4 @@
+import { copyRootFrom } from './package-root.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +15,11 @@ import { environment } from './environment.js';
 
 /** This package: dist/ → the package. */
 const PACKAGE_DIR = fileURLToPath(new URL('../', import.meta.url));
-/** The repository root, for a copy built from a clone: dist/ → the package → packages/ → the root. */
-const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+/**
+ * The repository root, for a copy built from a clone; the package itself otherwise, which has
+ * no .git, so an npm install inside someone's git project is not read as a clone (processes-9).
+ */
+const REPO_ROOT = copyRootFrom(fileURLToPath(new URL('./', import.meta.url)));
 
 export interface VersionInfo {
   /** From package.json, e.g. "0.1.0". */

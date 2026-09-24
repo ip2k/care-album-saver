@@ -63,8 +63,20 @@ test('processes-8: recheck suggests --child by id, never a name from Brightwheel
   const { env } = await computer({ config: { includeStudents: ['stu-aaa-111'] } });
   const result = await cli(['recheck', '--base-url', `${mock.url}/api/v1`], env);
   assert.equal(result.code, 0, result.stdout);
-  assert.match(result.stdout, /care-album-saver run --child stu-bbb-222\n/);
+  assert.match(result.stdout, /care-album-saver run --child=stu-bbb-222\n/);
   assert.doesNotMatch(result.stdout, /--child "/);
+});
+
+test('§4.6 F9: the printed --child command works for an id that begins with a dash', async () => {
+  const { parseArgs } = await import('node:util');
+  const printed = "--child=-abc";
+  const { values } = parseArgs({ args: ['run', printed], options: { child: { type: 'string', multiple: true } }, allowPositionals: true });
+  assert.deepEqual(values.child, ['-abc']);
+  assert.throws(
+    () => parseArgs({ args: ['run', '--child', '-abc'], options: { child: { type: 'string', multiple: true } }, allowPositionals: true }),
+    /ambiguous/,
+    'the old form is refused, which is why the = form is printed',
+  );
 });
 
 test('processes-8: an id a shell would read specially is single-quoted, and the shell gives it back exactly', { skip: posixOnly }, async () => {
@@ -88,7 +100,7 @@ test('processes-8: an id a shell would read specially is single-quoted, and the 
     assert.ok(command, result.stdout);
     assert.doesNotMatch(command, /NAME|Maple/, 'no name in the command');
     const { stdout } = await promisify(execFile)('/bin/sh', ['-c', `printf '%s\\n' ${command}`]);
-    assert.equal(stdout, `--child\n${odd}\n`, 'two words, the second exactly the id, and nothing ran');
+    assert.equal(stdout, `--child=${odd}\n`, 'one word, exactly --child= and the id, and nothing ran');
   } finally {
     server.close();
   }

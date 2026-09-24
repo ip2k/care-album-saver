@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { copyRootFrom } from './package-root.js';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { appendFile, chmod, mkdir, open, readFile, rm, writeFile, type FileHandle } from 'node:fs/promises';
 import { homedir, platform as osPlatform, tmpdir } from 'node:os';
@@ -916,14 +917,14 @@ function cronCommand(env: Resolved): string {
  * it (windowsArg), and a path in which Task Scheduler would expand a `%NAME%` never gets
  * this far (assertSchedulable).
  *
- * The Node path in `<Command>` is deliberately not quoted, and that is right even for the
- * default C:\Program Files\nodejs\node.exe (checked for the review's "schtasks Command" note,
- * 2026-09-24). `<Command>` is not a command line: the task schema declares it a `pathType`,
- * and Microsoft's reference for IExecAction::Path, the property that element holds, describes
- * it as the path to an executable file, validated as a path when the task is registered.
- * Nothing splits it on spaces; the command line is `<Arguments>`, which is why only the
- * arguments go through windowsArg. No documentation asks for quotes in `<Command>`, so none
- * are added: quotes there would be characters of the path.
+ * The Node path in `<Command>` is deliberately not quoted (the review's "schtasks Command"
+ * note, 2026-09-24). The task schema declares `<Command>` a `pathType`, and Microsoft's
+ * reference for IExecAction::Path, the property it holds, describes it as the path to an
+ * executable, not a command line: the command line is `<Arguments>`, which is why only the
+ * arguments go through windowsArg. Tasks exported from Task Scheduler's own window often do
+ * carry quotes there, and run, so quotes are evidently tolerated too; unquoted is the form the
+ * documentation describes, and Windows' own tasks use it for paths with spaces. Not verified
+ * on a real Windows machine: CI runs the tests on Windows, but no test registers a task.
  */
 export function schtasksXml(env: Resolved, time: TimeOfDay): string {
   // Task Scheduler wants a start boundary; the date is only an anchor for a daily
@@ -1027,41 +1028,13 @@ export interface OwnershipOptions {
   replaceProduction?: boolean;
 }
 
-/** This tool's package name, in its own package.json and in the repository's. */
-const PACKAGE_NAME = 'care-album-saver';
-
-/** The nearest folder at or above `from` holding a package.json, and the name in it. */
-function nearestManifest(from: string): { dir: string; name: unknown } | null {
-  for (let dir = resolve(from); ; dir = dirname(dir)) {
-    const manifest = join(dir, 'package.json');
-    if (existsSync(manifest)) {
-      try {
-        return { dir, name: (JSON.parse(readFileSync(manifest, 'utf8')) as { name?: unknown } | null)?.name };
-      } catch {
-        return { dir, name: undefined };
-      }
-    }
-    if (dirname(dir) === dir) return null;
-  }
-}
-
 /**
- * The folder a copy of the tool is, which is where deploy.js puts the production marker.
- *
- * Found by walking up from `cli.js` to this package — the nearest package.json, which must be
- * named care-album-saver — and then to the next package.json above that: the repository's own,
- * of the same name, in a clone; anything else (an npm install inside someone's project, say)
- * means the package is the copy. It was three folders up from `cli.js`, counted (security
- * review processes-9), which holds only while the build writes `cli.js` exactly one folder
- * below the package: a build that moved it would have had every copy judged by a marker in
- * the wrong folder, and production taken for a stray copy. A `cli.js` that is not in this
- * package at all is a copy of its own folder, and never production.
+ * The folder a copy of the tool is, which is where deploy.js puts the production marker: see
+ * copyRootFrom. A `cli.js` that is not in this package at all is a copy of its own folder, and
+ * never production.
  */
 function copyRoot(cliPath: string): string {
-  const pkg = nearestManifest(dirname(cliPath));
-  if (!pkg || pkg.name !== PACKAGE_NAME) return dirname(resolve(cliPath));
-  const above = dirname(pkg.dir) === pkg.dir ? null : nearestManifest(dirname(pkg.dir));
-  return above?.name === PACKAGE_NAME ? above.dir : pkg.dir;
+  return copyRootFrom(dirname(cliPath));
 }
 
 function isProductionCopy(cliPath: string): boolean {
@@ -1144,7 +1117,7 @@ async function installedCliPath(e: Resolved, mechanism: ScheduleMechanism): Prom
         if (listed.code !== 0) return null;
         const lines = listed.stdout.split(/\r?\n/).map((line) => line.trim());
         const job = lines[lines.indexOf(CRON_MARKER) + 1];
-        if (!lines.includes(CRON_MARKER) || !job || !OUR_CRON_LINE.test(job)) return null;
+        if (!lines.includes(CRON_MARKER) || !job || !isOurCronLine(job)) return null;
         return shellWords(job.replace(/^(?:@reboot|\S+ \S+ \S+ \S+ \S+)\s+/, ''))[1] || null;
       }
       case 'schtasks': {
@@ -1761,11 +1734,27 @@ function said(result: CommandResult, program: string): string {
 }
 
 /**
- * A line of the block this tool wrote: the daily line or the @reboot one, running
- * `run --scheduled` into the log. Every version has written exactly that shape, whatever its
- * quoting, and a line a person wrote for themselves has no reason to.
+ * A line of the block this tool wrote: the daily line or the @reboot one. Judged by its words,
+ * as /bin/sh will read them in any quoting this tool has written, and not by its shape
+ * (§4.6, F6): exactly `<node> <…/cli.js> run --scheduled >> <…/daily.log> 2>&1`. A person's
+ * own line of the same shape — another program's `run --scheduled` into its own log, or this
+ * tool run with a settings folder of its own in front of it — is not one of these.
  */
-const OUR_CRON_LINE = /^(?:@reboot|\S+ \S+ \S+ \S+ \S+)\s.*\srun --scheduled >> .* 2>&1$/;
+function isOurCronLine(line: string): boolean {
+  const command = /^(?:@reboot|\S+ \S+ \S+ \S+ \S+)\s+(.*)$/.exec(line.trim())?.[1];
+  if (!command) return false;
+  const w = shellWords(command);
+  const named = (word: string | undefined, file: string) => word !== undefined && /[^/\\]+$/.exec(word)?.[0] === file;
+  return (
+    w.length === 7 &&
+    named(w[1], 'cli.js') &&
+    w[2] === 'run' &&
+    w[3] === '--scheduled' &&
+    w[4] === '>>' &&
+    named(w[5], 'daily.log') &&
+    w[6] === '2>&1'
+  );
+}
 
 /**
  * A crontab with our block taken out.
@@ -1778,6 +1767,13 @@ function stripCronBlock(crontab: string): string[] {
   const kept: string[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]?.trim();
+    if (line === CRON_END) {
+      // An end with no marker above it: the marker was deleted by hand — the comment says to
+      // delete the block — and the lines between were left to run (§4.6, F7). Ours directly
+      // above it go with it; anything else above it is the person's, and stays.
+      while (kept.length > 0 && isOurCronLine(kept[kept.length - 1] ?? '')) kept.pop();
+      continue;
+    }
     if (line !== CRON_MARKER) {
       kept.push(lines[i] ?? '');
       continue;
@@ -1797,7 +1793,7 @@ function stripCronBlock(crontab: string): string[] {
     // @reboot line it left the @reboot line behind, to run beside the block written next.
     // Reading on to the end of the file instead could take the person's own lines with it,
     // and those are the one thing removing must never touch.
-    while (i + 1 < lines.length && OUR_CRON_LINE.test(lines[i + 1]?.trim() ?? '')) i += 1;
+    while (i + 1 < lines.length && isOurCronLine(lines[i + 1] ?? '')) i += 1;
   }
   while (kept.length > 0 && kept[kept.length - 1]?.trim() === '') kept.pop();
   return kept;

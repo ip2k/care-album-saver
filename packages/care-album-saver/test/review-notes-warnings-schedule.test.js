@@ -118,3 +118,46 @@ test('F1: a systemd that is there and refuses is still a refusal, and says which
   assert.ok(unitFiles(home).every((f) => existsSync(f)), 'nothing was removed');
   assert.equal((await loadConfig()).schedule.mechanism, 'systemd');
 });
+
+/** A machine with cron only, and the daily run installed; `state.crontab` is the person's crontab. */
+async function withCron(before = '') {
+  const home = await fresh();
+  const state = { systemd: false, cron: true, crontab: before || null };
+  const run = linux(state);
+  await schedule.install('19:00', env(home, run));
+  return { home, state, run };
+}
+
+const ours = (crontab) => crontab.split('\n').filter((l) => /\/opt\/cas\/dist\/cli\.js'? run --scheduled/.test(l));
+
+test('F6: with the end line deleted, removing takes our lines and never a line of the same shape that is the person\'s', async () => {
+  const { home, state, run } = await withCron();
+  const theirs = [
+    '*/5 * * * * /home/alex/bin/other-app run --scheduled >> /home/alex/other.log 2>&1',
+    "0 6 * * * CARE_ALBUM_CONFIG_DIR=/home/alex/second '/usr/bin/node' '/opt/cas/dist/cli.js' run --scheduled >> '/home/alex/second/daily.log' 2>&1",
+    '30 7 * * * echo "run --scheduled" is only words here',
+  ];
+  const lines = state.crontab.trimEnd().split('\n').filter((l) => !l.includes('end of the daily run'));
+  state.crontab = `${[...lines, ...theirs].join('\n')}\n`;
+  await schedule.remove(env(home, run));
+  assert.deepEqual(state.crontab.trimEnd().split('\n'), theirs, 'exactly the person\'s lines are left');
+});
+
+test('F7: with the marker deleted and the end line kept, our lines are taken away, not doubled or left running', async () => {
+  const mine = '15 3 * * * /usr/local/bin/backup >> /tmp/backup.log 2>&1';
+  const { home, state, run } = await withCron(`${mine}\n`);
+  state.crontab = state.crontab.split('\n').filter((l) => !l.includes('Delete this block')).join('\n');
+  assert.equal(ours(state.crontab).length, 2, 'the two lines are still there, running');
+
+  await schedule.install('20:00', env(home, run));
+  assert.equal(ours(state.crontab).length, 2, 'reinstalling does not double them');
+  assert.match(state.crontab, /^0 20 \* \* \* /m);
+  assert.doesNotMatch(state.crontab, /^0 19 \* \* \* /m, 'the old time is gone');
+  assert.equal(state.crontab.split('\n').filter((l) => l.includes('end of the daily run')).length, 1);
+
+  state.crontab = state.crontab.split('\n').filter((l) => !l.includes('Delete this block')).join('\n');
+  await schedule.remove(env(home, run));
+  assert.deepEqual(ours(state.crontab), [], 'off means off');
+  assert.ok(state.crontab.includes(mine), 'the person\'s line above stays');
+  assert.doesNotMatch(state.crontab, /end of the daily run/);
+});

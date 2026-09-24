@@ -310,7 +310,9 @@ async function main(): Promise<number> {
         stdout.write(
           `\n  To include everyone, open the setup assistant, or run with --child for a one-off\n` +
             `  (care-album-saver children lists each child with their id):\n` +
-            `    care-album-saver run ${check.notIncluded.map((c) => `--child ${shellArgument(c.id)}`).join(' ')}\n`,
+            // --child=<id>, not --child <id>: parseArgs reads an id beginning with '-' after a
+            // space as another option, and refuses the command (§4.6, F9).
+            `    care-album-saver run ${check.notIncluded.map((c) => `--child=${shellArgument(c.id)}`).join(' ')}\n`,
         );
       }
       stdout.write('\n');
