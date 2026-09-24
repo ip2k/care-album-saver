@@ -2,6 +2,18 @@
 
 **Save your own child's photos from Brightwheel onto your own computer, sorted into a folder for each week.**
 
+<!-- Every one of these is tested on each change: the whole suite runs on all three systems, against
+     Node 22, 24 and 26 (.github/workflows/ci.yml). The first badge is the live result; if any of
+     them breaks, it turns red. -->
+<p align="center">
+  <a href="https://github.com/ip2k/care-album-saver/actions/workflows/ci.yml"><img alt="Tests: the latest result on every system" src="https://github.com/ip2k/care-album-saver/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/ip2k/care-album-saver/actions/workflows/ci.yml"><img alt="Tested on macOS" src="https://img.shields.io/badge/macOS-tested-8E8E93?logo=apple&amp;logoColor=white"></a>
+  <a href="https://github.com/ip2k/care-album-saver/actions/workflows/ci.yml"><img alt="Tested on Windows" src="https://img.shields.io/badge/Windows-tested-0078D4?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3QgeD0iMi41IiB5PSI0IiB3aWR0aD0iMTkiIGhlaWdodD0iMTYiIHJ4PSIyIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMiIvPjxwYXRoIGQ9Ik0yLjUgOWgxOSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIiLz48L3N2Zz4="></a>
+  <a href="https://github.com/ip2k/care-album-saver/actions/workflows/ci.yml"><img alt="Tested on Ubuntu" src="https://img.shields.io/badge/Ubuntu-tested-E95420?logo=ubuntu&amp;logoColor=white"></a>
+  <a href="https://github.com/ip2k/care-album-saver/actions/workflows/ci.yml"><img alt="Node.js 22, 24 or 26" src="https://img.shields.io/badge/Node.js-22%20%7C%2024%20%7C%2026-5FA04E?logo=nodedotjs&amp;logoColor=white"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-blue"></a>
+</p>
+
 <p align="center">
   <img src="docs/images/00-dashboard.png" alt="The Care Album Saver page in a web browser. Under the heading Your archive it says 28 photos and videos were saved, then shows a grid of twenty-four colourful thumbnails, each labelled with the date it was posted, with buttons to save new photos, open the folder and view the log underneath." width="800">
 </p>

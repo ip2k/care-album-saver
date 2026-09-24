@@ -51,13 +51,14 @@ file was started.
 
 ### Changed
 
-- **The README opens with a picture of the tool and a table of contents**, and is reorganised
-  for a parent who has never used a terminal: what it does and what it looks like, whether it
-  is safe and private, the quickest way to start, everyday use — and only then the technical
-  material: commands, Docker, how it works, development. Nothing was taken out. The design
-  decisions, with the alternatives turned down, and the questions still open are now in one
-  public document, [docs/DECISIONS.md](docs/DECISIONS.md), in place of the internal review
-  notes; [SECURITY.md](SECURITY.md) gains a threat model.
+- **The README opens with a picture of the tool, a table of contents, and badges** showing it
+  is tested on macOS, Windows and Ubuntu with Node 22, 24 and 26, beside the live test result.
+  It is reorganised for a parent who has never used a terminal: what it does and what it looks
+  like, whether it is safe and private, the quickest way to start, everyday use — and only
+  then the technical material: commands, Docker, how it works, development. Nothing was taken
+  out. The design decisions, with the alternatives turned down, and the questions still open
+  are now in one public document, [docs/DECISIONS.md](docs/DECISIONS.md), in place of the
+  internal review notes; [SECURITY.md](SECURITY.md) gains a threat model.
 - A dead-code audit of the whole tree removed options nothing set, exports nothing imported,
   branches that could not run, and a download-resume path that was never taken; and corrected
   the comments and documentation that described them. Two small things a person could notice:
