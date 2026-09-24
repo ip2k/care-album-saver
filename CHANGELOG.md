@@ -5,11 +5,7 @@ Everything that changes for the people who use Care Album Saver, newest first. T
 request's release notes (or, before the repository had a remote, its merge commit's), so the
 two always say the same thing.
 
-There has been no release yet, so everything is under Unreleased. Entries from before
-23 September 2026's durable-Node change were reconstructed from the merge history when this
-file was started.
-
-## [Unreleased]
+## [0.1.0] - 2026-09-24
 
 ### Added
 
