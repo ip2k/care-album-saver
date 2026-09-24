@@ -339,21 +339,22 @@ test('both routes are refused without the token, cross-site, and on GET', async 
 
       // A page the parent is merely visiting. The browser labels the request, and this is
       // where that label is spent.
-      const crossSite = await fetch(at(`${path}?token=${handle.token}`), {
+      // (The token in the header, where the page sends it: /api/* refuses it in the address.)
+      const crossSite = await fetch(at(path), {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' },
+        headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site', 'x-setup-token': handle.token },
         body: '{}',
       });
       assert.equal(crossSite.status, 403, `${path} from another site`);
 
       // The rebinding shape: the attacker's own domain resolved to 127.0.0.1, so the
       // browser treats it as same-origin and sends the request with that Host.
-      const rebound = await rawPost(handle.port, `${path}?token=${handle.token}`, { Host: 'evil.example.com' });
+      const rebound = await rawPost(handle.port, path, { Host: 'evil.example.com', 'x-setup-token': handle.token });
       assert.equal(rebound.status, 403, `${path} with a rebound host name`);
 
       // POST only, so none of the shapes a page can emit unaided — an image, a stylesheet,
       // a redirect, a plain link — can reach it.
-      const asGet = await fetch(at(`${path}?token=${handle.token}`));
+      const asGet = await fetch(at(path), { headers: { 'x-setup-token': handle.token } });
       assert.equal(asGet.status, 404, `${path} as a GET`);
     }
     assert.equal(native.calls.length, 0, 'not one refused request reached the operating system');

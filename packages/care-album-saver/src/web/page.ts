@@ -213,7 +213,9 @@ export const PAGE = String.raw`<!doctype html>
   .gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .gallery a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* A video has no thumbnail without decoding it, so it says what it is instead. */
-  .gallery .vid { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 1.75rem; }
+  .gallery .vid, .gallery .nothumb { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 1.75rem; }
+  /* A photo this browser cannot draw says so where the picture would be. */
+  .gallery .nothumb { font-size: .875rem; text-align: center; padding: 0 var(--s2) 1.25rem; }
   .gallery .cap {
     position: absolute; left: 0; right: 0; bottom: 0; padding: .25rem .375rem;
     background: rgba(0,0,0,.55); color: #fff; font-size: .75rem; line-height: 1.3;
@@ -1076,6 +1078,7 @@ ${COOKIE_HELP_CSS}
     <video class="viewer-media" id="viewer-video" controls playsinline preload="metadata" hidden></video>
     <p class="viewer-cap" id="viewer-cap" aria-live="polite"></p>
     <p class="viewer-cap" id="viewer-unplayable" role="status" hidden>This browser cannot play this video. It is saved in your folder, where the computer&rsquo;s own video player can.</p>
+    <p class="viewer-cap" id="viewer-unshowable" role="status" hidden>This browser cannot show this photo. It is saved in your folder, where the computer&rsquo;s own photo viewer can.</p>
   </div>
   <button class="viewer-btn viewer-close" id="viewer-close" type="button" aria-label="Close the photo" title="Close (Esc)" autofocus>
     <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -1094,7 +1097,9 @@ ${COOKIE_HELP_CSS}
 <script nonce="__NONCE__">
 const TOKEN = '__TOKEN__';
 const $ = (id) => document.getElementById(id);
-const api = (path, opts = {}) => fetch(path + (path.includes('?') ? '&' : '?') + 'token=' + TOKEN, {
+// The token goes in the header only. The tool refuses it in the address of any /api/* request;
+// only the page's own link and /photo (an <img> cannot send a header) carry it there (Q10).
+const api = (path, opts = {}) => fetch(path, {
   ...opts, headers: { 'content-type': 'application/json', 'x-setup-token': TOKEN, ...(opts.headers || {}) }
 });
 
@@ -1138,15 +1143,12 @@ const show = (el, kind, html) => { el.innerHTML = '<div class="msg ' + kind + '"
  * carries noreferrer too, so the setup token in this page's address never travels.
  */
 function howToSteps() {
-  const ua = navigator.userAgent;
-  const isFirefox = /Firefox\//.test(ua);
-  const isSafari = /Safari\//.test(ua) && !/Chrome|Chromium|Edg\//.test(ua);
-  const open = isSafari
+  const open = BROWSER === 'safari'
     ? 'Turn on the developer menu first: Safari menu &rarr; <b>Settings</b> &rarr; <b>Advanced</b> &rarr; tick <b>Show features for web developers</b>. Then press <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd>.'
     : 'Press <kbd>F12</kbd> (or <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd> on a Mac).';
-  const where = isFirefox || isSafari
-    ? 'Click <b>Storage</b> along the top, then <b>Cookies</b> on the left.'
-    : 'Click <b>Application</b> along the top, then <b>Cookies</b> on the left.';
+  const where = BROWSER === 'chrome'
+    ? 'Click <b>Application</b> along the top, then <b>Cookies</b> on the left.'
+    : 'Click <b>Storage</b> along the top, then <b>Cookies</b> on the left.';
   return [
     'Open <a class="ext" href="https://schools.mybrightwheel.com/" target="_blank" rel="noopener noreferrer"><b>schools.mybrightwheel.com</b> <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a> and sign in as you normally would.',
     open,
@@ -1155,6 +1157,9 @@ function howToSteps() {
     'Paste it in the box below and press Connect.',
   ];
 }
+/** The reader's browser, told once, for these steps and for the picture guide below (page-12). */
+const BROWSER = /Firefox\//.test(navigator.userAgent) ? 'firefox'
+  : /Safari\//.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent) ? 'safari' : 'chrome';
 $('howto').innerHTML = howToSteps().map((s) => '<li>' + s + '</li>').join('');
 
 /* The picture guide that illustrates those same five steps. Written in
@@ -1210,9 +1215,17 @@ function formState() {
  * the one that lands second wins even if it was made first.
  */
 let saves = Promise.resolve();
+/** Why the last save got no answer it could use, in words; null when the tool answered it. */
+let saveTrouble = null;
+const UNREACHABLE = 'This page cannot reach the tool. It may have been closed, or the computer may be busy.';
 function persist(patch, opts = {}) {
-  const run = saves.then(() => save(patch, opts));
-  saves = run.catch(() => {});
+  // Never rejects: a save that threw used to end in silence, with Start left pressed.
+  const run = saves.then(() => save(patch, opts)).catch(() => {
+    saveTrouble = 'Something went wrong in this page while saving. Reload it and try again.';
+    say($('config-msg'), 'err', saveTrouble);
+    return false;
+  });
+  saves = run;
   return run;
 }
 
@@ -1227,11 +1240,13 @@ async function save(patch, opts) {
     return true;
   }
   let d;
+  saveTrouble = null;
   try {
     const r = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
     d = await r.json();
   } catch {
-    d = { ok: false, error: 'Could not save that. Check the tool is still running in the window you started it from.' };
+    saveTrouble = UNREACHABLE;
+    d = { ok: false, error: 'Could not save that. ' + UNREACHABLE };
   }
   if (!d.ok) {
     showSaveError(d, opts);
@@ -1371,9 +1386,9 @@ function needsSetup(s) {
   // No session at all: the first thing to do is the first step. Nor one Brightwheel has
   // stopped accepting, found when the page asked who is on the account (loadChildren).
   if (!s.hasSession || s.sessionRejected) return true;
-  // A session that has stopped working, which the server reports as a run refused for it.
-  const failed = s.progress && s.progress.phase === 'error' && /sign in|session|expired/i.test(s.progress.message || '');
-  if (failed) return true;
+  // A run Brightwheel refused for its session, which the server marks as such. A field, not
+  // words: any error that happened to mention a session used to count.
+  if (s.progress && s.progress.phase === 'error' && s.progress.reason === 'session') return true;
   // Connected, but nothing has ever been saved. There is no gallery to show and the steps
   // are not finished — choosing a folder and pressing the button are still ahead. Showing a
   // dashboard here would hide the rest of setup the moment the cookie was pasted.
@@ -1462,11 +1477,12 @@ function placeSetupFlow(inSettings) {
   if (!current || current.hidden) showSection(inSettings ? 'account' : 'integrations');
 }
 
-const day = (iso) => {
-  if (!iso) return 'never';
+/** A date from the archive, or words: never "Invalid Date" from one the list holds wrongly (page-6). */
+const dateOr = (iso, words, format) => {
   const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
+  return iso && !isNaN(d.getTime()) ? d.toLocaleDateString(undefined, format) : words;
 };
+const day = (iso) => (iso ? dateOr(iso, 'an unknown day', { day: 'numeric', month: 'long' }) : 'never');
 
 /** The archive, in one sentence and every photo its last run saved, a page at a time. */
 function paintDashboard(s) {
@@ -1520,9 +1536,12 @@ async function galleryItem(index) {
 }
 
 const photoHref = (item) => '/photo?i=' + item.id + '&token=' + TOKEN;
-const postedOn = (item) => item.postedAt
-  ? new Date(item.postedAt).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
-  : 'an unknown day';
+const postedOn = (item) => dateOr(item.postedAt, 'an unknown day', { weekday: 'long', day: 'numeric', month: 'long' });
+
+/** A thumbnail the browser could not show (a HEIC outside Safari, say): words in its place. */
+function noPreview(img) {
+  img.replaceWith(h('span', { class: 'nothumb' }, 'No preview here'));
+}
 
 async function paintGallery() {
   const run = ++gallery.painting;
@@ -1542,7 +1561,7 @@ async function paintGallery() {
     a2.dataset.index = String(index);
     // The caption is what a screen reader gets, so it is the child and the date rather
     // than a filename. The note is not in it: notes name other people's children.
-    const when = item.postedAt ? new Date(item.postedAt).toLocaleDateString() : '';
+    const when = dateOr(item.postedAt, '', {});
     a2.title = item.label;
     a2.setAttribute('aria-label', (item.child || 'A photo') + ', ' + when + (item.kind === 'video' ? ', video' : ''));
     a2.onclick = (e) => {
@@ -1554,6 +1573,7 @@ async function paintGallery() {
       a2.append(h('span', { class: 'vid', 'aria-hidden': 'true' }, '▶'), h('span', { class: 'cap' }, when));
     } else {
       const img = document.createElement('img');
+      img.addEventListener('error', () => noPreview(img));
       img.src = photoHref(item);
       img.alt = '';
       img.loading = 'lazy';
@@ -1605,6 +1625,7 @@ async function showInViewer(index) {
   const video = $('viewer-video');
   video.pause();
   $('viewer-unplayable').hidden = true;
+  $('viewer-unshowable').hidden = true;
   if (item.kind === 'video') {
     img.hidden = true;
     img.removeAttribute('src');
@@ -1643,6 +1664,12 @@ async function showInViewer(index) {
 // black box with dead controls and no word about why.
 $('viewer-video').addEventListener('error', () => {
   if ($('viewer-video').getAttribute('src')) $('viewer-unplayable').hidden = false;
+});
+// And a photo it cannot show — a HEIC outside Safari — rather than a broken-image icon (page-10).
+$('viewer-img').addEventListener('error', () => {
+  if (!$('viewer-img').getAttribute('src')) return;
+  $('viewer-img').hidden = true;
+  $('viewer-unshowable').hidden = false;
 });
 
 const stepViewer = (delta) => {
@@ -2091,7 +2118,9 @@ $('btn-connect').onclick = async () => {
     const r = await api('/api/session', { method: 'POST', body: JSON.stringify({ cookie: cookieVerdict ? cookieVerdict.value : field.value }) });
     const d = await r.json();
     if (d.ok) {
+      // The session is the tool's now; the page keeps no copy of it, in the box or behind it (page-11).
       field.value = '';
+      cookieVerdict = null;
       $('cookie-check').textContent = '';
       await refresh();
       // Move focus forward so a keyboard or screen-reader user is taken to what is next —
@@ -2224,17 +2253,29 @@ $('run-result').addEventListener('click', (e) => {
 $('btn-run').onclick = async () => {
   $('btn-run').disabled = true;
   $('run-result').innerHTML = '';
+  // A tool that did not answer is said as that (as poll() says it), never as a setting to fix.
+  const notStarted = (why) => {
+    say($('run-result'), 'err', 'Not started. ' + why +
+      (why === UNREACHABLE ? ' Check the window you started it from, then press Start saving again.' : ''));
+    updateRunReady();
+  };
   // What is on screen is what runs. The whole form is sent again here, so a change that
   // was refused earlier, or is still on its way, cannot be left behind by a run that
   // reads its settings from disk.
   if (!(await persist(formState(), { focus: true }))) {
+    if (saveTrouble) return notStarted(saveTrouble);
     show($('run-result'), 'err', $('setup-flow').hidden
       ? 'Not started. Fix the setting that is marked, then press Start saving again.'
       : 'Not started. Fix the setting marked in step 2, then press Start saving again.');
     updateRunReady();
     return;
   }
-  const r = await api('/api/sync', { method: 'POST', body: '{}' });
+  let r;
+  try {
+    r = await api('/api/sync', { method: 'POST', body: '{}' });
+  } catch {
+    return notStarted(UNREACHABLE);
+  }
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
     say($('run-result'), 'err', d.error || 'Could not start.');
@@ -2438,15 +2479,23 @@ const fullWhen = (iso) => {
 };
 
 async function loadSchedule() {
-  let d;
+  let r;
   try {
-    d = await (await api('/api/schedule')).json();
+    r = await api('/api/schedule');
   } catch {
     // The tool has stopped. The run card already says so in its own words; a second
     // complaint about the daily run would only add noise.
     return;
   }
-  if (!d || !d.ok) return;
+  const d = await r.json().catch(() => null);
+  if (!d || !d.ok) {
+    // The tool answered but could not ask the scheduler. Said in step 4 in its words, and on
+    // the dashboard in one line, where the daily-run line used to vanish without a word.
+    say($('schedule-msg'), 'err', (d && d.error) || 'The tool could not say whether a daily run is set up (it answered ' + r.status + ').');
+    $('dash-schedule').textContent = 'Whether a daily run is set up could not be checked. Settings and Maintenance says why.';
+    $('dash-schedule').classList.add('warn-text');
+    return;
+  }
   sched = d.schedule;
   proposed = d.proposed;
   paintSchedule();
