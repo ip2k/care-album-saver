@@ -84,6 +84,15 @@ stores, and this tool is deliberately local-only with no cloud component.
   report's §4.4 and §4.5); its NOTEs (§4.3, §4.4) are still open. The brief the review was run
   from, `docs/SECURITY-REVIEW-HANDOFF.md`, is in git history at d13f8ff; its durable part (the
   threat model, trust boundaries and assets) is now in SECURITY.md.
+  **A third rewrite, of one commit, on 2026-09-24 at the owner's instruction** (main 1742186):
+  #4 had been merged with GitHub's merge button, whose commit takes the author from the GitHub
+  profile's display name, a personal name, and the committer "GitHub". That commit's identity
+  was set to ip2k and its five descendants re-parented; every tree is unchanged. Open PR #5,
+  built on it, was rebuilt onto the new commit in the same atomic push. **Merge only locally
+  (`git merge --no-ff -F`), never with GitHub's merge, squash or rebase buttons, "Update branch",
+  web edits or suggestion commits**: each of those writes the profile name into history.
+  GitHub still serves the old commits through closed PRs' `refs/pull/*/head` and PR #4's
+  merge-commit link; only GitHub Support can remove those.
 - **Production and development are separate (2026-09-23).** Production is a clone on
   `main` at ~/Applications/care-album-saver, changed only by `node scripts/deploy.js`,
   which builds and runs the whole suite there, puts production back on its previous commit
