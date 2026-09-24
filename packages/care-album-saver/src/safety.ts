@@ -89,9 +89,6 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
   if (!raw) {
     return { ok: false, error: 'Please choose a folder to save the photos in.', resolved };
   }
-  if (!p.isAbsolute(resolved)) {
-    return { ok: false, error: 'Please give a full path, starting from the top of your drive.', resolved };
-  }
 
   // Where Windows keeps the operating system. `SystemRoot` is the authoritative answer;
   // the literal is for a process started with a scrubbed environment.
