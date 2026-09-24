@@ -114,6 +114,18 @@ function tildify(path: string | null, home: string, platform: NodeJS.Platform = 
   return path === home ? '~' : path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path;
 }
 
+/**
+ * What the page says when Brightwheel refuses a session. The error's own message is written
+ * for the command line ("Run `care-album-saver login`"), which means nothing in a browser, and
+ * it says "expired" when the page cannot know that: a value from the wrong row, or copied with
+ * part of it missing, is refused in exactly the same way.
+ */
+const PASTE_REFUSED =
+  'Brightwheel did not accept that value. If you copied it a while ago it may have run out: sign in on ' +
+  'Brightwheel\u2019s website again and copy it fresh. Otherwise check it came from the row named ' +
+  '_brightwheel_v2, from its Value column, and that all of it was copied.';
+const RUN_REFUSED = 'Brightwheel no longer accepts the saved session, so nothing more could be fetched.';
+
 const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -407,7 +419,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         const client = new BrightwheelClient({ session: secret, baseUrl: options.baseUrl, userAgent });
         const check = await client.verifySession();
         if (!check.ok) {
-          json(400, { ok: false, error: scrub(check.reason) });
+          json(400, { ok: false, error: check.rejected ? PASTE_REFUSED : scrub(check.reason) });
           return;
         }
         await saveSession(secret, check.email, userAgent);
@@ -618,9 +630,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
               progress = { ...p, message: scrub(p.message) };
             }, { signal: controller.signal });
           } catch (error: unknown) {
+            const refused = error instanceof Error && error.name === 'SessionExpiredError';
             progress = {
               phase: 'error',
-              message: scrub(error instanceof Error ? error.message : String(error)),
+              message: refused ? RUN_REFUSED : scrub(error instanceof Error ? error.message : String(error)),
               saved: progress.saved,
               skipped: progress.skipped,
               failed: progress.failed,

@@ -88,7 +88,9 @@ const ui = await startWebUi({
   port: Number(values.port),
   native: { spawn },
   schedule: { home: fakeHome, run, platform: 'darwin' },
-  banner: 'Demo — the children, photos, Photos app and daily run here are all pretend. Nothing on this computer is changed.',
+  banner:
+    'Demo — the children, photos, Photos app and daily run here are all pretend, and nothing on this ' +
+    `computer is changed. To connect, paste ${SESSION} — never your real session.`,
 });
 
 process.stdout.write(
