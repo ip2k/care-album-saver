@@ -264,9 +264,11 @@ const DAILY_CARRIES_ON = 'The daily run, if it is set up, uses the new version f
  * On a Mac or Linux it is single-quoted, which the shell takes literally, with a quote inside
  * written as '\''. A leading ~/ stays outside the quotes, where it still means the home
  * folder. On Windows it is double-quoted, the one quoting that cmd and PowerShell both
- * understand; neither allows a double quote in a folder name. A `$` or backtick (PowerShell)
- * or a `%` (cmd) inside a Windows folder name is not handled: no single spelling serves both
- * shells, and a folder named like that is rare enough to leave to the update guide.
+ * understand; neither allows a double quote in a folder name. A `$` or backtick (PowerShell),
+ * a `[` or `]` (PowerShell's cd reads them as a wildcard, and only its -LiteralPath, which
+ * cmd does not have, would not) or a `%` (cmd) inside a Windows folder name is not handled:
+ * no single spelling serves both shells, and a folder named like that is rare enough to
+ * leave to the update guide.
  */
 function shellFolder(path: string, platform: NodeJS.Platform): string {
   if (platform === 'win32') return /^[A-Za-z0-9_\-.\\/:~]+$/.test(path) ? path : `"${path}"`;

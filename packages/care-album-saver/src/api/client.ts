@@ -41,10 +41,12 @@ const MAX_RETRIES = 4;
  * The header used to be obeyed as sent, so one 429 asking for a day parked the run for a
  * day — holding the archive's run lock, and with the page showing a bar that had stopped
  * moving. Five minutes is well past the minute or two a busy service asks for, and it keeps
- * the whole of one request's retries (four waits at most) inside the half hour after which
- * the run lock is taken for abandoned. A longer ask is not sat out: the run ends and says
- * why, and the next one — the next day's, or the parent pressing the button later — carries
- * on from where it stopped, exactly as after any other failure part-way.
+ * one request's retries (four waits at most) near twenty minutes. What that bounds is how
+ * long a parent watches a run that is only waiting; the run lock needs no such bound, as it
+ * keeps itself fresh on a timer however long a request waits (run-lock.ts). A longer ask is
+ * not sat out: the run ends and says why, and the next one — the next day's, or the parent
+ * pressing the button later — carries on from where it stopped, exactly as after any other
+ * failure part-way.
  */
 export const MAX_RETRY_AFTER_SECONDS = 5 * 60;
 
@@ -55,7 +57,7 @@ export const MAX_RETRY_AFTER_SECONDS = 5 * 60;
  * is far past any honest answer while still bounding what a broken or hostile one can make
  * a parent's computer hold in memory. See http-body.ts.
  */
-const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 /**
  * How many seconds a `Retry-After` header asks for, or null when there is none it can read.

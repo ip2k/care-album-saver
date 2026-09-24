@@ -929,6 +929,7 @@ ${COOKIE_HELP_CSS}
           </label>
         </div>
         <p class="hint" id="photos-status" aria-live="polite"></p>
+        <p class="hint" id="photos-cloud" hidden></p>
         <div class="run-actions" id="photos-earlier-row" hidden>
           <button class="secondary" id="btn-photos-earlier" type="button">Add the ones saved before you turned this on</button>
         </div>
@@ -1791,6 +1792,10 @@ async function refresh() {
   paintPhotos(state.photos);
   paintUpdate();
   paint(state.progress, state.running, state.lastResult);
+  // The update section, once the tool has answered at all: asked here rather than after the
+  // first refresh returns, because a first refresh that found the tool unreachable returns
+  // early, and the retry that later succeeds would otherwise never ask.
+  if (!updateAsked) loadUpdate();
   // A run started before this page was opened (or before a reload) is still going in the
   // terminal. Without restarting the poll here the bar sits motionless, and HIG's
   // progress-indicators guidance is explicit that people read a stationary indicator as a
@@ -1959,6 +1964,10 @@ function paintPhotos(p) {
     if (last && last.ok && last.added > 0) status += ' Last added ' + last.added + ' on ' + day(last.at) + '.';
   }
   $('photos-status').textContent = status;
+  // What a cloud-synced photos folder means for this step, beside the switch, before it is
+  // turned on as well as after: the tool's words, as text.
+  $('photos-cloud').hidden = !p.warning;
+  $('photos-cloud').textContent = p.warning || '';
   const last = p.lastAttempt;
   if (p.enabled && p.problem) {
     say($('photos-msg'), 'warn', bold('Nothing can be added to Photos until this is sorted out.'), ' ', p.problem);
@@ -2297,7 +2306,9 @@ function paint(p, running, result) {
   updateRunReady();
 
   if (p.phase === 'done') {
-    setStep($('card-run'), $('num-3'), $('run-state'), 'complete', 'Step 3 of 4, finished.');
+    // Not while Brightwheel refuses the saved session: step 3 is waiting for step 1 again
+    // (sessionRefused), however the last run ended.
+    if (!(state && state.sessionRejected)) setStep($('card-run'), $('num-3'), $('run-state'), 'complete', 'Step 3 of 4, finished.');
     bar.dataset.indeterminate = 'false';
     fill.style.width = '100%';
     // "Nothing new" is the normal outcome of a daily run. It must read as success, not
@@ -2713,6 +2724,8 @@ function confirmDupes() {
    the header when there is something newer, and the steps for the way this copy was
    installed — and asks the question once, under the archive. */
 let update = null;
+/** Whether /api/update has answered once, either way: see the end of refresh. */
+let updateAsked = false;
 
 async function loadUpdate(body) {
   let r;
@@ -2721,6 +2734,7 @@ async function loadUpdate(body) {
   } catch {
     return;
   }
+  updateAsked = true;
   const d = await r.json();
   if (!r.ok) {
     $('updates-status').textContent = d.error || 'That did not work.';
@@ -2819,7 +2833,7 @@ $('btn-update-copy').onclick = async () => {
   }
 };
 
-refresh().then(() => loadUpdate());
+refresh();
 </script>
 </body>
 </html>`;

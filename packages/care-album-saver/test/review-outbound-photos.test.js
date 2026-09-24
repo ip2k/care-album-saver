@@ -22,6 +22,7 @@ import {
   photosStatus,
   startMockBrightwheel,
   sync,
+  verify,
 } from '../dist/index.js';
 import { MAX_RETRY_AFTER_SECONDS, retryAfterSeconds } from '../dist/api/client.js';
 import { BodyTooLargeError, readBodyText } from '../dist/http-body.js';
@@ -77,6 +78,17 @@ test('outbound-7: a body is read only up to its limit, and the rest is never ask
   await assert.rejects(readBodyText(new Response(stream), 1024 * 1024), BodyTooLargeError);
   assert.ok(seen.cancelled, 'the other end is told to stop sending');
   assert.ok(seen.pulled <= 1024 * 1024 + 3 * 64 * 1024, `read ${seen.pulled} bytes of an endless body`);
+});
+
+test('outbound-7: the verify command reads an endless answer only up to the limit, too', async () => {
+  const { stream, seen } = endless();
+  const fetchImpl = async () => new Response(stream, { headers: { 'content-type': 'application/json' } });
+  await assert.rejects(
+    () => verify(new Secret('test-session-value'), { baseUrl: 'http://127.0.0.1:9/api/v1', fetchImpl }),
+    /larger than 16 MB, far more than it ever sends, so it was not read/,
+  );
+  assert.ok(seen.cancelled, 'the other end is told to stop sending');
+  assert.ok(seen.pulled <= 16 * 1024 * 1024 + 3 * 64 * 1024, `read ${seen.pulled} bytes`);
 });
 
 test('outbound-7: a body that says in advance it is too long is refused before it is read', async () => {

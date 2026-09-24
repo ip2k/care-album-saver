@@ -468,6 +468,7 @@ async function main(): Promise<number> {
                 : '') +
             '\n',
         );
+        if (photos.warning) stdout.write(`                 ${photos.warning}\n`);
       }
       return check.ok ? 0 : 1;
     }

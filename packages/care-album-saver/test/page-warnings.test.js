@@ -245,6 +245,23 @@ test('page-2: /api/children answers a session Brightwheel refuses with a 401 the
   }
 });
 
+test('page-2: the Maintenance page\'s children check says a refused session the same way', async () => {
+  await freshConfigDir();
+  const mock = await startMockBrightwheel({ validSession: SESSION, expireSessionAfterRequests: 1 });
+  const handle = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
+  try {
+    assert.equal((await call(handle, '/api/session', { cookie: SESSION })).status, 200);
+    const refused = await call(handle, '/api/maintenance/children', {});
+    assert.equal(refused.status, 401);
+    assert.equal(refused.body.sessionRejected, true);
+    assert.match(refused.body.error, /Brightwheel no longer accepts the saved session/);
+    assert.doesNotMatch(refused.body.error, /care-album-saver login|Run `/, 'no command-line instruction in a browser');
+  } finally {
+    await handle.close();
+    await mock.close();
+  }
+});
+
 test('page-2: any other failure to read the children is not reported as a refused session', async () => {
   await freshConfigDir();
   // A pretend Brightwheel that accepts the session, then answers in a shape the tool does not

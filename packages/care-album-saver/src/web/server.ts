@@ -1156,6 +1156,13 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
               json(409, { ok: false, error: scrub(error.message) });
               return;
             }
+            // The children check meeting a session Brightwheel refuses: in the page's words,
+            // as /api/children says it, not the command line's "Run care-album-saver login".
+            if (error instanceof Error && error.name === 'SessionExpiredError') {
+              children = null;
+              json(401, { ok: false, sessionRejected: true, error: CHILDREN_REFUSED });
+              return;
+            }
             json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
             return;
           }
