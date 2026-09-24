@@ -50,6 +50,10 @@ if (!process.env.CARE_ALBUM_LOG_DIR) {
 // osascript at all while this is set; a test that exercises it passes its own stand-in.
 process.env.CARE_ALBUM_NO_PHOTOS = '1';
 
+// Checking for a new version asks GitHub. src/updates.ts refuses to while this is set; a test
+// of it passes its own stand-in for the network.
+process.env.CARE_ALBUM_NO_UPDATE_CHECK = '1';
+
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
  *

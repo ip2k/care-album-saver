@@ -406,12 +406,16 @@ test('the setup page is structurally sound and accessible', async () => {
     //
     // The project's source also covers two named files in it, and only those: the one
     // script the Photos option runs, and the page that explains it — so that a parent can
-    // read exactly what will talk to their Photos library before turning it on.
+    // read exactly what will talk to their Photos library before turning it on. And the
+    // update guide, for a copy installed some way the page cannot recognise. (A release's
+    // own page is linked too, but only once the server has checked the address is exactly
+    // this repository's releases — src/updates.ts — so it is not in the page as sent.)
     const ALLOWED = [
       'https://schools.mybrightwheel.com/',
       'https://github.com/ip2k/care-album-saver',
       'https://github.com/ip2k/care-album-saver/blob/main/packages/care-album-saver/applescript/add-to-photos.applescript',
       'https://github.com/ip2k/care-album-saver/blob/main/docs/PHOTOS.md',
+      'https://github.com/ip2k/care-album-saver/blob/main/docs/UPDATING.md',
     ];
     // The WHOLE tag, not just up to the href: the rel is asserted below, and a pattern that
     // stopped at the closing quote of href would report every link as missing it.
