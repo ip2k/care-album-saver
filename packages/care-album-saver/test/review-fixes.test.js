@@ -146,3 +146,53 @@ test('the log routes use the stand-in scheduler, so the demo never opens a real 
     await handle.close();
   }
 });
+
+// --- found by the security review itself, 2026-09-23 ---------------------------------------
+
+test('every consumer of the archive list refuses an entry that leaves the archive, and one file is never its own duplicate', async () => {
+  const { createHash } = await import('node:crypto');
+  const { findDuplicates, removeDuplicates } = await import('../dist/maintenance.js');
+  const sha = (s) => createHash('sha256').update(s).digest('hex');
+  const outside = await mkdtemp(join(tmpdir(), 'cas-contain-'));
+  const archive = join(outside, 'archive');
+  await mkdir(join(archive, 'sub'), { recursive: true });
+  await writeFile(join(outside, 'outside.jpg'), 'same-bytes');
+  await writeFile(join(archive, 'a.jpg'), 'same-bytes');
+  await writeFile(join(archive, 'only.jpg'), 'lone-bytes');
+  const rec = (path, bytes) => ({ path, bytes: bytes.length, sha256: sha(bytes), downloadedAt: '2026-09-23T00:00:00Z' });
+  await writeFile(join(archive, 'archive.json'), JSON.stringify({ schema: 2, source: 'brightwheel', updatedAt: '2026-09-23T00:00:00Z', files: [
+    rec('a.jpg', 'same-bytes'), rec('../outside.jpg', 'same-bytes'), rec('only.jpg', 'lone-bytes'), rec('sub/../only.jpg', 'lone-bytes'),
+  ] }));
+  const config = { ...DEFAULT_CONFIG, archiveDir: archive };
+  const report = await findDuplicates(config);
+  const mentioned = report.groups.flatMap((g) => [g.keep, ...g.extra]);
+  assert.ok(!mentioned.includes('../outside.jpg'), 'a copy outside the archive is not a duplicate the tool would touch');
+  assert.ok(!mentioned.some((p) => /only\.jpg$/.test(p)), 'two spellings of one file are one file');
+  await assert.rejects(() => removeDuplicates(config, { confirm: ['../outside.jpg'] }), /changed since/, 'and it cannot be named for removal');
+  assert.equal(await readFile(join(outside, 'outside.jpg'), 'utf8'), 'same-bytes', 'the file outside is untouched');
+  assert.equal(await readFile(join(archive, 'only.jpg'), 'utf8'), 'lone-bytes', 'the only copy is untouched');
+});
+
+test('a crontab that cannot be read is not treated as empty, and a write that fails is reported', async () => {
+  await freshConfigDir();
+  const calls = [];
+  const runner = (answers) => async (file, args, input) => {
+    calls.push([file, args, input]);
+    return { code: 0, stdout: '', stderr: '', ...(answers[`${file} ${args.join(' ')}`] ?? {}) };
+  };
+  const home = await mkdtemp(join(tmpdir(), 'cas-cron-'));
+  const noSystemd = { 'systemctl --user --version': { code: 127 } };
+
+  const unreadable = { platform: 'linux', home, run: runner({ ...noSystemd, 'crontab -l': { code: 1, stderr: 'crontab: permission denied' } }) };
+  await assert.rejects(() => schedule.install('19:00', unreadable), /could not be read, so nothing was changed/);
+  assert.ok(!calls.some(([f, a]) => f === 'crontab' && a[0] === '-'), 'nothing was written over it');
+
+  calls.length = 0;
+  const empty = { platform: 'linux', home, run: runner({ ...noSystemd, 'crontab -l': { code: 1, stderr: 'no crontab for sam' } }) };
+  await schedule.install('19:00', empty);
+  assert.ok(calls.some(([f, a, input]) => f === 'crontab' && a[0] === '-' && /care-album-saver/i.test(input)), '"no crontab" is the ordinary empty state, and the block is written');
+
+  calls.length = 0;
+  const refusing = { platform: 'linux', home, run: runner({ ...noSystemd, 'crontab -l': { code: 0, stdout: 'their own line\n' }, 'crontab -': { code: 1, stderr: 'not allowed' } }) };
+  await assert.rejects(() => schedule.remove(refusing), /could not be removed from your crontab, so nothing was changed/);
+});

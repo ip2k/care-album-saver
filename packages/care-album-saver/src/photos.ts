@@ -1,11 +1,12 @@
 import { mkdir, open, rm, stat, utimes } from 'node:fs/promises';
 import { platform as osPlatform } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config } from './config.js';
 import type { ManifestRecord } from './ferry/index.js';
 import { records } from './gallery.js';
 import { runProgram, type SpawnCommand } from './native.js';
+import { containedFile } from './contain.js';
 import { configDir, readJsonFile, writeSecureFile } from './paths.js';
 
 /**
@@ -172,7 +173,7 @@ interface Waiting {
 }
 
 /** Which files are due, and how many earlier ones are waiting on the parent's say-so. */
-function sortOut(config: Config, all: readonly ManifestRecord[], state: PhotosState): { due: Waiting[]; earlier: number } {
+async function sortOut(config: Config, all: readonly ManifestRecord[], state: PhotosState): Promise<{ due: Waiting[]; earlier: number }> {
   const from = config.addToPhotosFrom ? Date.parse(config.addToPhotosFrom) : Number.NEGATIVE_INFINITY;
   const root = resolve(config.archiveDir);
   const due: Waiting[] = [];
@@ -181,10 +182,11 @@ function sortOut(config: Config, all: readonly ManifestRecord[], state: PhotosSt
   for (const record of all) {
     if (!record.sha256 || state.added[record.sha256] || seen.has(record.sha256)) continue;
     seen.add(record.sha256);
-    const file = resolve(root, ...record.path.split('/'));
-    // A manifest edited by hand could name a file outside the archive. Photos is not asked
-    // to import anything this tool did not write, so those are ignored rather than trusted.
-    if (!file.startsWith(root + sep)) continue;
+    // A list edited by anything else that can write the folder could name a file outside
+    // the archive, or a link to one. Photos is not asked to import anything this tool did
+    // not write, so those are ignored rather than trusted — resolved, not compared as text.
+    const file = await containedFile(root, record.path);
+    if (!file) continue;
     const album = albumPathFor(record.path);
     // `--` separates names from files in the script's arguments; a name equal to it would
     // move that boundary. No layout writes one, so this is a lock on a door nobody uses.
@@ -202,7 +204,7 @@ function sortOut(config: Config, all: readonly ManifestRecord[], state: PhotosSt
 export async function photosStatus(config: Config, options: PhotosOptions = {}): Promise<PhotosStatus> {
   const supported = photosSupported(options.platform);
   const state = await loadState();
-  const { due, earlier } = supported ? sortOut(config, await records(config), state) : { due: [], earlier: 0 };
+  const { due, earlier } = supported ? await sortOut(config, await records(config), state) : { due: [], earlier: 0 };
   return {
     supported,
     enabled: supported && config.addToPhotos,
@@ -320,7 +322,7 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
   let missing = 0;
   try {
     const state = await loadState();
-    const { due } = sortOut(config, await records(config), state);
+    const { due } = await sortOut(config, await records(config), state);
     if (due.length === 0) return { ok: true, added: 0, remaining: 0, missing: 0 };
 
     const albums = new Map<string, Waiting[]>();
