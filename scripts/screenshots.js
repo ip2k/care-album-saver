@@ -418,7 +418,8 @@ const main = async () => {
     { selector: '.dash-head', text: 'How much is in the archive, and when it was last added to. Everything there is to change or check on is behind Settings, above.', offset: 0, side: 'left', pad: 10 },
     // Pointed at the second row rather than the gallery's top edge, so its arrow is short and
     // level instead of a long curve squeezed past the callout above it.
-    { selector: '#gallery a:nth-child(7)', text: 'What the last run brought in. Each one opens the full picture from your own disk.', offset: 0, side: 'left' },
+    // (Eight across, so the second row starts at the ninth.)
+    { selector: '#gallery a:nth-child(9)', text: 'Everything the last run brought in, a page at a time. Click one to see it full size; the arrow keys step through the rest.', offset: 0, side: 'left' },
   ]);
   await shot(page, '04-done');
   // Belt and braces: the run must have written here and nowhere else.
