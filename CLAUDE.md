@@ -59,13 +59,17 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 310 tests passing on 2026-09-23 (evening, at 3a44cbe), no network required (`pnpm test`).
+- 320 tests passing on 2026-09-23 (late evening, at b9bee3b), no network required (`pnpm test`).
   The CI matrix in `.github/workflows/ci.yml` is written for Ubuntu, macOS and Windows
-  against Node 20, 22, 24 and 26 but **has never run**. The remote exists — `origin` is
+  against Node 20, 22, 24 and 26 but **has never run** (and the review expects the Node 20
+  cells to fail: the only dependency needs Node ≥22). The remote exists — `origin` is
   https://github.com/ip2k/care-album-saver, **public**, and still empty: nothing has been
-  pushed. Before the first push, scan the whole history, not just the tree: an earlier
-  commit's screenshots held the owner's home path (fixed later, still in history). No CI
-  job builds the Docker image; `test/dockerfile.test.js` checks what it copies exists.
+  pushed. **The push is blocked on two owner actions, both in docs/SECURITY-REVIEW-2026-09-23.md:**
+  a history rewrite (eight screenshot blobs in the four earliest commits carry the owner's
+  home path or a per-user temp hash — the rewrite is rehearsed there, with the exact
+  command) and the commit-identity decision (every commit carries a personal address).
+  The review's open WARNINGs are listed there with fixes; the ★ ones go in before a first
+  release. `docs/SECURITY-REVIEW-HANDOFF.md` is the brief that review was run from.
 - **Production and development are separate (2026-09-23).** Production is a clone on
   `main` at ~/Applications/care-album-saver, changed only by `node scripts/deploy.js`,
   which builds and runs the whole suite there, puts production back on its previous commit
@@ -125,7 +129,8 @@ source lines (the counting method is below). The audit read every file: seven re
 group of files, each followed by an adversarial verifier that tried to find a use for every
 candidate; 152 verdicts, of which 56 removals, 4 un-exports, 43 comment or doc corrections, 21
 referred to the owner (see the audit merge commit and CHANGELOG), 10 kept. The mark before
-this was the initial commit (26f8b5b) at 2,593 lines.
+this was the initial commit (26f8b5b) at 2,593 lines. The security review that followed
+(docs/SECURITY-REVIEW-2026-09-23.md) found eleven defects that were fixed the same night.
 
 The global rule is an audit every ~10,000 lines added since the last mark, so the next one
 is due at roughly **22,721** lines.
