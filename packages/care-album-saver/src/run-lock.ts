@@ -120,6 +120,19 @@ export interface RunLockOptions {
   onWait?: (message: string) => void;
   /** For tests: how often a holder refreshes the lock, and so how long a doubtful one is given. */
   touchEveryMs?: number;
+  /**
+   * Stop, pressed or typed while taking the lock waits: the wait ends at once, the earlier
+   * holder's lock is left where it was, and LockWaitStoppedError is thrown.
+   */
+  signal?: AbortSignal;
+}
+
+/** Asked to stop while waiting to see whether an old-looking lock's holder was still working. */
+export class LockWaitStoppedError extends Error {
+  constructor() {
+    super('Stopped while waiting to see whether an earlier run was still going. Nothing was changed.');
+    this.name = 'LockWaitStoppedError';
+  }
 }
 
 /** Whether a process with this id exists on this computer. */
@@ -180,8 +193,18 @@ function judge(seen: Sighting): 'held' | 'abandoned' | 'unsure' {
   // instant between its owner creating it and writing to it, and reading it in that instant
   // must not be taken as licence to delete it. Only age decides for one of those.
   if (Date.now() - seen.touched <= STALE_MS) return 'held';
-  return here ? 'unsure' : 'abandoned';
+  // macOS takes its host name from the network it is on when none is set, so a Mac that
+  // slept mid-run on one network can wake as `name.lan` holding a lock it wrote as
+  // `name.localdomain`. A name that differs only after the first dot, with the pid alive
+  // here, may be this computer: it is given the wait rather than taken over at once. Never
+  // the other way — a dead pid under such a name is not proof of anything, because two
+  // computers can share a short name ("MacBook-Pro"), so that lock is judged by age alone.
+  const perhapsHere =
+    !here && seen.holder !== null && shortName(seen.holder.host) === shortName(hostname()) && alive(seen.holder.pid);
+  return here || perhapsHere ? 'unsure' : 'abandoned';
 }
+
+const shortName = (host: string): string => host.split('.')[0]!.toLowerCase();
 
 /**
  * Take the folder's lock, or throw RunInProgressError.
@@ -217,7 +240,8 @@ export async function takeRunLock(root: string, options: RunLockOptions = {}): P
       // that tells the two cases apart by what the holder does rather than by its age.
       waited = true;
       options.onWait?.('An earlier run left this folder marked as in use. Checking whether it is still going; this takes a minute.');
-      await delay(2 * touchEveryMs);
+      await delay(2 * touchEveryMs, undefined, { signal: options.signal }).catch(() => {});
+      if (options.signal?.aborted) throw new LockWaitStoppedError();
       const again = await look(file);
       if (!again) continue;
       // Refreshed in the meantime, or replaced by a new holder: either way, someone is working.

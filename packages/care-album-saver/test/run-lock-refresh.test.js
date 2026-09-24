@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RUN_LOCK_FILENAME, takeRunLock } from '../dist/index.js';
+import { BrightwheelClient, DEFAULT_CONFIG, RUN_LOCK_FILENAME, Secret, startMockBrightwheel, sync, takeRunLock } from '../dist/index.js';
 
 /**
  * A held lock stays held for as long as its holder is working, however quiet the work is.
@@ -90,6 +90,73 @@ test('an old lock whose process number is alive but which nobody refreshes is ta
     assert.ok(Date.parse(now.startedAt) > Date.now() - 60_000, 'the lock is the new holder\'s');
     await lock.release();
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a live holder under this Mac\'s name on another network is given the wait too, never taken at once', async () => {
+  // macOS takes its host name from the network when none is set: a Mac that slept mid-run
+  // on one network wakes on another as `name.lan`, holding a lock it wrote as `name.localdomain`.
+  const dir = await mkdtemp(join(tmpdir(), 'cas-lock2-renamed-'));
+  const file = join(dir, RUN_LOCK_FILENAME);
+  const short = hostname().split('.')[0];
+  try {
+    for (const [host, waits] of [[`${short}.some-other-network`, true], ['a-different-computer.lan', false]]) {
+      await writeFile(file, JSON.stringify({ pid: process.pid, host, startedAt: hourAgo().toISOString() }));
+      await utimes(file, hourAgo(), hourAgo());
+      const said = [];
+      const lock = await takeRunLock(dir, { touchEveryMs: 30, onWait: (m) => said.push(m) });
+      assert.equal(said.length, waits ? 1 : 0, host);
+      await lock.release();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Stop during that wait ends it at once, and the earlier holder\'s lock is left where it was', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cas-lock2-stop-'));
+  const file = join(dir, RUN_LOCK_FILENAME);
+  try {
+    const before = JSON.stringify({ pid: process.pid, host: hostname(), startedAt: hourAgo().toISOString() });
+    await writeFile(file, before);
+    await utimes(file, hourAgo(), hourAgo());
+    const stop = new AbortController();
+    const started = Date.now();
+    await assert.rejects(
+      () => takeRunLock(dir, { touchEveryMs: 5000, signal: stop.signal, onWait: () => setTimeout(() => stop.abort(), 20) }),
+      { name: 'LockWaitStoppedError' },
+    );
+    assert.ok(Date.now() - started < 2000, 'not the full ten seconds');
+    assert.equal(await readFile(file, 'utf8'), before, 'the other holder\'s lock is untouched');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a run stopped during that wait ends as stopped, having asked Brightwheel nothing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cas-lock2-stoprun-'));
+  const mock = await startMockBrightwheel({ validSession: 'test-session-value', activitiesPerStudent: 1 });
+  try {
+    await writeFile(join(dir, RUN_LOCK_FILENAME), JSON.stringify({ pid: process.pid, host: hostname(), startedAt: hourAgo().toISOString() }));
+    await utimes(join(dir, RUN_LOCK_FILENAME), hourAgo(), hourAgo());
+    const client = new BrightwheelClient({ session: new Secret('test-session-value'), baseUrl: `${mock.url}/api/v1`, delayMs: 0 });
+    const stop = new AbortController();
+    const phases = [];
+    const result = await sync(
+      client,
+      { ...DEFAULT_CONFIG, archiveDir: dir, delayMs: 0 },
+      (p) => {
+        phases.push(p.phase);
+        if (/Checking whether it is still going/.test(p.message)) stop.abort();
+      },
+      { allowTemporaryDir: true, signal: stop.signal },
+    );
+    assert.equal(result.stopped, true);
+    assert.equal(phases.at(-1), 'stopped');
+    assert.deepEqual(mock.requests, [], 'not even the session was checked');
+  } finally {
+    await mock.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

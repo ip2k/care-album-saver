@@ -19,7 +19,7 @@ import type { Config } from './config.js';
 import { applyMetadata, closeMetadata } from './metadata.js';
 import { realFolderUnder } from './contain.js';
 import { ARCHIVE_DIR_MODE, checkArchiveDir } from './safety.js';
-import { takeRunLock } from './run-lock.js';
+import { LockWaitStoppedError, takeRunLock, type RunLock } from './run-lock.js';
 import { rememberSaved, savedFingerprints } from './fingerprints.js';
 
 export interface SyncProgress {
@@ -494,14 +494,33 @@ export async function sync(
   // The lock keeps itself fresh on a timer for as long as it is held, so a download that
   // takes an hour reports nothing and still holds the folder (security review fs-6). Taking
   // it waits, and says so, only when an earlier holder's lock looks abandoned but may not be.
-  const lock = await takeRunLock(config.archiveDir, {
-    onWait: (message) => onProgress({ phase: 'starting', message, saved: 0, skipped: 0, failed: 0 }),
-  });
+  let lock: RunLock;
+  try {
+    lock = await takeRunLock(config.archiveDir, {
+      onWait: (message) => onProgress({ phase: 'starting', message, saved: 0, skipped: 0, failed: 0 }),
+      signal: options.signal,
+    });
+  } catch (error) {
+    // Stop pressed during that wait: a stopped run, like any other, not a failure.
+    if (error instanceof LockWaitStoppedError) return stoppedBeforeStarting(config, onProgress);
+    throw error;
+  }
   try {
     return await syncHoldingTheLock(client, config, onProgress, options, verdict.warning);
   } finally {
     await lock.release();
   }
+}
+
+/** A run asked to stop before it asked Brightwheel anything. */
+function stoppedBeforeStarting(config: Config, onProgress: (p: SyncProgress) => void): SyncResult {
+  const result: SyncResult = { ...freshResult(config), stopped: true };
+  onProgress({ phase: 'stopped', message: 'Stopped before anything was asked of Brightwheel.', ...counts(result) });
+  return result;
+}
+
+function freshResult(config: Config): SyncResult {
+  return { saved: 0, skipped: 0, failed: 0, students: [], archiveDir: config.archiveDir, warnings: [], stopped: false };
 }
 
 async function syncHoldingTheLock(
@@ -511,15 +530,9 @@ async function syncHoldingTheLock(
   options: { signal?: AbortSignal },
   archiveWarning?: string,
 ): Promise<SyncResult> {
-  const result: SyncResult = {
-    saved: 0,
-    skipped: 0,
-    failed: 0,
-    students: [],
-    archiveDir: config.archiveDir,
-    warnings: [],
-    stopped: false,
-  };
+  // Stopped while the lock was being taken, which can wait a minute: see takeRunLock.
+  if (options.signal?.aborted) return stoppedBeforeStarting(config, onProgress);
+  const result = freshResult(config);
 
   onProgress({ phase: 'starting', message: 'Checking your Brightwheel session', ...counts(result) });
 

@@ -592,7 +592,9 @@ async function main(): Promise<number> {
         if (error instanceof Error && error.name === 'RunInProgressError') {
           stdout.write(`  ${error.message}\n`);
           if (values.scheduled) {
-            await schedule.appendLog(`SKIPPED another run was already saving photos`);
+            // The refusal itself: it may be a repair or a duplicate removal holding the folder,
+            // not another run, and on Linux and Windows this line is the only record of why.
+            await schedule.appendLog(`SKIPPED ${error.message}`);
           }
           return 0;
         }
