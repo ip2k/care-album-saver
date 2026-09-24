@@ -1,6 +1,6 @@
-import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
-import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from './ferry/index.js';
+import { Manifest, MANIFEST_FILENAME, hashFile, writeAtomically, type ManifestRecord } from './ferry/index.js';
 import { containedFile } from './contain.js';
 import type { BrightwheelClient } from './api/client.js';
 import type { Config } from './config.js';
@@ -26,7 +26,11 @@ import { formatBytes } from './units.js';
  * clever with them is not a thing this tool gets to do.
  */
 
-/** Files that belong to the archive itself rather than to any photo. */
+/**
+ * Files that belong to the archive itself rather than to any photo. `archive.json.tmp` is
+ * what a version before writeAtomically left behind when it crashed mid-save; today's
+ * temporary files start with a dot, which isArchiveOwnFile skips as well.
+ */
 const ARCHIVE_FILES = new Set([MANIFEST_FILENAME, `${MANIFEST_FILENAME}.tmp`, 'README.md']);
 
 /** Archive-relative path, forward slashes on every platform — the manifest's own spelling. */
@@ -38,7 +42,12 @@ interface DiskFile {
   bytes: number;
 }
 
-/** Every file under the archive root, with its size. Directories are walked, not reported. */
+/**
+ * Every file under the archive root, with its size. Directories are walked, not reported —
+ * except hidden ones (a name starting with a dot), which hold nobody's photos: the folder a
+ * save is staged in (`.saving-…`, see sync.ts) left behind by a run that was killed, and
+ * things like `.git` that a parent's own tools put there.
+ */
 export async function walkArchive(root: string): Promise<DiskFile[]> {
   const found: DiskFile[] = [];
   const visit = async (dir: string): Promise<void> => {
@@ -53,7 +62,7 @@ export async function walkArchive(root: string): Promise<DiskFile[]> {
     for (const entry of entries) {
       const absolute = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await visit(absolute);
+        if (!entry.name.startsWith('.')) await visit(absolute);
         continue;
       }
       if (!entry.isFile()) continue;
@@ -83,9 +92,15 @@ function isCompanion(rel: string): boolean {
   return /\.[A-Za-z0-9]{1,8}\.(json|xmp)$/i.test(rel);
 }
 
+/**
+ * The archive's own files, and the litter a killed run can leave: hidden names (the
+ * temporary files writeAtomically makes), and — from versions before saves were staged —
+ * a download's `.part` and ExifTool's `_exiftool_tmp`. None of them is a photo, and a
+ * repair that adopted one into the list would promise a photograph that is half a file.
+ */
 function isArchiveOwnFile(rel: string): boolean {
   const name = rel.slice(rel.lastIndexOf(posix.sep) + 1);
-  return ARCHIVE_FILES.has(name) || name.startsWith('.');
+  return ARCHIVE_FILES.has(name) || name.startsWith('.') || name.endsWith('.part') || name.endsWith('_exiftool_tmp');
 }
 
 /** Bytes as this computer's file manager would say them. See units.ts for why that differs. */
@@ -125,11 +140,8 @@ async function readManifestJson(archiveDir: string): Promise<{ data: Record<stri
 
 /** Write the manifest back, atomically and owner-only, exactly as the run would. */
 async function writeManifestJson(archiveDir: string, data: Record<string, unknown>, records: ManifestRecord[]): Promise<void> {
-  const target = join(archiveDir, MANIFEST_FILENAME);
-  const temp = `${target}.tmp`;
   const payload = { ...data, files: records, updatedAt: new Date().toISOString() };
-  await writeFile(temp, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 });
-  await rename(temp, target);
+  await writeAtomically(join(archiveDir, MANIFEST_FILENAME), JSON.stringify(payload, null, 2), 0o600);
 }
 
 // ------------------------------------------------------------------ 1. who is on the account

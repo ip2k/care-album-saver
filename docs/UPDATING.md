@@ -91,9 +91,11 @@ first until it is asked for the newest one:
 npx care-album-saver@latest setup
 ```
 
-(or `pnpm dlx`, `yarn dlx`, `bunx` in place of `npx`). A daily run cannot be set up from a
-copy like that — the package manager can delete its cache at any time — which is one more
-reason to install it properly.
+(or `pnpm dlx`, `yarn dlx`, `bunx` in place of `npx`). Do not set up the daily run from a
+copy like that: nothing stops you, but the package manager can delete its cache at any time,
+and the daily run stops with it (the setup page then says it has not run). That is one more
+reason to install it properly. If another copy already runs the daily run, this one leaves it
+alone unless you agree on the page to move it.
 
 ### You deployed it with scripts/deploy.js
 

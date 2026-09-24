@@ -29,3 +29,34 @@ export async function containedFile(root: string, rel: string): Promise<string |
     return (error as NodeJS.ErrnoException).code === 'ENOENT' ? inside(candidate) : null;
   }
 }
+
+/**
+ * Whether every folder from the archive root down to `root/rel` is a real folder, not a link.
+ *
+ * The write-side partner of containedFile. Week and child folders have names anyone can work
+ * out (a child's name, an ISO week), so another writer of the archive can make one of them a
+ * symbolic link — or, on Windows, a junction — to a folder elsewhere before this tool gets
+ * there. `mkdir` accepts the link as the folder, and everything saved "into the archive"
+ * then lands in, and overwrites things in, the folder it points at (security review fs-2,
+ * found by the adversarial pass). The root itself may be a link: a parent may well keep
+ * their archive on another drive through one. What is below it may not.
+ *
+ * Component by component with lstat rather than by comparing realpaths, so that a folder
+ * whose case differs from the name asked for, on a disk that ignores case, is not taken for
+ * an escape. With `notYet`, a folder that does not exist yet passes — nothing below it can be
+ * a link — so it can be asked before `mkdir` makes anything inside a link's target.
+ */
+export async function realFolderUnder(root: string, rel: string, { notYet = false } = {}): Promise<boolean> {
+  let path = resolve(root);
+  for (const part of rel.split('\\').join('/').split('/').filter((p) => p !== '' && p !== '.')) {
+    if (part === '..') return false;
+    path = resolve(path, part);
+    try {
+      const found = await lstat(path);
+      if (found.isSymbolicLink() || !found.isDirectory()) return false;
+    } catch (error) {
+      return notYet && (error as NodeJS.ErrnoException).code === 'ENOENT';
+    }
+  }
+  return true;
+}

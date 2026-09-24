@@ -1,5 +1,6 @@
-import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { writeAtomically } from './atomic.js';
 import { transferIdentity } from './url.js';
 
 const MANIFEST_SCHEMA = 2;
@@ -211,10 +212,11 @@ export class Manifest {
    * manifest after a crash would make the tool forget files it actually has and
    * re-download them, so the rename (which is atomic on POSIX) matters.
    *
-   * The mode goes on the *create*, not on a `chmod` afterwards: doing it in two steps
-   * leaves a window, however short, in which a file describing people is readable by every
-   * account on the machine. The rename carries the mode across with it, which also means a
-   * manifest left at 0644 by an older version is replaced rather than corrected in place.
+   * The mode is set on the temporary file before anything is written into it, so a file
+   * describing people is never readable by every account on the machine, not even briefly.
+   * The rename carries the mode across with it, which also means a manifest left at 0644 by
+   * an older version is replaced rather than corrected in place. See writeAtomically for
+   * why the temporary file's name is not `archive.json.tmp` any more.
    */
   async save(): Promise<void> {
     const data: ManifestData = {
@@ -230,15 +232,7 @@ export class Manifest {
       state: this.state,
       files: this.records,
     };
-    const target = join(this.root, MANIFEST_FILENAME);
-    const temp = `${target}.tmp`;
-    await writeFile(temp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: MANIFEST_FILE_MODE });
-    if (process.platform !== 'win32') {
-      // Re-assert: the create mode is filtered by the process umask, and a temp file left
-      // behind by a crashed run is truncated by the write above but keeps its old mode.
-      await chmod(temp, MANIFEST_FILE_MODE);
-    }
-    await rename(temp, target);
+    await writeAtomically(join(this.root, MANIFEST_FILENAME), JSON.stringify(data, null, 2), MANIFEST_FILE_MODE);
   }
 }
 

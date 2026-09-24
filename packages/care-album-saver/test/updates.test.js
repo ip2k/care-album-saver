@@ -162,7 +162,7 @@ test('how it was installed, from where its files are', async () => {
   assert.equal(kind(pkg, { inContainer: true }), 'docker');
   // Installed with npm inside somebody's own git project: npm's, not a clone of this one.
   assert.equal(kind(join(fixture, 'node_modules', 'care-album-saver')), 'npm-local');
-  await writeFile(join(fixture, '.care-album-saver-production'), 'production\n');
+  await writeFile(join(fixture, '.care-album-saver-production'), `${fixture}\nproduction\n`);
   assert.equal(kind(pkg), 'production');
 });
 

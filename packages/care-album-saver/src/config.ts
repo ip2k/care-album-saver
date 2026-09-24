@@ -4,7 +4,7 @@ import { acceptableUserAgent } from './api/identity.js';
 
 /** RFC 6265 cookie-octet: what a cookie value may contain, and all a saved one may hold. */
 const COOKIE_OCTETS = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/;
-import { configPath, defaultArchiveDir, readJsonFile, sessionPath, writeSecureFile } from './paths.js';
+import { configPath, defaultArchiveDir, readJsonFile, sessionPath, UnreadableFileError, writeSecureFile } from './paths.js';
 
 export interface Config {
   /** Where the photos are saved. */
@@ -77,6 +77,13 @@ export interface ScheduleRecord {
    * Recorded at install so that "set up, never ran" can say which of its two causes it is.
    */
   fragilePath?: string | null;
+  /**
+   * The copy of the tool the job runs: the absolute path of its `cli.js`. Settings are
+   * shared by every copy on the computer, so this is how one copy knows the daily run
+   * belongs to another. Absent in records written before it existed. See
+   * ScheduleOwnedElsewhereError.
+   */
+  cliPath?: string;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -95,9 +102,56 @@ export const DEFAULT_CONFIG: Config = {
   checkForUpdates: null,
 };
 
+/**
+ * The settings file is there but cannot be used.
+ *
+ * Refused rather than replaced by the defaults, the way ManifestUnusableError refuses a
+ * damaged manifest: the defaults mean "a new folder, and every child on the account", so
+ * carrying on would start a second archive from nothing (security review fs-5).
+ */
+export class ConfigUnusableError extends Error {
+  constructor(public readonly path: string, reason: string) {
+    super(
+      `Your settings (${path}) cannot be used: ${reason}. Nothing has been changed and nothing ` +
+        'has been downloaded — without them this tool would not know which folder your photos are ' +
+        'in or which children to save. Correct the file, or move it somewhere safe and set the tool ' +
+        'up again in the setup assistant; until then the daily run saves nothing.',
+    );
+    this.name = 'ConfigUnusableError';
+  }
+}
+
 export async function loadConfig(): Promise<Config> {
-  const stored = await readJsonFile<Partial<Config>>(configPath());
-  return { ...DEFAULT_CONFIG, ...(stored ?? {}) };
+  let stored: unknown;
+  try {
+    stored = await readJsonFile<unknown>(configPath());
+  } catch (error) {
+    if (error instanceof UnreadableFileError) throw new ConfigUnusableError(error.path, error.reason);
+    throw error;
+  }
+  if (stored === null) return { ...DEFAULT_CONFIG };
+  if (typeof stored !== 'object' || Array.isArray(stored)) {
+    throw new ConfigUnusableError(configPath(), 'it does not contain settings');
+  }
+  const wrong = wronglyTyped(stored as Record<string, unknown>);
+  if (wrong) throw new ConfigUnusableError(configPath(), `its "${wrong}" setting is not the kind of value it should be`);
+  return { ...DEFAULT_CONFIG, ...(stored as Partial<Config>) };
+}
+
+/**
+ * The first setting whose value would change what a run does if it were ignored: the
+ * folder, the choice of children, the daily run's record. Checked because the fallback is not
+ * harmless — `includeStudents: "Robin"` read as "not a list" meant every child on the
+ * account, and a folder that is not a string meant the default one.
+ */
+function wronglyTyped(stored: Record<string, unknown>): string | null {
+  const present = (key: string) => key in stored && stored[key] !== undefined;
+  if (present('archiveDir') && (typeof stored.archiveDir !== 'string' || stored.archiveDir === '')) return 'archiveDir';
+  if (present('includeStudents') && !(Array.isArray(stored.includeStudents) && stored.includeStudents.every((s) => typeof s === 'string'))) {
+    return 'includeStudents';
+  }
+  if (present('schedule') && stored.schedule !== null && (typeof stored.schedule !== 'object' || Array.isArray(stored.schedule))) return 'schedule';
+  return null;
 }
 
 export async function saveConfig(config: Config): Promise<void> {
@@ -136,19 +190,48 @@ export async function loadSession(): Promise<{
     if (!COOKIE_OCTETS.test(value)) return null;
     return { session: new Secret(value), savedAt: new Date(), email: null, userAgent: null };
   }
-  const stored = await readJsonFile<StoredSession>(sessionPath());
-  if (!stored?.cookie) return null;
-  // A saved value that could not be sent as a cookie header is treated as no session at
-  // all: an HTTP client asked to send it would refuse, quoting it back in its complaint.
-  if (typeof stored.cookie !== 'string' || !COOKIE_OCTETS.test(stored.cookie)) return null;
+  let stored: StoredSession | null;
+  try {
+    stored = await readJsonFile<StoredSession>(sessionPath());
+  } catch (error) {
+    if (error instanceof UnreadableFileError) throw new SessionUnusableError(error.path, error.reason);
+    throw error;
+  }
+  if (stored === null) return null;
+  // A file that is there but holds no usable session is damaged, not "never connected" —
+  // including a value that could not be sent as a cookie header, which an HTTP client would
+  // refuse while quoting it back. The message names none of it.
+  const cookie = (stored as { cookie?: unknown } | null)?.cookie;
+  if (typeof cookie !== 'string' || !COOKIE_OCTETS.test(cookie)) {
+    throw new SessionUnusableError(sessionPath(), 'it does not hold a session this tool can use');
+  }
   return {
-    session: new Secret(stored.cookie),
+    session: new Secret(cookie),
+    // An unreadable date is an Invalid Date, which callers that print it must check for.
     savedAt: new Date(stored.savedAt),
-    email: stored.email ?? null,
+    email: typeof stored.email === 'string' ? stored.email : null,
     // Re-checked on the way in: this file can be edited by hand, and the value goes out as
     // a header on every request.
     userAgent: acceptableUserAgent(stored.userAgent),
   };
+}
+
+/**
+ * The saved session is there but cannot be read.
+ *
+ * Not the same as never having connected, and no longer reported as if it were (security
+ * review fs-5): "you are signed out" sends a parent to look for a reason at Brightwheel's
+ * end. The remedy is the same — connect again, which replaces the file — but the message is
+ * true. The setup page shows it on step 1; see /api/state.
+ */
+export class SessionUnusableError extends Error {
+  constructor(public readonly path: string, reason: string) {
+    super(
+      `The saved Brightwheel session (${path}) cannot be read: ${reason}. Connect again to replace it: ` +
+        'step 1 of the setup assistant, or care-album-saver login.',
+    );
+    this.name = 'SessionUnusableError';
+  }
 }
 
 export async function saveSession(cookie: Secret, email: string | null, userAgent: string | null = null): Promise<void> {

@@ -7,7 +7,7 @@ import type { ManifestRecord } from './ferry/index.js';
 import { records } from './gallery.js';
 import { runProgram, type SpawnCommand } from './native.js';
 import { containedFile } from './contain.js';
-import { configDir, readJsonFile, writeSecureFile } from './paths.js';
+import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 
 /**
  * Adding saved photos to the Photos app, on a Mac, when the parent has asked for it.
@@ -124,6 +124,12 @@ export interface PhotosStatus {
   earlier: number;
   lastAttempt: PhotosAttempt | null;
   scriptUrl: string;
+  /**
+   * Why nothing can be added until someone looks: the record of what was added cannot be
+   * read. The status still comes back, so the page can say so beside the switch that turns
+   * it off, rather than hiding the whole card as if this were not a Mac.
+   */
+  problem: string | null;
 }
 
 /**
@@ -157,7 +163,22 @@ export function albumPathFor(recordPath: string): string[] {
 }
 
 async function loadState(): Promise<PhotosState> {
-  const stored = await readJsonFile<PhotosState>(statePath());
+  let stored: PhotosState | null;
+  try {
+    stored = await readJsonFile<PhotosState>(statePath());
+  } catch (error) {
+    // Read as empty, a damaged record would say nothing had ever been added, and the next
+    // run would hand every photo since the option was turned on to Photos a second time —
+    // and to iCloud with it. So it stops here instead (security review fs-5).
+    if (error instanceof UnreadableFileError) {
+      throw new Error(
+        `The record of what has already been added to Photos (${error.path}) cannot be read: ${error.reason}. ` +
+          'Nothing was added, so nothing has been added twice. Moving that file somewhere safe starts the ' +
+          'record again, which adds every photo since you turned this on a second time.',
+      );
+    }
+    throw error;
+  }
   const added = stored && typeof stored.added === 'object' && stored.added !== null ? stored.added : {};
   return { added, lastAttempt: stored?.lastAttempt ?? null };
 }
@@ -203,8 +224,18 @@ async function sortOut(config: Config, all: readonly ManifestRecord[], state: Ph
 /** What the page shows: whether it is on, and what is waiting. */
 export async function photosStatus(config: Config, options: PhotosOptions = {}): Promise<PhotosStatus> {
   const supported = photosSupported(options.platform);
-  const state = await loadState();
-  const { due, earlier } = supported ? await sortOut(config, await records(config), state) : { due: [], earlier: 0 };
+  let state: PhotosState = { added: {}, lastAttempt: null };
+  let problem: string | null = null;
+  // Only where it can matter: a record left behind on a computer that cannot use it, or
+  // with the option off, is nobody's problem until the option is on.
+  if (supported) {
+    try {
+      state = await loadState();
+    } catch (error) {
+      if (config.addToPhotos) problem = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const { due, earlier } = supported && !problem ? await sortOut(config, await records(config), state) : { due: [], earlier: 0 };
   return {
     supported,
     enabled: supported && config.addToPhotos,
@@ -214,6 +245,7 @@ export async function photosStatus(config: Config, options: PhotosOptions = {}):
     earlier,
     lastAttempt: state.lastAttempt ?? null,
     scriptUrl: PHOTOS_SCRIPT_URL,
+    problem,
   };
 }
 

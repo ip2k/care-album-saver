@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { join, posix, sep } from 'node:path';
 import {
@@ -11,11 +11,13 @@ import {
   uniqueName,
   weekFolder,
   weekLabel,
+  writeAtomically,
 } from './ferry/index.js';
 import type { ActivityListOptions, ActivityPage, BrightwheelClient } from './api/client.js';
 import type { MediaActivity, Student } from './api/schema.js';
 import type { Config } from './config.js';
 import { applyMetadata, closeMetadata } from './metadata.js';
+import { realFolderUnder } from './contain.js';
 import { ARCHIVE_DIR_MODE, checkArchiveDir } from './safety.js';
 import { takeRunLock } from './run-lock.js';
 
@@ -129,15 +131,92 @@ function nameFor(activity: MediaActivity, ext: string): { stem: string; ext: str
   return { stem: `${stamp}_${shortId}`, ext };
 }
 
-function extensionOf(url: string, kind: 'image' | 'video'): string {
+/**
+ * The extensions a saved file may carry: photographs and videos, and nothing a computer runs
+ * or a browser renders as a page.
+ *
+ * The extension used to be whatever two to five letters ended the media URL, and the URL is
+ * chosen by the server. `.html`, `.svg`, `.exe` and `.lnk` were all accepted — into a folder
+ * a parent opens by double-clicking what is in it, where the extension decides which
+ * program opens the file (security review fs-4).
+ *
+ * One list for both kinds, not one per kind. The kind is the post's, not the file's: a
+ * video post with no video carries its still (`thumb.jpg`), and naming that JPEG `.mp4`
+ * sends it to a video player that cannot play it and makes ExifTool refuse to tag it. So an
+ * extension on this list is kept whatever the post was, and only an extension that is not —
+ * or none — falls back to the kind's usual one. Everything here is a format some photo or
+ * video app opens and none executes; the ones ExifTool cannot write (bmp, webm, avi) are
+ * still saved, with the `.json` beside them carrying what could not go in.
+ */
+const MEDIA_EXTENSIONS: ReadonlySet<string> = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'avif', 'tif', 'tiff', 'bmp',
+  'mp4', 'mov', 'm4v', '3gp', 'webm', 'avi',
+]);
+
+/** The extension to save a media URL's file under: from MEDIA_EXTENSIONS, or the kind's own. */
+export function extensionOf(url: string, kind: 'image' | 'video'): string {
   try {
-    const path = new URL(url).pathname;
-    const m = path.match(/\.([a-zA-Z0-9]{2,5})$/);
-    if (m?.[1]) return m[1];
+    const ext = /\.([a-zA-Z0-9]{2,5})$/.exec(new URL(url).pathname)?.[1]?.toLowerCase();
+    if (ext && MEDIA_EXTENSIONS.has(ext)) return ext;
   } catch {
     /* fall through */
   }
   return kind === 'video' ? 'mp4' : 'jpg';
+}
+
+/**
+ * Save one item in a private folder inside its week folder, then move it into place.
+ *
+ * Everything that happens to a file before it is finished happens under a name somebody
+ * else could work out: the download's `<name>.part`, ExifTool's own `<name>_exiftool_tmp`,
+ * the `.xmp` sidecar ExifTool writes, the `.json` beside it. In a folder that other things
+ * can write to, each of those was a place to plant a symbolic link — and ExifTool follows a
+ * dangling one, so a planted link sent the tagged photo, or a sidecar naming the child and
+ * the school, to a folder of the planter's choosing (security review fs-2, found by the
+ * adversarial pass). So the work is done in a folder with an unpredictable name that only
+ * this account can open (mkdtemp makes it 0700), and the finished files are renamed into the
+ * week folder: a rename replaces a link at the name rather than following it. The folder's
+ * name starts with a dot, so one left behind by a run that was killed is not taken for
+ * photographs; see walkArchive.
+ *
+ * The notes go into place first and the photo last, so a photo under its real name always
+ * has its notes beside it. The `.json` is part of saving a photo, as it always was; the
+ * `.xmp` is an extra the parent asked for, and one that cannot be put in place is reported
+ * (`xmpNotPlaced`) without failing the photo, as a sidecar ExifTool could not write is.
+ */
+async function saveStaged<T extends object>(
+  dir: string,
+  filename: string,
+  work: (staged: string) => Promise<T>,
+): Promise<T & { staging: string; xmpNotPlaced: string | null }> {
+  const staging = await mkdtemp(join(dir, '.saving-'));
+  const place = (name: string) =>
+    rename(join(staging, name), join(dir, name)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  try {
+    const done = await work(join(staging, filename));
+    await place(`${filename}.json`);
+    let xmpNotPlaced: string | null = null;
+    await place(`${filename}.xmp`).catch((error: NodeJS.ErrnoException) => {
+      xmpNotPlaced = `The .xmp sidecar for ${filename} could not be put in place (${error.code ?? error.message}); the photo itself is saved.`;
+    });
+    await rename(join(staging, filename), join(dir, filename));
+    return { ...done, staging, xmpNotPlaced };
+  } finally {
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** A child's or a week's folder in the archive is a link to somewhere else. See realFolderUnder. */
+class FolderOutsideArchiveError extends Error {
+  constructor(rel: string) {
+    super(
+      `The folder ${rel} in your archive is a link to a folder somewhere else, so nothing was saved into it. ` +
+        'Replace it with an ordinary folder and run again.',
+    );
+    this.name = 'FolderOutsideArchiveError';
+  }
 }
 
 /**
@@ -172,7 +251,8 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     'Saved by care-album-saver. These files are yours; nothing here phones home.',
     '',
   ].join('\n');
-  await writeFile(join(dir, 'README.md'), body, 'utf8');
+  // A fixed name in a folder other things can write to: see writeAtomically.
+  await writeAtomically(join(dir, 'README.md'), body);
 }
 
 /**
@@ -565,51 +645,62 @@ async function syncHoldingTheLock(
 
           const rel = folderFor(config, student, activity.postedAt);
           const dir = join(config.archiveDir, rel);
-          if (!seenFolders.has(dir)) {
-            await mkdir(dir, { recursive: true, mode: ARCHIVE_DIR_MODE });
-            await writeWeekReadme(dir, activity.postedAt, student.fullName);
-            seenFolders.add(dir);
-            const existing = await readdir(dir).catch(() => [] as string[]);
-            takenByFolder.set(dir, new Set(existing.map((f) => f.toLowerCase())));
-          }
-          const taken = takenByFolder.get(dir)!;
-
           const { stem, ext } = nameFor(activity, extensionOf(activity.url, activity.kind));
-          const filename = uniqueName(stem, ext, taken);
-          const target = join(dir, filename);
-
-          onProgress({
-            phase: 'downloading',
-            student: student.fullName,
-            message: `Saving ${filename}`,
-            ...counts(result),
-            ...seen,
-          });
+          // What the file will most likely be called, for a message about a folder that is
+          // refused before there is a list of the names already in it.
+          let filename = uniqueName(stem, ext, new Set());
 
           try {
-            const dl = await fetchMedia(walk, page, activity, target);
+            if (!seenFolders.has(dir)) {
+              // Checked before mkdir, which would otherwise create folders inside a link's
+              // target, and again after it, for a link made in between. See realFolderUnder.
+              const refused = new FolderOutsideArchiveError(rel);
+              if (!(await realFolderUnder(config.archiveDir, rel, { notYet: true }))) throw refused;
+              await mkdir(dir, { recursive: true, mode: ARCHIVE_DIR_MODE });
+              if (!(await realFolderUnder(config.archiveDir, rel))) throw refused;
+              await writeWeekReadme(dir, activity.postedAt, student.fullName);
+              seenFolders.add(dir);
+              const existing = await readdir(dir).catch(() => [] as string[]);
+              takenByFolder.set(dir, new Set(existing.map((f) => f.toLowerCase())));
+            }
+            const taken = takenByFolder.get(dir)!;
+            filename = uniqueName(stem, ext, taken);
+            const target = join(dir, filename);
+
+            onProgress({
+              phase: 'downloading',
+              student: student.fullName,
+              message: `Saving ${filename}`,
+              ...counts(result),
+              ...seen,
+            });
+
+            const saved = await saveStaged(dir, filename, async (staged) => {
+              const dl = await fetchMedia(walk, page, activity, staged);
+              const metadata = await applyMetadata({
+                filePath: staged,
+                activity,
+                student,
+                tagChildName: config.tagChildName,
+                tagNote: config.tagNote,
+                stripLocation: config.stripLocation,
+                writeSidecar: config.writeSidecar,
+              });
+              // Hashed after the tags go in, not before: embedding rewrites the file, so a
+              // hash taken on the way past describes a file that no longer exists and can
+              // never be used to check the archive. This one is the file as it is placed.
+              return { dl, metadata, sha256: await hashFile(staged) };
+            });
+            const { dl, metadata, sha256 } = saved;
             taken.add(filename.toLowerCase());
 
-            const metadata = await applyMetadata({
-              filePath: target,
-              activity,
-              student,
-              tagChildName: config.tagChildName,
-              tagNote: config.tagNote,
-              stripLocation: config.stripLocation,
-              writeSidecar: config.writeSidecar,
-            });
             // Either failure is worth telling the person about: the tags not going into
             // the file, or the .xmp sidecar they asked for not being written. Reporting
             // only the first would make a failed sidecar silent.
             if ((!metadata.embedded || metadata.xmpSidecar === false) && metadata.reason && result.warnings.length < 3) {
-              result.warnings.push(metadata.reason);
+              result.warnings.push(metadata.reason.split(saved.staging).join(dir));
             }
-
-            // Hashed after the tags go in, not before: embedding rewrites the file, so a
-            // hash taken on the way past describes a file that no longer exists and can
-            // never be used to check the archive. This one is the file on disk.
-            const sha256 = await hashFile(target);
+            if (saved.xmpNotPlaced && result.warnings.length < 3) result.warnings.push(saved.xmpNotPlaced);
 
             manifest.add({
               path: archivePath(rel, filename),

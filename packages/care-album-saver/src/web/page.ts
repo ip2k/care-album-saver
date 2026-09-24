@@ -1647,7 +1647,17 @@ $('viewer').addEventListener('close', async () => {
 
 async function refresh() {
   const r = await api('/api/state');
-  state = await r.json();
+  const answer = await r.json();
+  // The one failure that stops the whole page: settings the tool refuses to guess at (see
+  // ConfigUnusableError). Said at the top of the page, in the server's words, instead of a
+  // page that half-paints and then does nothing.
+  if (!answer.config) {
+    const main = $('main');
+    if (!$('state-error')) main.insertAdjacentHTML('afterbegin', '<div id="state-error" role="alert"></div>');
+    show($('state-error'), 'err', esc(answer.error || 'The tool could not read its own settings.'));
+    return;
+  }
+  state = answer;
   const c = state.config;
   for (const k of ['tagChildName','tagNote','stripLocation','incremental','writeSidecar']) $(k).checked = c[k];
   $('organiseBy').value = c.organiseBy;
@@ -1662,6 +1672,8 @@ async function refresh() {
     show($('connect-msg'), 'ok', 'Connected' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') + '.');
     setStep($('card-run'), $('num-3'), $('run-state'), 'active', 'Step 3 of 4. Ready to start.');
     await loadChildren();
+  } else if (state.sessionProblem) {
+    show($('connect-msg'), 'err', esc(state.sessionProblem));
   }
   updateRunReady();
   await loadSchedule();
@@ -1777,7 +1789,7 @@ function paintPhotos(p) {
   // One line on the dashboard: that it is on, or — the case that matters — that it has
   // stopped working, since nothing else on the main page would ever say so.
   const dash = $('dash-photos');
-  const failing = Boolean(p && p.enabled && p.lastAttempt && !p.lastAttempt.ok);
+  const failing = Boolean(p && p.enabled && ((p.lastAttempt && !p.lastAttempt.ok) || p.problem));
   dash.hidden = !(p && p.enabled);
   dash.textContent = failing
     ? 'The last photos could not be added to Photos. Open Settings and Maintenance to see why.'
@@ -1788,7 +1800,7 @@ function paintPhotos(p) {
   box.checked = p.enabled;
 
   let status = '';
-  if (p.enabled) {
+  if (p.enabled && !p.problem) {
     status = p.pending > 0
       ? p.pending + ' waiting to be added on the next run.'
       : 'Up to date: everything saved since you turned this on is in Photos.';
@@ -1797,7 +1809,9 @@ function paintPhotos(p) {
   }
   $('photos-status').textContent = status;
   const last = p.lastAttempt;
-  if (p.enabled && last && !last.ok) {
+  if (p.enabled && p.problem) {
+    show($('photos-msg'), 'warn', '<b>Nothing can be added to Photos until this is sorted out.</b> ' + esc(p.problem));
+  } else if (p.enabled && last && !last.ok) {
     show($('photos-msg'), 'warn', '<b>The last photos could not be added.</b> ' + esc(last.error || ''));
   }
 
@@ -2322,7 +2336,13 @@ function paintFacts() {
 /** Ask the tool to change the daily run. Returns the refusal, or null when it worked. */
 async function postSchedule(path, body) {
   try {
-    const d = await (await api(path, { method: 'POST', body: JSON.stringify(body || {}) })).json();
+    let d = await (await api(path, { method: 'POST', body: JSON.stringify(body || {}) })).json();
+    // Another copy of the tool set up the daily run. Moving it to this copy is the parent's
+    // decision, so it is asked, in words, before anything changes (ScheduleOwnedElsewhereError).
+    if (!d.ok && d.replaceable && window.confirm(d.error + '\n\nMove the daily run to this copy?')) {
+      const again = Object.assign({}, body || {}, { replace: true });
+      d = await (await api(path, { method: 'POST', body: JSON.stringify(again) })).json();
+    }
     if (!d.ok) return d.error || 'That could not be changed.';
     sched = d.schedule;
     return null;

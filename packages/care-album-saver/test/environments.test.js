@@ -23,8 +23,12 @@ test('production and development are marked; anything else, a parent\'s clone in
   assert.equal(environment(root), 'installed', 'a clone made by following the README may set up the daily run');
   await writeFile(join(root, '.git', DEVELOPMENT_MARKER), 'development\n');
   assert.equal(environment(root), 'development');
-  await writeFile(join(root, PRODUCTION_MARKER), 'production\n');
-  assert.equal(environment(root), 'production', 'the production mark wins');
+  await writeFile(join(root, PRODUCTION_MARKER), 'production, deployed before markers named their folder\n');
+  assert.equal(environment(root), 'development', 'a marker that names no folder does not make production');
+  await writeFile(join(root, PRODUCTION_MARKER), `${tmpdir()}\nproduction\n`);
+  assert.equal(environment(root), 'development', 'nor does one that names another folder: a copy of production');
+  await writeFile(join(root, PRODUCTION_MARKER), `${root}\nproduction\n`);
+  assert.equal(environment(root), 'production', 'the production mark, naming its own folder, wins');
 });
 
 test('every worktree of the development checkout is development, through git\'s common folder', async () => {
@@ -58,7 +62,7 @@ test('the checkout the suite runs in is classified by its marks, and never by ha
 
 test('the daily run is refused from development before the scheduler can be reached', async () => {
   const server = (await readFile(fileURLToPath(new URL('../src/web/server.ts', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
-  const route = server.slice(server.indexOf("url.pathname === '/api/schedule') {\n        const { time }"));
+  const route = server.slice(server.indexOf("url.pathname === '/api/schedule') {\n        const { time"));
   const guard = route.indexOf("environment() === 'development'");
   const install = route.indexOf('schedule.install(');
   assert.ok(guard > 0 && install > guard, 'the page checks the environment before installing');

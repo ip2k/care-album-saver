@@ -54,6 +54,11 @@ process.env.CARE_ALBUM_NO_PHOTOS = '1';
 // of it passes its own stand-in for the network.
 process.env.CARE_ALBUM_NO_UPDATE_CHECK = '1';
 
+// A scheduled run that fails says so with a desktop notification. A test of that failure
+// must not put one on the developer's screen; src/schedule.ts's notify() refuses to start
+// the real notifier while this is set, and a test of notify itself passes its own runner.
+process.env.CARE_ALBUM_NO_NOTIFY = '1';
+
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
  *

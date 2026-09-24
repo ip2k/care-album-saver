@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { stdin, stdout } from 'node:process';
 import { BrightwheelClient } from './api/client.js';
-import { loadConfig, loadSession, saveConfig, saveSession } from './config.js';
+import { ConfigUnusableError, DEFAULT_CONFIG, loadConfig, loadSession, saveConfig, saveSession, SessionUnusableError } from './config.js';
 import { configDir, legacyConfigDir, configPath, sessionPath } from './paths.js';
 import { Secret, scrub } from './secrets.js';
 import { inspectCookiePaste } from './paste.js';
@@ -29,6 +30,7 @@ Every day after that
   care-album-saver schedule     Show whether photos are being saved automatically
     on --at 19:00                  Save new photos every day at that time
     off                            Stop saving them automatically
+    --replace                      ...even when another copy of this tool set it up
   care-album-saver run          Save any new photos now (Ctrl+C stops after the current one)
 
 Looking after the archive
@@ -73,6 +75,21 @@ let failureAnnounced = false;
  * on disk and just as new — but never after Ctrl+C, which means stop. Its own failure never
  * fails the run: the photos are safe in the folder either way, and are added next time.
  */
+/**
+ * A scheduled run fails at seven in the evening with nobody watching. Unless the failure is
+ * written down, the tool has no way to answer "is this still working?" — and an expired
+ * session looks exactly like an archive that is up to date. So it goes in the log and the
+ * last-run record, and a notice says so where somebody will see it: the record answers the
+ * question, the notice is what makes anyone ask it. Fixed text — the error is not in it —
+ * and a desktop with no notifier just means the record is the only trace.
+ */
+async function recordScheduledFailure(error: unknown): Promise<void> {
+  const message = scrub(error instanceof Error ? error.message : String(error));
+  await schedule.appendLog(`FAILED  ${message}`);
+  await schedule.recordRun({ at: new Date().toISOString(), ok: false, saved: 0, failed: 0, message, trigger: 'schedule' });
+  await schedule.notify(schedule.FAILED_NOTICE).catch(() => false);
+}
+
 async function photosStep(config: Config, scheduled: boolean): Promise<void> {
   if (!config.addToPhotos || !photosSupported()) return;
   const before = await photosStatus(config).catch(() => null);
@@ -110,6 +127,9 @@ async function main(): Promise<number> {
       child: { type: 'string', multiple: true },
       port: { type: 'string' },
       'from-dev': { type: 'boolean', default: false },
+      // Take over, or turn off, a daily run another copy of the tool set up. See
+      // ScheduleOwnedElsewhereError in schedule.ts.
+      replace: { type: 'boolean', default: false },
       'base-url': { type: 'string' },
       deep: { type: 'boolean' },
       at: { type: 'string' },
@@ -130,7 +150,38 @@ async function main(): Promise<number> {
   }
 
   const baseUrl = values['base-url'];
-  const config = await loadConfig();
+  let config: Config;
+  // Why the settings could not be read, for the three commands that still run without them.
+  let configProblem: string | null = null;
+  try {
+    config = await loadConfig();
+    // The daily run exists only because settings were saved with it in them, so a scheduled
+    // run that finds none has not found a first run: the file was moved or deleted, perhaps on
+    // the advice of the refusal below. Starting from the defaults would begin a second
+    // archive of every child in the default folder — the thing ConfigUnusableError prevents.
+    if (values.scheduled && !existsSync(configPath())) {
+      throw new Error(
+        `The daily run found no settings (${configPath()} is not there), so it has saved nothing. ` +
+          'Open the setup assistant to set the tool up again.',
+      );
+    }
+  } catch (error) {
+    // The daily run's refusal is recorded like any failure of it, or it would stop in silence,
+    // and it is not printed as well: under the scheduler, what is printed is the log.
+    if (values.scheduled) {
+      await recordScheduledFailure(error);
+      failureAnnounced = true;
+      throw error;
+    }
+    // Damaged settings stop every command that would act on them — see ConfigUnusableError —
+    // but not the ones that help sort it out: the setup assistant, which shows the problem at
+    // the top of the page (and is where the "did not work" notice sends people), `where` and
+    // `doctor` — and `schedule`, whose `off` is the first thing to do about damaged settings
+    // (it re-reads them itself; `on` still refuses). None of them saves the defaults standing in here.
+    if (!(error instanceof ConfigUnusableError) || !['setup', 'where', 'doctor', 'schedule'].includes(command)) throw error;
+    configProblem = error.message;
+    config = { ...DEFAULT_CONFIG };
+  }
   if (values.dir) config.archiveDir = values.dir;
   if (values.all) config.incremental = false;
   if (values['no-name-tag']) config.tagChildName = false;
@@ -138,9 +189,10 @@ async function main(): Promise<number> {
   switch (command) {
     case 'where': {
       stdout.write(
-        `Photos:   ${config.archiveDir}\nSettings: ${configPath()}\nSession:  ${sessionPath()}\n` +
-          `Last run: ${schedule.lastRunPath()}\n`,
+        `Photos:   ${configProblem ? '(unknown until the settings can be read)' : config.archiveDir}\n` +
+          `Settings: ${configPath()}\nSession:  ${sessionPath()}\nLast run: ${schedule.lastRunPath()}\n`,
       );
+      if (configProblem) stdout.write(`\n  ${scrub(configProblem)}\n`);
       return 0;
     }
 
@@ -153,14 +205,27 @@ async function main(): Promise<number> {
         }
         // The default is the evening: the nursery day is over, the photos for the day are
         // posted, and the computer is more likely to be on than at three in the morning.
-        const result = await schedule.install(values.at ?? '19:00');
-        stdout.write(`\n  ${result.summary}\n  It is written down in: ${result.location}\n\n`);
-        return 0;
+        const owned = { replace: values.replace, replaceProduction: values.replace };
+        try {
+          const result = await schedule.install(values.at ?? '19:00', {}, owned);
+          stdout.write(`\n  ${result.summary}\n  It is written down in: ${result.location}\n\n`);
+          return 0;
+        } catch (error) {
+          if (!(error instanceof schedule.ScheduleOwnedElsewhereError)) throw error;
+          stdout.write(`  ${error.message}\n  (To have this copy take it over anyway, add --replace.)\n`);
+          return 1;
+        }
       }
       if (what === 'off') {
-        const result = await schedule.remove();
-        stdout.write(`\n  ${result.summary}\n\n`);
-        return 0;
+        try {
+          const result = await schedule.remove({}, { replace: values.replace, replaceProduction: values.replace });
+          stdout.write(`\n  ${result.summary}\n\n`);
+          return 0;
+        } catch (error) {
+          if (!(error instanceof schedule.ScheduleOwnedElsewhereError)) throw error;
+          stdout.write(`  ${error.message}\n  (To turn it off from this copy anyway, add --replace.)\n`);
+          return 1;
+        }
       }
       if (what !== undefined) {
         stdout.write(`  Unknown option "${what}". Use: care-album-saver schedule [on --at HH:MM | off]\n`);
@@ -342,7 +407,12 @@ async function main(): Promise<number> {
     }
 
     case 'doctor': {
-      const session = await loadSession();
+      let sessionProblem: string | null = null;
+      const session = await loadSession().catch((error: unknown) => {
+        if (!(error instanceof SessionUnusableError)) throw error;
+        sessionProblem = error.message;
+        return null;
+      });
       stdout.write(`  Config folder: ${configDir()}\n`);
       // Say it plainly when the tool is still reading the folder it used before the
       // rename, rather than leaving someone to wonder why the new name is nowhere on disk.
@@ -350,8 +420,12 @@ async function main(): Promise<number> {
       if (legacy && legacy === configDir()) {
         stdout.write(`                 (the folder this tool used when it was called brightwheel-archive; still read, nothing was moved)\n`);
       }
-      stdout.write(`  Photos folder: ${config.archiveDir}\n`);
-      stdout.write(`  Session saved: ${session ? `yes (${session.session.fingerprint()})` : 'no'}\n`);
+      if (configProblem) {
+        stdout.write(`  Settings:      cannot be used — ${scrub(configProblem)}\n`);
+      } else {
+        stdout.write(`  Photos folder: ${config.archiveDir}\n`);
+      }
+      stdout.write(`  Session saved: ${session ? `yes (${session.session.fingerprint()})` : sessionProblem ? `damaged — ${scrub(sessionProblem)}` : 'no'}\n`);
       if (!session) return 1;
       // The shape and length only — enough to tell "wrong row" from "expired", never the value.
       const shape = inspectCookiePaste(session.session.expose());
@@ -372,7 +446,11 @@ async function main(): Promise<number> {
         const last = photos.lastAttempt;
         stdout.write(
           `  Add to Photos: ${photos.enabled ? `on (${photos.pending} waiting)` : 'off'}` +
-            (last && !last.ok ? ` — last attempt failed: ${scrub(last.error ?? '')}` : '') +
+            (photos.problem
+              ? ` — ${scrub(photos.problem)}`
+              : last && !last.ok
+                ? ` — last attempt failed: ${scrub(last.error ?? '')}`
+                : '') +
             '\n',
         );
       }
@@ -418,9 +496,17 @@ async function main(): Promise<number> {
         }
         await schedule.appendLog(`START   scheduled run`);
       }
-      const session = await loadSession();
+      const session = await loadSession().catch(async (error: unknown) => {
+        if (values.scheduled && error instanceof SessionUnusableError) await recordScheduledFailure(error);
+        throw error;
+      });
       if (!session) {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
+        // A daily run with nothing to sign in with has failed like any other, and is recorded
+        // as one: otherwise the page goes on showing the last run that worked.
+        if (values.scheduled) {
+          await recordScheduledFailure(new Error('Not connected to Brightwheel, so nothing was saved. Connect again in the setup assistant.'));
+        }
         return 1;
       }
       const client = new BrightwheelClient({
@@ -495,25 +581,8 @@ async function main(): Promise<number> {
           }
           return 0;
         }
-        // A scheduled run fails at seven in the evening with nobody watching. Unless the
-        // failure is written down, the tool has no way to answer "is this still working?"
-        // — and an expired session looks exactly like an archive that is up to date.
         if (values.scheduled) {
-          await schedule.appendLog(
-            `FAILED  ${scrub(error instanceof Error ? error.message : String(error))}`,
-          );
-          await schedule.recordRun({
-            at: new Date().toISOString(),
-            ok: false,
-            saved: 0,
-            failed: 0,
-            message: scrub(error instanceof Error ? error.message : String(error)),
-            trigger: 'schedule',
-          });
-          // And say so where somebody will see it. The record answers the question; this
-          // is what makes anyone ask it. Fixed text — the error is not in it — and a
-          // desktop with no notifier just means the record is the only trace.
-          await schedule.notify(schedule.FAILED_NOTICE).catch(() => false);
+          await recordScheduledFailure(error);
         } else if (coversTheDay) {
           await schedule.recordRun({
             at: new Date().toISOString(),
