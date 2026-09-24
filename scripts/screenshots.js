@@ -19,7 +19,9 @@ import { startWebUi } from '../packages/care-album-saver/dist/web/server.js';
 
 const OUT = join(fileURLToPath(new URL('../docs/images', import.meta.url)));
 const SESSION = 'test-session-value';
-const VIEWPORT = { width: 1340, height: 940 };
+// Wide enough that a callout fits in the margin beside the 56rem column. At 18px type the
+// column is 1008px, and a callout needs about 260px of margin on each side.
+const VIEWPORT = { width: 1600, height: 940 };
 
 /**
  * Where the run's photos go. NOT a temporary directory: the tool refuses those, and when
@@ -120,7 +122,7 @@ async function annotate(page, notes) {
     const defs = document.createElementNS(svgNS, 'defs');
     defs.innerHTML =
       '<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
-      '<path d="M 0 0 L 10 5 L 0 10 z" fill="#e0472c"/></marker>';
+      '<path d="M 0 0 L 10 5 L 0 10 z" fill="#a45e76"/></marker>';
     svg.appendChild(defs);
     layer.appendChild(svg);
 
@@ -131,8 +133,10 @@ async function annotate(page, notes) {
       const top = r.top + window.scrollY;
       const onRight = item.side !== 'left';
 
-      // The card the element lives in: the label is set against its edge, clear of it.
-      const cr = (el.closest('.card, .privacy') ?? el).getBoundingClientRect();
+      // The card the element lives in: the label is set against its edge, clear of it. The
+      // dashboard counts as one; without it a label was set against the element itself and
+      // landed inside the dashboard, over the heading and the first photo.
+      const cr = (el.closest('.card, .privacy, .dash') ?? el).getBoundingClientRect();
       const GAP = 24;
       const bx = onRight ? cr.right + GAP : cr.left - GAP;
 
@@ -149,12 +153,15 @@ async function annotate(page, notes) {
         [onRight ? 'left' : 'right']: onRight
           ? `${bx}px`
           : `${document.documentElement.scrollWidth - bx}px`,
-        background: '#e0472c',
-        color: '#fff',
+        // The page's own marks: Rosé Pine Love, mixed towards Text until white reads on it
+        // (see COOKIE_FIGURE_CSS in cookie-help.ts). A callout in a colour the page never
+        // uses reads as a different product pasted on top.
+        background: '#a45e76',
+        color: '#fffaf3',
         font: '600 13.5px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         padding: '10px 14px',
         borderRadius: '9px',
-        boxShadow: '0 4px 14px rgba(224,71,44,.28)',
+        boxShadow: '0 4px 14px rgba(164,94,118,.28)',
       });
       layer.appendChild(box);
 
@@ -169,7 +176,7 @@ async function annotate(page, notes) {
         'd',
         `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${ay}, ${ax} ${ay}`,
       );
-      line.setAttribute('stroke', '#e0472c');
+      line.setAttribute('stroke', '#a45e76');
       line.setAttribute('stroke-width', '2.5');
       line.setAttribute('fill', 'none');
       line.setAttribute('marker-end', 'url(#ah)');
@@ -179,13 +186,16 @@ async function annotate(page, notes) {
       const ring = document.createElement('div');
       Object.assign(ring.style, {
         position: 'absolute',
-        left: `${r.left - 5}px`,
-        top: `${top - 5}px`,
-        width: `${r.width + 10}px`,
-        height: `${r.height + 10}px`,
-        border: '2.5px solid #e0472c',
+        // How far clear of what it rings, per note: five suits a tick box beside its label and
+        // a photo beside the next one, but a heading with no padding of its own sat against
+        // the line at five, so that note asks for more.
+        left: `${r.left - (item.pad ?? 5)}px`,
+        top: `${top - (item.pad ?? 5)}px`,
+        width: `${r.width + 2 * (item.pad ?? 5)}px`,
+        height: `${r.height + 2 * (item.pad ?? 5)}px`,
+        border: '2.5px solid #a45e76',
         borderRadius: '11px',
-        boxShadow: '0 0 0 4px rgba(224,71,44,.13)',
+        boxShadow: '0 0 0 4px rgba(164,94,118,.13)',
       });
       layer.appendChild(ring);
     }
@@ -276,6 +286,15 @@ async function shot(page, name, endAt) {
     }
     clip = { x: 0, y: 0, width: box.width, height: box.needed };
   }
+  // Nothing cut off at the sides either. A callout wider than the margin it sits in hangs
+  // off the edge of the picture, and a half-sentence reads as a mistake.
+  const clipped = await page.evaluate(() =>
+    [...document.querySelectorAll('.__ann > div')]
+      .map((n) => ({ text: (n.textContent || '').slice(0, 40), r: n.getBoundingClientRect() }))
+      .filter(({ r }) => r.width > 0 && (r.left < 0 || r.right > window.innerWidth))
+      .map(({ text, r }) => `"${text}…" spans ${Math.round(r.left)}–${Math.round(r.right)}px of ${window.innerWidth}`),
+  );
+  if (clipped.length) throw new Error(`${name}: a callout runs off the side of the picture:\n  ${clipped.join('\n  ')}`);
   await page.screenshot({ path: join(OUT, `${name}.png`), fullPage: false, clip });
   process.stdout.write(`  docs/images/${name}.png\n`);
 }
@@ -323,8 +342,8 @@ const main = async () => {
   await page.waitForTimeout(400);
   // Taller than the default, for two reasons that stack: step 1's first instruction is now
   // a link long enough to wrap, and the cookie-help disclosure sits under it. Everything
-  // below starts lower than it used to.
-  await page.setViewportSize({ width: VIEWPORT.width, height: 1280 });
+  // below starts lower than it used to — and lower again since the type went to 18px.
+  await page.setViewportSize({ width: VIEWPORT.width, height: 1440 });
   await page.evaluate(() => document.querySelector('#card-connect').scrollIntoView({ block: 'start' }));
   await page.waitForTimeout(300);
   await annotate(page, [
@@ -393,7 +412,7 @@ const main = async () => {
     // against the end of the stats line — the dashboard is not a .card, so there was no card
     // edge to clear — and it sat over the top-right thumbnail; the right gutter is also
     // narrower than a callout, so moving it out there would clip it at the image edge.
-    { selector: '#dash-stats', text: 'How much is in the archive, and when it was last added to. Everything there is to change or check on is behind Settings, above.', offset: 0, side: 'left' },
+    { selector: '.dash-head', text: 'How much is in the archive, and when it was last added to. Everything there is to change or check on is behind Settings, above.', offset: 0, side: 'left', pad: 10 },
     // Pointed at the second row rather than the gallery's top edge, so its arrow is short and
     // level instead of a long curve squeezed past the callout above it.
     { selector: '#gallery a:nth-child(7)', text: 'What the last run brought in. Each one opens the full picture from your own disk.', offset: 0, side: 'left' },
