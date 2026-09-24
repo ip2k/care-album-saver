@@ -287,10 +287,18 @@ test('processes-10: another computer\'s lock is honoured while it is refreshed, 
 test('processes-10: the day\'s limit is not applied to a lock written on this computer, whose process decides', async () => {
   const dir = await folder('here');
   const file = join(dir, RUN_LOCK_FILENAME);
+  const short = hostname().split('.')[0];
   try {
-    // This process, alive, started two days ago (as far as the lock says) and refreshed now.
-    await writeFile(file, JSON.stringify({ pid: process.pid, host: hostname(), startedAt: hoursAgo(48).toISOString() }));
-    await assert.rejects(takeRunLock(dir), { name: 'RunInProgressError' });
+    // This process, alive, started two days ago (as far as the lock says) and refreshed now:
+    // under this computer's name, and under the name a Mac takes from another network.
+    for (const host of [hostname(), `${short}.another-network.example`]) {
+      await writeFile(file, JSON.stringify({ pid: process.pid, host, startedAt: hoursAgo(48).toISOString() }));
+      await assert.rejects(takeRunLock(dir), { name: 'RunInProgressError' }, host);
+    }
+    // The same name with a process that is not here is another computer's, and the limit holds.
+    await writeFile(file, JSON.stringify({ pid: deadPid(), host: `${short}.another-network.example`, startedAt: hoursAgo(48).toISOString() }));
+    const lock = await takeRunLock(dir);
+    await lock.release();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

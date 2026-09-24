@@ -452,13 +452,6 @@ function recentEnough(startedAt: string): boolean {
 function judge(seen: Sighting): 'held' | 'abandoned' | 'unsure' {
   const here = seen.holder !== null && seen.holder.host === hostname();
   if (here && !alive((seen.holder as RunLockHolder).pid)) return 'abandoned';
-  // From another computer — or one that says so — and taken more than a day ago, however
-  // recently it was refreshed: see FOREIGN_MAX_MS (security review processes-10).
-  if (seen.holder !== null && !here && !recentEnough(seen.holder.startedAt)) return 'abandoned';
-  // An unreadable lock is NOT abandoned while it is fresh: the file exists, empty, for the
-  // instant between its owner creating it and writing to it, and reading it in that instant
-  // must not be taken as licence to delete it. Only age decides for one of those.
-  if (Date.now() - seen.touched <= STALE_MS) return 'held';
   // macOS takes its host name from the network it is on when none is set, so a Mac that
   // slept mid-run on one network can wake as `name.lan` holding a lock it wrote as
   // `name.localdomain`. A name that differs only after the first dot, with the pid alive
@@ -467,6 +460,17 @@ function judge(seen: Sighting): 'held' | 'abandoned' | 'unsure' {
   // computers can share a short name ("MacBook-Pro"), so that lock is judged by age alone.
   const perhapsHere =
     !here && seen.holder !== null && shortName(seen.holder.host) === shortName(hostname()) && alive(seen.holder.pid);
+  // From another computer, and taken more than a day ago, however recently it was refreshed:
+  // see FOREIGN_MAX_MS (security review processes-10). Not one that may be this computer's,
+  // whose process is here to speak for it — a run the lid closed on over a weekend, waking on
+  // another network, is still going. (The limit is no defence against something that keeps
+  // rewriting a lock it planted, startedAt included; nothing that can write the folder is.
+  // It ends a lock that is merely refreshed, by a run hung on another computer, or planted once.)
+  if (seen.holder !== null && !here && !perhapsHere && !recentEnough(seen.holder.startedAt)) return 'abandoned';
+  // An unreadable lock is NOT abandoned while it is fresh: the file exists, empty, for the
+  // instant between its owner creating it and writing to it, and reading it in that instant
+  // must not be taken as licence to delete it. Only age decides for one of those.
+  if (Date.now() - seen.touched <= STALE_MS) return 'held';
   return here || perhapsHere ? 'unsure' : 'abandoned';
 }
 
