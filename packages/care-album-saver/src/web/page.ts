@@ -1140,15 +1140,12 @@ const show = (el, kind, html) => { el.innerHTML = '<div class="msg ' + kind + '"
  * carries noreferrer too, so the setup token in this page's address never travels.
  */
 function howToSteps() {
-  const ua = navigator.userAgent;
-  const isFirefox = /Firefox\//.test(ua);
-  const isSafari = /Safari\//.test(ua) && !/Chrome|Chromium|Edg\//.test(ua);
-  const open = isSafari
+  const open = BROWSER === 'safari'
     ? 'Turn on the developer menu first: Safari menu &rarr; <b>Settings</b> &rarr; <b>Advanced</b> &rarr; tick <b>Show features for web developers</b>. Then press <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd>.'
     : 'Press <kbd>F12</kbd> (or <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd> on a Mac).';
-  const where = isFirefox || isSafari
-    ? 'Click <b>Storage</b> along the top, then <b>Cookies</b> on the left.'
-    : 'Click <b>Application</b> along the top, then <b>Cookies</b> on the left.';
+  const where = BROWSER === 'chrome'
+    ? 'Click <b>Application</b> along the top, then <b>Cookies</b> on the left.'
+    : 'Click <b>Storage</b> along the top, then <b>Cookies</b> on the left.';
   return [
     'Open <a class="ext" href="https://schools.mybrightwheel.com/" target="_blank" rel="noopener noreferrer"><b>schools.mybrightwheel.com</b> <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a> and sign in as you normally would.',
     open,
@@ -1157,6 +1154,9 @@ function howToSteps() {
     'Paste it in the box below and press Connect.',
   ];
 }
+/** The reader's browser, told once, for these steps and for the picture guide below (page-12). */
+const BROWSER = /Firefox\//.test(navigator.userAgent) ? 'firefox'
+  : /Safari\//.test(navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(navigator.userAgent) ? 'safari' : 'chrome';
 $('howto').innerHTML = howToSteps().map((s) => '<li>' + s + '</li>').join('');
 
 /* The picture guide that illustrates those same five steps. Written in

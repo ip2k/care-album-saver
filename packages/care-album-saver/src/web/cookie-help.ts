@@ -53,8 +53,17 @@ const WIN = { x: 8, y: 8, w: 624, h: 292 };
 /** The drawing ends a whisker below the window it draws; the legend lives outside it. */
 const H = WIN.y + WIN.h + 8;
 
-const xml = (s: string): string =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/**
+ * Text made safe to put into markup, between tags or inside a quoted attribute. The one
+ * escaper for everything the server writes as HTML or SVG: these drawings, their legends, and
+ * the banner across the top of the page (server.ts). All five characters, the single quote
+ * included, so that it is right in an attribute whichever quote a later hand reaches for
+ * (security review web-13); every attribute written here uses double quotes all the same, and
+ * a test holds them to it. The page's own script needs none of this: what it shows goes in as
+ * text nodes, through its h() and put().
+ */
+export const escapeMarkup = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 /**
  * Legend sentences carry `*emphasis*` and `` `code` ``, because "click Application" with
@@ -62,7 +71,7 @@ const xml = (s: string): string =>
  * marked up after, so a stray angle bracket in a sentence can never become an element.
  */
 const richHtml = (s: string): string =>
-  xml(s)
+  escapeMarkup(s)
     .replace(/\*([^*]+)\*/g, '<b>$1</b>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 
@@ -90,7 +99,7 @@ const text = (o: TextOptions): string =>
   + (o.mono ? ' font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"' : '')
   + (o.anchor ? ` text-anchor="${o.anchor}"` : '')
   + (o.max ? ` data-max="${o.max}"` : '')
-  + `>${xml(o.s)}</text>`;
+  + `>${escapeMarkup(o.s)}</text>`;
 
 interface RectOptions {
   x: number; y: number; w: number; h: number;
@@ -153,7 +162,7 @@ const figure = (
 ): CookieFigure => ({
   ...meta,
   legend,
-  svg: `<svg class="ck-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${xml(meta.alt)}"`
+  svg: `<svg class="ck-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeMarkup(meta.alt)}"`
     + ' xmlns="http://www.w3.org/2000/svg">'
     // Its own opaque background, so the drawing is self-contained: it keeps its palette
     // under forced colours, exactly as .num does, instead of flattening to two colours.
@@ -711,7 +720,7 @@ export const COOKIE_HELP = `<div class="ck-help">
       ${COOKIE_FIGURES.filter((f) => f.browser === b.key).map((f) => `<figure class="ck-fig">
         ${f.svg}
         <figcaption>
-          <span class="ck-cap">${xml(f.caption)}</span>
+          <span class="ck-cap">${escapeMarkup(f.caption)}</span>
           ${legendHtml(f.legend)}
         </figcaption>
       </figure>`).join('\n      ')}
@@ -719,12 +728,23 @@ export const COOKIE_HELP = `<div class="ck-help">
   </div>
 </div>`;
 
-/** The picture guide's behaviour, for the page's one script. */
-export const COOKIE_HELP_SCRIPT = `
-(function () {
+/**
+ * The picture guide's behaviour, for the page's one script.
+ *
+ * String.raw, as the page itself is, so that what is written here is exactly what the browser
+ * reads: one escaping regime for the whole script, where a plain template used to need every
+ * backslash doubled (security review page-12). It is handed the reader's browser — 'chrome',
+ * 'safari' or 'firefox' — by the page, which tells it once for the written steps and for this
+ * (BROWSER in page.ts), rather than sniffing the user agent a second time. And it gives up
+ * quietly if its markup is missing: it runs before every handler on the page, so a throw here
+ * would leave the whole page dead.
+ */
+export const COOKIE_HELP_SCRIPT = String.raw`
+(function (key) {
   var btn = document.getElementById('ck-toggle');
   var panel = document.getElementById('ck-panel');
   var label = document.getElementById('ck-toggle-text');
+  if (!btn || !panel || !label) return;
   btn.addEventListener('click', function () {
     var open = btn.getAttribute('aria-expanded') === 'true';
     btn.setAttribute('aria-expanded', open ? 'false' : 'true');
@@ -735,14 +755,10 @@ export const COOKIE_HELP_SCRIPT = `
   // The reader's own browser goes first, so the right pictures are the ones in front of
   // them. The other two stay on the page rather than being hidden: somebody who uses
   // Chrome at work and Safari at home should not have to guess that the page has decided
-  // for them. Deliberately the same test as howToSteps() just above — change both.
-  var ua = navigator.userAgent;
-  var key = /Firefox\\//.test(ua)
-    ? 'firefox'
-    : (/Safari\\//.test(ua) && !/Chrome|Chromium|Edg\\//.test(ua)) ? 'safari' : 'chrome';
+  // for them.
   var mine = document.getElementById('ck-' + key);
   var first = panel.querySelector('.ck-browser');
   if (mine && first && mine !== first) panel.insertBefore(mine, first);
   var heading = document.getElementById('ck-' + key + '-h');
-  if (heading) heading.textContent += ' \\u2014 what you are reading this in';
-})();`;
+  if (heading) heading.textContent += ' \u2014 what you are reading this in';
+})(BROWSER);`;

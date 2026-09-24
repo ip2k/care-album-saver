@@ -17,6 +17,7 @@ import { archiveBusy, auditArchive, checkChildren, findDuplicates, removeDuplica
 import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
 import { PAGE } from './page.js';
+import { escapeMarkup } from './cookie-help.js';
 import { acceptableUserAgent } from '../api/identity.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from '../environment.js';
 import { updateStatus, updateSteps } from '../updates.js';
@@ -266,9 +267,6 @@ function contentSecurityPolicy(nonce?: string): string {
     "frame-ancestors 'none'",
   ].join('; ');
 }
-
-const escapeHtml = (text: string): string =>
-  text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export interface WebUiHandle {
   url: string;
@@ -536,7 +534,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         const nonce = randomBytes(18).toString('base64');
         res.setHeader('Content-Security-Policy', contentSecurityPolicy(nonce));
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        const banner = options.banner ? `<div class="demo-ribbon" role="note">${escapeHtml(options.banner)}</div>` : '';
+        const banner = options.banner ? `<div class="demo-ribbon" role="note">${escapeMarkup(options.banner)}</div>` : '';
         // Function replacers, so that nothing spliced in is read as a replacement pattern: a
         // "$&" or "$'" in the banner used to copy parts of the page into it.
         res.end(
