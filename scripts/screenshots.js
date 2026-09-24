@@ -80,6 +80,9 @@ async function scrubPersonal(page) {
     },
     [
       [PHOTOS, SHOWN_PATH],
+      // The page writes paths under the home folder as ~/…, which contains neither of the
+      // other two, so without this pair the real folder layout reached the pictures.
+      [PHOTOS.replace(homedir(), '~'), SHOWN_PATH.replace('/Users/alex', '~')],
       [homedir(), '/Users/alex'],
     ],
   );
@@ -333,10 +336,10 @@ const main = async () => {
   // ...but only when they are actually in there. Opening it otherwise puts an empty modal
   // over the very controls the next step is about to click.
   await page.evaluate(() => {
-    const flow = document.getElementById('setup-flow');
-    const body = document.getElementById('settings-flow');
+    // Once the tool is set up the steps are sections of Settings; this is the one they are in.
+    const children = document.getElementById('card-children');
     const d = document.getElementById('dlg-settings');
-    if (flow && body && flow.parentElement === body && d && !d.open) document.getElementById('btn-settings').click();
+    if (children && d && children.closest('#dlg-settings') && !d.open) openSettings('children');
   });
   await page.waitForTimeout(200);
   await page.waitForTimeout(400);

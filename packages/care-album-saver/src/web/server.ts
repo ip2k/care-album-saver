@@ -346,6 +346,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           sessionSavedAt: session?.savedAt.toISOString() ?? null,
           email: session?.email ?? null,
           config,
+          // The folder as a parent reads it, from their home folder. See tildify.
+          archiveDirShown: tildify(config.archiveDir, homedir()),
           progress,
           running,
           lastResult,
@@ -699,14 +701,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'GET' && url.pathname === '/api/schedule') {
         const config = await loadConfig();
-        const session = await loadSession();
         const state = await schedule.status(options.schedule);
         json(200, {
           ok: true,
           schedule: shown(state),
-          // "Already set up" is a session plus a schedule. Anything less is still setup,
-          // and the page must not open on a management view for a tool that has never run.
-          manage: Boolean(session) && state.installed,
           proposed: shown(await schedule.describe(state.time ?? config.schedule?.time ?? '19:00', options.schedule)),
         });
         return;

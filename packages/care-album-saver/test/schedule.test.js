@@ -445,32 +445,43 @@ test('the page carries a fourth step that explains the daily run in a parent’s
   }
 });
 
-test('the page has a management rendering, folded away until the tool is really set up', async () => {
+test('once set up, Settings is sections chosen from a column, with nothing folded away', async () => {
   await freshConfigDir();
   const { handle, html } = await setupUi();
   try {
     const page = await html();
     const script = page.slice(page.indexOf('<script>') + 8, page.indexOf('</script>'));
     new Script(script); // it must still be a script a browser can read
-    const manage = page.slice(page.indexOf('id="card-manage"'), page.indexOf('<script>'));
+    const settings = page.slice(page.indexOf('<dialog id="dlg-settings"'), page.indexOf('</dialog>', page.indexOf('<dialog id="dlg-settings"')));
 
-    // Present in the markup and hidden, so the first-run page is unchanged by it.
-    assert.ok(/<section class="card" id="card-manage"[^>]*hidden>/.test(page), 'the management card starts hidden');
-    assert.ok(page.includes('<details id="setup-details" hidden>'), 'and so does the disclosure it folds into');
-
-    // The five things a returning parent comes back for.
-    for (const id of ['m-run', 'm-open', 'm-session', 'm-time', 'm-off']) {
-      assert.ok(manage.includes('id="' + id + '"'), 'the management view offers ' + id);
+    // The sections, in the owner's words, as a column of buttons.
+    const sections = [...settings.matchAll(/<button type="button" data-go="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]);
+    assert.deepEqual(sections, [
+      ['account', 'Account'], ['children', 'Children'], ['save', 'Save Locations'],
+      ['schedule', 'Schedule'], ['integrations', 'Integrations'], ['maintenance', 'Maintenance'],
+    ]);
+    for (const [name] of sections) {
+      assert.ok(settings.includes(`data-panel="${name}"`), `a panel for ${name}`);
     }
-    // ...and the three maintenance actions.
-    for (const id of ['m-children', 'm-check', 'm-dupes']) {
-      assert.ok(manage.includes('id="' + id + '"'), 'the management view offers ' + id);
-    }
+    // Nothing in Settings folds away: no dropdown in its markup, and the one in the steps
+    // (Advanced options) gives up its contents to Save Locations rather than coming along.
+    assert.ok(!/<details/.test(settings), 'no <details> inside Settings');
+    assert.match(script, /\['advanced-inner', 'save'\]/);
 
-    // It is the same page rendered differently: the steps are moved into the disclosure,
-    // not duplicated or replaced.
-    assert.match(script, /setup-inner'\)\.appendChild\(document\.querySelector\('ol\.steps-list'\)\)/);
-    assert.match(script, /if \(d\.manage\) enterManageMode\(\)/);
+    // The old management card, its shortcut buttons and its folded copy of the steps are gone.
+    for (const id of ['card-manage', 'setup-details', 'm-run', 'm-open', 'm-session', 'm-time', 'm-off']) {
+      assert.ok(!page.includes(`id="${id}"`), `${id} is gone`);
+    }
+    // Its three checks live in Maintenance, and its facts on the dashboard.
+    const maintenance = settings.slice(settings.indexOf('data-panel="maintenance"'));
+    for (const id of ['m-children', 'm-check', 'm-dupes']) assert.ok(maintenance.includes(`id="${id}"`), `${id} in Maintenance`);
+    const dash = page.slice(page.indexOf('id="dash"'), page.indexOf('<div id="setup-flow">'));
+    for (const id of ['dash-connected', 'dash-schedule', 'dash-last', 'dash-folder']) assert.ok(dash.includes(`id="${id}"`), `${id} on the dashboard`);
+
+    // Moved, never copied: exactly one of each control in the document.
+    for (const id of ['cookie', 'archiveDir', 'organiseBy', 'schedule-time', 'btn-run', 'm-check']) {
+      assert.equal(page.split(`id="${id}"`).length - 1, 1, `one #${id}`);
+    }
     // Deleting is asked about, never done on one press.
     assert.match(script, /\$\('m-dupes-go'\)\.onclick = confirmDupes/);
     assert.match(script, /Yes, delete them/);
@@ -487,8 +498,6 @@ test('the schedule endpoint answers, refuses a time that is not one, and needs t
     assert.equal(state.status, 200);
     assert.equal(state.body.ok, true);
     assert.equal(state.body.schedule.installed, false);
-    // No session and no schedule is a first run, whatever else is true.
-    assert.equal(state.body.manage, false);
     assert.ok(state.body.proposed.mechanism, 'it says which scheduler this machine would use');
 
     // Refused before anything is installed: the time goes into a plist and a crontab.
