@@ -17,6 +17,7 @@ import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
 import { PAGE } from './page.js';
 import { acceptableUserAgent } from '../api/identity.js';
+import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from '../environment.js';
 
 /**
  * The local setup assistant.
@@ -747,6 +748,12 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         const { time } = JSON.parse(await readBody(req)) as { time?: string };
         if (!time || !schedule.parseTimeOfDay(time)) {
           json(400, { ok: false, error: 'Choose a time of day first, as hours and minutes.', field: 'scheduleTime' });
+          return;
+        }
+        // The real scheduler only (a demo or a test passes its own), and never from a
+        // development copy: see environment.ts.
+        if (!options.schedule && environment() === 'development') {
+          json(400, { ok: false, error: DEVELOPMENT_SCHEDULE_REFUSAL, field: 'scheduleTime' });
           return;
         }
         try {

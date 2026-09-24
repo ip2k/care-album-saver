@@ -20,6 +20,7 @@
  *
  * Stop it with Ctrl+C; the temporary folders and the demo photos are deleted on the way out.
  */
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,6 +54,15 @@ const { runProgram } = await import(new URL('native.js', dist).href);
 await writeSecureFile(configPath(), JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: photos, delayMs: 150 }, null, 2));
 
 const SESSION = 'demo-session';
+/** Which branch and commit this demo is showing, so two demos are never confused. */
+const branch = (() => {
+  try {
+    const at = (args) => execFileSync('git', args, { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8' }).trim();
+    return `${at(['branch', '--show-current']) || 'a detached checkout'} (${at(['rev-parse', '--short', 'HEAD'])})`;
+  } catch {
+    return 'this copy';
+  }
+})();
 const say = (line) => process.stdout.write(`  [demo] ${line}\n`);
 
 /** The Photos app, pretended. Everything else — the folder chooser, Finder — is real. */
@@ -89,8 +99,8 @@ const ui = await startWebUi({
   native: { spawn },
   schedule: { home: fakeHome, run, platform: 'darwin' },
   banner:
-    'Demo — the children, photos, Photos app and daily run here are all pretend, and nothing on this ' +
-    `computer is changed. To connect, paste ${SESSION} — never your real session.`,
+    `Demo of ${branch} — the children, photos, Photos app and daily run here are all pretend, and nothing on ` +
+    `this computer is changed. To connect, paste ${SESSION} — never your real session.`,
 });
 
 process.stdout.write(
