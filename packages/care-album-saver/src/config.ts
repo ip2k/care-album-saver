@@ -49,6 +49,13 @@ export interface Config {
    * from a settings patch.
    */
   addToPhotosFrom: string | null;
+  /**
+   * Ask GitHub once a day whether a newer release exists, while the setup page is open.
+   * `null` until the parent has been asked — the dashboard asks once — so that nothing is
+   * sent to anyone before they have said yes. Written by the server only, from the answer
+   * or the switch in Settings, never from a settings patch. See src/updates.ts.
+   */
+  checkForUpdates: boolean | null;
 }
 
 /** Which of the operating system's schedulers is holding the daily run. */
@@ -85,6 +92,7 @@ export const DEFAULT_CONFIG: Config = {
   schedule: null,
   addToPhotos: false,
   addToPhotosFrom: null,
+  checkForUpdates: null,
 };
 
 export async function loadConfig(): Promise<Config> {
