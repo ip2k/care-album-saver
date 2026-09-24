@@ -12,7 +12,7 @@ import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
 import { photoAt, summarise } from '../gallery.js';
 import { open, type FileHandle } from 'node:fs/promises';
-import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
+import { archiveBusy, auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
 import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
 import { PAGE } from './page.js';
@@ -200,6 +200,42 @@ const PASTE_REFUSED =
   'Brightwheel\u2019s website again and copy it fresh. Otherwise check it came from the row named ' +
   '_brightwheel_v2, from its Value column, and that all of it was copied.';
 const RUN_REFUSED = 'Brightwheel no longer accepts the saved session, so nothing more could be fetched.';
+/**
+ * The same refusal met while reading who is on the account, which is the first thing the page
+ * asks on every load. It used to be a 500 the page ignored, so a parent saw "Connected" beside
+ * "Connect first to see your children" and nothing to do about either (security review page-2).
+ */
+const CHILDREN_REFUSED =
+  'Brightwheel no longer accepts the saved session, so the children on the account cannot be shown. ' +
+  'Sign in on Brightwheel\u2019s website again, copy the value fresh, and paste it in the box above.';
+
+/**
+ * The Content-Security-Policy, for the page when there is a nonce and for everything else
+ * when there is not.
+ *
+ * The page's one script runs because it carries this response's nonce, and nothing else can:
+ * no 'unsafe-inline' for scripts, so a string that ever did reach the page as markup could not
+ * bring an inline script or an onclick with it, and 'strict-dynamic' because the script loads
+ * nothing of its own that a host list would have to name (security review page-3). Every other
+ * response has no script-src at all, which default-src 'none' makes "no scripts". Styles stay
+ * inline — one stylesheet and a few style attributes — and cannot run anything; img-src keeps
+ * a style from fetching anything away from this computer. base-uri 'none', so that an injected
+ * <base> cannot move where the page's own addresses point.
+ */
+function contentSecurityPolicy(nonce?: string): string {
+  return [
+    "default-src 'none'",
+    "img-src 'self' data:",
+    // For the photo viewer's <video>: the page's own /photo route, nothing else.
+    "media-src 'self'",
+    "style-src 'unsafe-inline'",
+    ...(nonce ? [`script-src 'nonce-${nonce}' 'strict-dynamic'`] : []),
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
 
 const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -250,6 +286,13 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     ...answer,
     location: tildify(answer.location, options.schedule?.home ?? homedir(), options.schedule?.platform),
   });
+
+  /**
+   * What is set up now, sent with a refused change so the page repaints from the truth: a
+   * change of time the scheduler refused can leave the old run, or none, and the page must
+   * not go on showing what it showed before. Null when even that cannot be read.
+   */
+  const scheduleNow = () => schedule.status(options.schedule).then(shown, () => null);
 
   const readChildren = async (client: BrightwheelClient): Promise<Student[]> => {
     if (!children) {
@@ -404,17 +447,26 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
    */
   let choosing = false;
 
+  /**
+   * How many looks at, or changes to, the archive the Maintenance panel has in progress. A
+   * run is refused while there are any, as they are while a run is going (security review
+   * web-5): the guard used to be one-way, so a run could start in the middle of a repair or
+   * a removal and the two wrote archive.json over each other. Across processes the run lock
+   * does the same job (see run-lock.ts); this answers the page's own clicks at once, in words.
+   */
+  let maintaining = 0;
+  const MAINTENANCE_IN_PROGRESS =
+    'The archive is being checked or tidied up on the Maintenance page right now. Nothing was started. ' +
+    'Wait for that to finish, then try again.';
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Nothing here may ever be cached: the pages list children's names and photos.
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader(
-      'Content-Security-Policy',
-      // media-src is for the photo viewer's <video>: the page's own /photo route, nothing else.
-      "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'",
-    );
+    // No script may run in anything but the page, which sets its own below.
+    res.setHeader('Content-Security-Policy', contentSecurityPolicy());
 
     if (!hostAllowed(req.headers.host)) {
       res.writeHead(403, { 'content-type': 'text/plain' });
@@ -441,9 +493,20 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
     try {
       if (req.method === 'GET' && url.pathname === '/') {
+        // A fresh nonce for every response, in the header and on the page's script tag and
+        // nowhere else: a nonce that repeated would be one an attacker could learn and reuse
+        // (security review page-3).
+        const nonce = randomBytes(18).toString('base64');
+        res.setHeader('Content-Security-Policy', contentSecurityPolicy(nonce));
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         const banner = options.banner ? `<div class="demo-ribbon" role="note">${escapeHtml(options.banner)}</div>` : '';
-        res.end(PAGE.replace(/__TOKEN__/g, token).replace('<!--__BANNER__-->', banner));
+        // Function replacers, so that nothing spliced in is read as a replacement pattern: a
+        // "$&" or "$'" in the banner used to copy parts of the page into it.
+        res.end(
+          PAGE.replace(/__TOKEN__/g, () => token)
+            .replace(/__NONCE__/g, () => nonce)
+            .replace('<!--__BANNER__-->', () => banner),
+        );
         return;
       }
 
@@ -713,10 +776,22 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
-        const me = await client.me();
-        // Always re-read here rather than serving the cache: this is the call the page
-        // makes on load, and a child added to the account since should appear.
-        children = await client.students(me.id);
+        try {
+          const me = await client.me();
+          // Always re-read here rather than serving the cache: this is the call the page
+          // makes on load, and a child added to the account since should appear.
+          children = await client.students(me.id);
+        } catch (error) {
+          // Brightwheel refusing the session is an answer about the session, not a fault in
+          // this tool: a 401 with a flag the page acts on by going back to step 1, and words
+          // for a browser rather than the command line's (security review page-2).
+          if (error instanceof Error && error.name === 'SessionExpiredError') {
+            children = null;
+            json(401, { ok: false, sessionRejected: true, error: CHILDREN_REFUSED });
+            return;
+          }
+          throw error;
+        }
         json(200, { ok: true, children, included: includedIds(await loadConfig(), children) });
         return;
       }
@@ -809,6 +884,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       if (req.method === 'POST' && url.pathname === '/api/sync') {
         if (running) {
           json(409, { ok: false, error: 'Already running.' });
+          return;
+        }
+        if (maintaining > 0) {
+          json(409, { ok: false, error: MAINTENANCE_IN_PROGRESS });
           return;
         }
         // Claimed here, in the same turn as the check above and before the first await.
@@ -977,7 +1056,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             json(409, { ok: false, error: scrub(error.message), replaceable: !error.production });
             return;
           }
-          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)), schedule: await scheduleNow() });
         }
         return;
       }
@@ -990,7 +1069,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             json(409, { ok: false, error: scrub(error.message), replaceable: false });
             return;
           }
-          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)), schedule: await scheduleNow() });
         }
         return;
       }
@@ -1001,6 +1080,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       // the same time, and the manifest is one file: letting the two overlap is how a
       // repair writes a list that the run then overwrites, or the other way about. So they
       // wait, and the page says why rather than failing silently.
+      //
+      // Both ways round, and across processes (security review web-5 and missed-fs): a run
+      // from this page is refused while one of these is in progress (`maintaining`), the
+      // repair and the removal hold the run lock a run in any process takes, and the two
+      // looks refuse while any process holds it. Each refusal is a 409 with the reason.
 
       if (req.method === 'POST' && url.pathname.startsWith('/api/maintenance/')) {
         if (running) {
@@ -1008,51 +1092,82 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         const action = url.pathname.slice('/api/maintenance/'.length);
-        const config = await loadConfig();
+        // Asking Brightwheel who is on the account reads the list only for names, and a run
+        // beside it changes nothing it reports, so it neither blocks a run nor waits for one.
+        const touchesArchive = action !== 'children';
+        // Claimed before the first await, as /api/sync claims `running`, so that a Start
+        // pressed while the settings are being read is refused rather than let in.
+        if (touchesArchive) maintaining += 1;
         try {
-          switch (action) {
-            case 'children': {
-              const session = await loadSession();
-              if (!session) {
-                json(400, { ok: false, error: 'Connect to your Brightwheel account first.' });
+          const config = await loadConfig();
+          try {
+            // Read-only, but while a run in another process (the daily run, say) is writing
+            // the list, what they report is half written. The repair and the removal take
+            // the lock themselves, in maintenance.ts, so the command line's are covered too.
+            const busy = action === 'archive' || action === 'duplicates' ? await archiveBusy(config, 'check') : null;
+            if (busy) {
+              json(409, { ok: false, error: scrub(busy) });
+              return;
+            }
+            switch (action) {
+              case 'children': {
+                const session = await loadSession();
+                if (!session) {
+                  json(400, { ok: false, error: 'Connect to your Brightwheel account first.' });
+                  return;
+                }
+                const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
+                const check = await checkChildren(client, config);
+                // This call has just read the account, so whatever the cache above holds is
+                // the older answer of the two. Dropped rather than patched: it holds full
+                // Student records and this one holds names and ids, and a half-updated cache
+                // is what a stored selection is checked against when the page saves a tick.
+                children = null;
+                json(200, { ok: true, result: check });
                 return;
               }
-              const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
-              const check = await checkChildren(client, config);
-              // This call has just read the account, so whatever the cache above holds is
-              // the older answer of the two. Dropped rather than patched: it holds full
-              // Student records and this one holds names and ids, and a half-updated cache
-              // is what a stored selection is checked against when the page saves a tick.
+              case 'archive':
+                json(200, { ok: true, result: await auditArchive(config) });
+                return;
+              case 'repair':
+                json(200, { ok: true, result: await repairManifest(config) });
+                return;
+              case 'duplicates':
+                // Reporting only. Removing is a separate request carrying the list back.
+                json(200, { ok: true, result: await findDuplicates(config) });
+                return;
+              case 'duplicates/remove': {
+                const { paths } = (await readJson(req)) as { paths?: unknown };
+                if (!Array.isArray(paths) || !paths.every((p) => typeof p === 'string' && p.length > 0)) {
+                  json(400, { ok: false, error: 'Nothing was named for removal, so nothing was deleted.' });
+                  return;
+                }
+                json(200, { ok: true, result: await removeDuplicates(config, { confirm: paths as string[] }) });
+                return;
+              }
+              default:
+                json(404, { ok: false, error: 'Not found' });
+                return;
+            }
+          } catch (error) {
+            // A run, or another repair or removal, holds the folder — in this process or
+            // another. Not a failure: nothing was changed, and the message says why.
+            if (error instanceof Error && error.name === 'RunInProgressError') {
+              json(409, { ok: false, error: scrub(error.message) });
+              return;
+            }
+            // The children check meeting a session Brightwheel refuses: in the page's words,
+            // as /api/children says it, not the command line's "Run care-album-saver login".
+            if (error instanceof Error && error.name === 'SessionExpiredError') {
               children = null;
-              json(200, { ok: true, result: check });
+              json(401, { ok: false, sessionRejected: true, error: CHILDREN_REFUSED });
               return;
             }
-            case 'archive':
-              json(200, { ok: true, result: await auditArchive(config) });
-              return;
-            case 'repair':
-              json(200, { ok: true, result: await repairManifest(config) });
-              return;
-            case 'duplicates':
-              // Reporting only. Removing is a separate request carrying the list back.
-              json(200, { ok: true, result: await findDuplicates(config) });
-              return;
-            case 'duplicates/remove': {
-              const { paths } = (await readJson(req)) as { paths?: unknown };
-              if (!Array.isArray(paths) || !paths.every((p) => typeof p === 'string' && p.length > 0)) {
-                json(400, { ok: false, error: 'Nothing was named for removal, so nothing was deleted.' });
-                return;
-              }
-              json(200, { ok: true, result: await removeDuplicates(config, { confirm: paths as string[] }) });
-              return;
-            }
-            default:
-              json(404, { ok: false, error: 'Not found' });
-              return;
+            json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+            return;
           }
-        } catch (error) {
-          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
-          return;
+        } finally {
+          if (touchesArchive) maintaining -= 1;
         }
       }
 

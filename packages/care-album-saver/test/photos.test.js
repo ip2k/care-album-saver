@@ -3,9 +3,9 @@ import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
@@ -87,7 +87,7 @@ const manifestOf = async (dir) => JSON.parse(await readFile(join(dir, 'archive.j
 
 /** Split a recorded call into what the script sees: names before `--`, files after. */
 function parts(call) {
-  assert.equal(call.file, 'osascript');
+  assert.equal(call.file, '/usr/bin/osascript', 'by its full path, never looked up on PATH');
   assert.equal(call.args[0], PHOTOS_SCRIPT, 'the first argument is always the one script file');
   const rest = call.args.slice(1);
   const at = rest.indexOf('--');
@@ -126,12 +126,25 @@ test('the folders and album are named, never guessed: top-level folder, then eac
 
 // ---------------------------------------------------------------- what osascript is given
 
-test('osascript is given the script file, names, `--` and existing files — never -e, never source', async () => {
-  await freshConfigDir();
+test('osascript is given the script file, names, `--` and private copies — never -e, never source', async () => {
+  const configDir = await freshConfigDir();
   const dir = await archiveDir();
   try {
     const config = { ...(await savedArchive(dir)), addToPhotos: true, addToPhotosFrom: null };
-    const photos = recorder();
+    // Looked at while the call is being made: the copies are gone once Photos has them.
+    const seen = [];
+    const photos = recorder(async (file, args) => {
+      const files = args.slice(args.indexOf('--') + 1);
+      for (const copy of files) {
+        const archived = join(dir, ...args.slice(2, args.indexOf('--')), basename(copy));
+        seen.push({
+          copy,
+          file: (await lstat(copy)).isFile(),
+          same: (await readFile(copy)).equals(await readFile(archived)),
+        });
+      }
+      return { code: 0, stdout: `${files.length}\n`, stderr: '' };
+    });
     const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
     const { files: records } = await manifestOf(dir);
 
@@ -143,15 +156,13 @@ test('osascript is given the script file, names, `--` and existing files — nev
       const { names, files } = parts(call);
       assert.equal(names[0], PHOTOS_FOLDER);
       assert.ok(files.length > 0 && files.length <= 50, 'in batches of at most fifty');
-      for (const file of files) {
-        assert.ok(file.startsWith(dir + sep), `inside the archive: ${file}`);
-        assert.ok((await stat(file)).isFile());
-      }
-      // One album per call: every file in it sits in the folder the names describe.
-      for (const file of files) {
-        assert.deepEqual([PHOTOS_FOLDER, ...relative(dir, file).split(sep).slice(0, -1)], names);
-      }
     }
+    for (const { copy, file, same } of seen) {
+      assert.ok(copy.startsWith(join(configDir, 'photos-handover-')), `a private copy, not the archive's file: ${copy}`);
+      assert.ok(file, 'a plain file, not a link');
+      assert.ok(same, 'the same bytes as the file in the folder the names describe');
+    }
+    assert.deepEqual((await readdir(configDir)).filter((n) => n.startsWith('photos-handover-')), [], 'and the copies are gone afterwards');
     // Every saved file handed over exactly once.
     const handed = photos.calls.flatMap((c) => parts(c).files);
     assert.equal(new Set(handed).size, handed.length, 'no file twice in one attempt');

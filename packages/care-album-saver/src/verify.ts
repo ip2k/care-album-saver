@@ -1,4 +1,5 @@
-import { DEFAULT_BASE_URL, SESSION_COOKIE } from './api/client.js';
+import { DEFAULT_BASE_URL, MAX_RESPONSE_BYTES, SESSION_COOKIE } from './api/client.js';
+import { BodyTooLargeError, readBodyText } from './http-body.js';
 import { assertJsonResponse } from './api/schema.js';
 import { browserUserAgent } from './api/identity.js';
 import { scrub } from './secrets.js';
@@ -83,7 +84,18 @@ async function raw(
       'X-Client-Name': 'web',
     },
   });
-  const text = await response.text();
+  // Capped while it is read, as the client's own requests are (security review outbound-7):
+  // this command reads the same endpoints, and an endless or bomb-sized answer here would
+  // fill memory as surely as one to a run.
+  let text: string;
+  try {
+    text = await readBodyText(response, MAX_RESPONSE_BYTES);
+  } catch (error) {
+    if (!(error instanceof BodyTooLargeError)) throw error;
+    throw new Error(
+      `Brightwheel's answer from ${label} was larger than ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB, far more than it ever sends, so it was not read.`,
+    );
+  }
   assertJsonResponse(response, text, label);
   return JSON.parse(text) as Record<string, unknown>;
 }

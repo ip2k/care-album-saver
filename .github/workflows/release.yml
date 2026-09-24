@@ -36,6 +36,10 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0   # To prove the tagged commit is on main, below.
+          # Nothing below fetches: origin/main is already here from the full fetch. So no
+          # token is left in .git/config for `pnpm install`'s dependency scripts, or the test
+          # suite, to find in a job that holds the OIDC token.
+          persist-credentials: false
 
       - name: The tag matches package.json and is on main
         env:

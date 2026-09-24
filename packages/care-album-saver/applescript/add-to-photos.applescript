@@ -40,10 +40,37 @@
 -- Run with no arguments at all, it only counts your albums and prints "ok". The setup page
 -- does that when you turn the option on, so that macOS asks its "allow this to control
 -- Photos?" question while you are there to answer it.
+--
+-- ONLY APPLE'S PHOTOS
+--
+-- Before anything else, it checks that the Photos it is about to talk to is Apple's own, the
+-- one in /System/Applications. That folder is on the part of macOS that nothing can change
+-- while System Integrity Protection is on, so an app there is the one Apple shipped. An app
+-- anywhere else can call itself "Photos", or claim Photos' identifier, and without this check
+-- it could be the one handed your photos. If the Photos macOS would open is not that one, or
+-- if any program running under Photos' identifier is not, it stops, and nothing is added.
+-- Asking where Photos is does not open it.
+--
+-- THE FILES IT IS GIVEN
+--
+-- Care Album Saver does not give it the files in your photos folder. It gives it private
+-- copies, checked against what it saved, in a folder only your account can open, and deletes
+-- them once Photos has taken them. So Photos needs its usual "Copy items to the Photos
+-- library" setting (Photos > Settings > General > Importing), which is on unless you have
+-- turned it off.
+
+use AppleScript version "2.4"
+use framework "AppKit"
+use scripting additions
+
+property photosID : "com.apple.Photos"
+property photosPath : "/System/Applications/Photos.app"
 
 on run argv
+	checkItIsApplesPhotos()
+
 	if (count of argv) is 0 then
-		tell application "Photos" to count of albums
+		tell application id "com.apple.Photos" to count of albums
 		return "ok"
 	end if
 
@@ -63,7 +90,7 @@ on run argv
 	end repeat
 
 	with timeout of 1800 seconds
-		tell application "Photos"
+		tell application id "com.apple.Photos"
 			set parentFolder to missing value
 			repeat with i from 1 to (count of albumPath) - 1
 				set folderName to item i of albumPath
@@ -104,3 +131,16 @@ on run argv
 	if importedItems is missing value then return "0"
 	return (count of importedItems) as text
 end run
+
+-- Stops unless the Photos that macOS would open, and every program running as Photos, is
+-- Apple's own. See ONLY APPLE'S PHOTOS above.
+on checkItIsApplesPhotos()
+	set workspace to current application's NSWorkspace's sharedWorkspace()
+	set found to workspace's URLForApplicationWithBundleIdentifier:photosID
+	if found is missing value then error "This is not Apple's Photos app: this Mac has no Photos app." number 3
+	if ((found's |path|()) as text) is not photosPath then error "This is not Apple's Photos app: the Photos this Mac would open is at " & ((found's |path|()) as text) & "." number 3
+	repeat with runningCopy in (current application's NSRunningApplication's runningApplicationsWithBundleIdentifier:photosID)
+		set runningPath to ((runningCopy's bundleURL()'s |path|()) as text)
+		if runningPath is not photosPath then error "This is not Apple's Photos app: a program running as Photos is at " & runningPath & "." number 3
+	end repeat
+end checkItIsApplesPhotos

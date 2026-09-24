@@ -12,7 +12,7 @@ import { inspectCookiePaste } from './paste.js';
 import { sync } from './sync.js';
 import { startWebUi } from './web/server.js';
 import { formatReport, verify } from './verify.js';
-import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from './maintenance.js';
+import { archiveBusy, auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from './maintenance.js';
 import * as schedule from './schedule.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from './environment.js';
 import { stampLines } from './log-lines.js';
@@ -269,6 +269,13 @@ async function main(): Promise<number> {
     }
 
     case 'check': {
+      // While a run — the daily one, say — is writing the list, what the list says is half
+      // written and a repair would be refused, so that is said instead (security review web-5).
+      const busy = await archiveBusy(config, values.repair ? 'repair' : 'check');
+      if (busy) {
+        stdout.write(`\n  ${busy}\n\n`);
+        return 1;
+      }
       const audit = await auditArchive(config);
       stdout.write(`\n  ${audit.archiveDir}\n  ${audit.summary}\n`);
       for (const file of audit.unrecorded.slice(0, 10)) stdout.write(`    not on the list: ${file}\n`);
@@ -284,6 +291,14 @@ async function main(): Promise<number> {
     }
 
     case 'duplicates': {
+      // Before the question, not after it: a parent should not type "yes" to a deletion the
+      // run lock is about to refuse (security review web-5). removeDuplicates takes the lock
+      // itself, so a run that starts while the question is on screen is still kept out.
+      const busy = await archiveBusy(config, values.remove ? 'duplicates' : 'check');
+      if (busy) {
+        stdout.write(`\n  ${busy}\n\n`);
+        return 1;
+      }
       const report = await findDuplicates(config);
       stdout.write(`\n  ${report.summary}\n`);
       for (const group of report.groups) {
@@ -453,6 +468,7 @@ async function main(): Promise<number> {
                 : '') +
             '\n',
         );
+        if (photos.warning) stdout.write(`                 ${photos.warning}\n`);
       }
       return check.ok ? 0 : 1;
     }
@@ -577,7 +593,9 @@ async function main(): Promise<number> {
         if (error instanceof Error && error.name === 'RunInProgressError') {
           stdout.write(`  ${error.message}\n`);
           if (values.scheduled) {
-            await schedule.appendLog(`SKIPPED another run was already saving photos`);
+            // The refusal itself: it may be a repair or a duplicate removal holding the folder,
+            // not another run, and on Linux and Windows this line is the only record of why.
+            await schedule.appendLog(`SKIPPED ${error.message}`);
           }
           return 0;
         }

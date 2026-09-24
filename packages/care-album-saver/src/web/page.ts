@@ -544,6 +544,9 @@ export const PAGE = String.raw`<!doctype html>
   .msg.err { background: var(--danger-tint); color: var(--danger); border-color: var(--danger); }
   .msg.warn { background: var(--warn-tint); color: var(--warn-ink); border-color: var(--warn); }
   .msg b { font-weight: 650; }
+  /* The notice across the top when the tool cannot be read (refresh, poll): clear of the
+     header above it and of the first card below, which it otherwise sat hard against. */
+  #state-error .msg { margin: 0 0 var(--s4); }
   /* The quiet confirmation for a setting that saved itself. A full banner for every tick
      would shout; this is a footnote. */
   .saved { display: inline-block; margin-top: var(--s3); font-size: .875rem; color: var(--ok); font-weight: 550; }
@@ -926,6 +929,7 @@ ${COOKIE_HELP_CSS}
           </label>
         </div>
         <p class="hint" id="photos-status" aria-live="polite"></p>
+        <p class="hint" id="photos-cloud" hidden></p>
         <div class="run-actions" id="photos-earlier-row" hidden>
           <button class="secondary" id="btn-photos-earlier" type="button">Add the ones saved before you turned this on</button>
         </div>
@@ -1084,13 +1088,42 @@ ${COOKIE_HELP_CSS}
   </button>
 </dialog>
 
-<script>
+<!-- The page's one script. It runs because it carries this response's nonce, which the
+     Content-Security-Policy names, and nothing else in the page can run: there are no inline
+     event-handler attributes, and no 'unsafe-inline' (security review page-3). -->
+<script nonce="__NONCE__">
 const TOKEN = '__TOKEN__';
 const $ = (id) => document.getElementById(id);
 const api = (path, opts = {}) => fetch(path + (path.includes('?') ? '&' : '?') + 'token=' + TOKEN, {
   ...opts, headers: { 'content-type': 'application/json', 'x-setup-token': TOKEN, ...(opts.headers || {}) }
 });
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+/**
+ * An element, its attributes and what goes in it. A string (or a number) among the children
+ * is always a text node, so what the tool, Brightwheel or the disk says — a child's name, an
+ * error, a folder — is shown as written and never read as markup, whatever it contains.
+ * Null, undefined, false and empty strings are left out, so a part can hang on a condition,
+ * and arrays are flattened, so a list of parts can be passed as one.
+ *
+ * This is how anything that did not come from this file reaches the page (security review
+ * page-3). It replaced an escaper applied at each call site of innerHTML, which was right at
+ * all twenty of them and would have stopped being right the first time one was missed.
+ */
+const parts = (children) => children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false && c !== '');
+const h = (tag, attrs, ...children) => {
+  const el = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs || {})) el.setAttribute(name, value);
+  el.append(...parts(children));
+  return el;
+};
+/** Replace what is in el with children, taken as h() takes them. */
+const put = (el, ...children) => el.replaceChildren(...parts(children));
+const bold = (text) => h('b', null, text);
+/** A folder or file name, set in the monospaced pill. */
+const pathPill = (text) => h('span', { class: 'path' }, text);
+/** A message box whose parts are text or elements from h(): for anything with the tool's words in it. */
+const say = (el, kind, ...children) => put(el, h('div', { class: 'msg ' + kind }, ...children));
+/** A message box from markup written in this file, and only that: anything else goes through say(). */
 const show = (el, kind, html) => { el.innerHTML = '<div class="msg ' + kind + '">' + html + '</div>'; };
 
 /**
@@ -1130,9 +1163,14 @@ $('howto').innerHTML = howToSteps().map((s) => '<li>' + s + '</li>').join('');
 ${COOKIE_HELP_SCRIPT}
 
 function setStep(card, numEl, srEl, state, srText) {
+  // The step's own number, kept the first time, so that a step which has to be done again
+  // — a session Brightwheel stopped accepting — shows its number rather than a tick.
+  if (!numEl.dataset.n) numEl.dataset.n = numEl.textContent;
   card.dataset.state = state;
-  if (state === 'complete') { numEl.textContent = '✓'; card.setAttribute('aria-current', 'false'); }
+  numEl.textContent = state === 'complete' ? '✓' : numEl.dataset.n;
+  if (state === 'complete') card.setAttribute('aria-current', 'false');
   else if (state === 'active') card.setAttribute('aria-current', 'step');
+  else card.removeAttribute('aria-current');
   srEl.textContent = srText;
 }
 
@@ -1226,7 +1264,7 @@ function applySaved(d) {
   }
   // Always the stored folder, never the typed one: this says where the photos will go.
   $('p-dir').textContent = d.config.archiveDir;
-  if (d.warning) show($('config-msg'), 'warn', esc(d.warning));
+  if (d.warning) say($('config-msg'), 'warn', d.warning);
   else savedNote();
 }
 
@@ -1238,7 +1276,7 @@ function savedNote() {
   // not fix it.
   const restore = () => {
     el.textContent = '';
-    if (dirError) el.innerHTML = '<div class="msg err">' + esc(dirError) + '</div>';
+    if (dirError) say(el, 'err', dirError);
   };
   // Emptied first, so the second "Saved" is announced as well as the first. The brief
   // blink is also the visual cue that something new was just stored.
@@ -1274,7 +1312,7 @@ function showSaveError(d, opts) {
     updateRunReady();
     return;
   }
-  show($('config-msg'), 'err', esc(text));
+  say($('config-msg'), 'err', text);
   if (d.field === 'archiveDir') {
     dirError = text;
     $('archiveDir').setAttribute('aria-invalid', 'true');
@@ -1330,8 +1368,9 @@ function lockSettings(locked) {
  * dashboard: they are here to see that it is still working.
  */
 function needsSetup(s) {
-  // No session at all: the first thing to do is the first step.
-  if (!s.hasSession) return true;
+  // No session at all: the first thing to do is the first step. Nor one Brightwheel has
+  // stopped accepting, found when the page asked who is on the account (loadChildren).
+  if (!s.hasSession || s.sessionRejected) return true;
   // A session that has stopped working, which the server reports as a run refused for it.
   const failed = s.progress && s.progress.phase === 'error' && /sign in|session|expired/i.test(s.progress.message || '');
   if (failed) return true;
@@ -1512,7 +1551,7 @@ async function paintGallery() {
       openViewer(index);
     };
     if (item.kind === 'video') {
-      a2.innerHTML = '<span class="vid" aria-hidden="true">&#9654;</span><span class="cap">' + esc(when) + '</span>';
+      a2.append(h('span', { class: 'vid', 'aria-hidden': 'true' }, '▶'), h('span', { class: 'cap' }, when));
     } else {
       const img = document.createElement('img');
       img.src = photoHref(item);
@@ -1578,8 +1617,8 @@ async function showInViewer(index) {
     img.src = photoHref(item);
     img.alt = (item.child ? item.child + ', ' : '') + 'posted ' + postedOn(item);
   }
-  $('viewer-cap').innerHTML = (item.child ? '<b>' + esc(item.child) + '</b> · ' : '') +
-    'posted ' + esc(postedOn(item)) + ' · ' + (index + 1) + ' of ' + gallery.count;
+  put($('viewer-cap'), item.child && [bold(item.child), ' · '],
+    'posted ' + postedOn(item) + ' · ' + (index + 1) + ' of ' + gallery.count);
 
   // At either end the arrow goes, rather than sitting there doing nothing. If it had the
   // keyboard focus, the focus moves to the other arrow instead of falling out of the dialog.
@@ -1645,18 +1684,84 @@ $('viewer').addEventListener('close', async () => {
   if (thumb) thumb.focus();
 });
 
-async function refresh() {
-  const r = await api('/api/state');
-  const answer = await r.json();
-  // The one failure that stops the whole page: settings the tool refuses to guess at (see
-  // ConfigUnusableError). Said at the top of the page, in the server's words, instead of a
-  // page that half-paints and then does nothing.
-  if (!answer.config) {
-    const main = $('main');
-    if (!$('state-error')) main.insertAdjacentHTML('afterbegin', '<div id="state-error" role="alert"></div>');
-    show($('state-error'), 'err', esc(answer.error || 'The tool could not read its own settings.'));
+/* ------------------------------------------------------------------ keeping in touch
+
+   Everything on this page comes from the tool, over /api/state, and the tool is a program on
+   this computer that can be closed, restarted or busy. When it does not answer, the page says
+   so in words and asks again — after one second, then two, four and so on, never more than
+   half a minute apart — rather than freezing on whatever it last showed. A single refused
+   /api/state used to leave a run's page saying "running" for good (security review page-1). */
+
+const RETRY_FIRST_MS = 1000;
+const RETRY_LONGEST_MS = 30000;
+const nextWait = (ms) => Math.min(ms ? ms * 2 : RETRY_FIRST_MS, RETRY_LONGEST_MS);
+const inSeconds = (ms) => (Math.round(ms / 1000) === 1 ? 'a second' : Math.round(ms / 1000) + ' seconds');
+const KEEPS_ASKING = ' This page keeps asking, and carries on by itself once the tool answers.';
+
+/**
+ * /api/state, or why it could not be had, in words. Never throws. Its retry is false only for
+ * the one answer that asking again cannot change: a refused setup link, which is what a tool
+ * that has been started again says to a page opened from the link it printed last time.
+ */
+async function readState() {
+  let r;
+  try {
+    r = await api('/api/state');
+  } catch {
+    return { ok: false, retry: true, error: 'This page cannot reach the tool. It may have been closed, or the computer may be busy.' };
+  }
+  if (r.status === 403) {
+    return {
+      ok: false,
+      retry: false,
+      error: 'The tool no longer accepts this page’s link, which usually means it was started again. Open the new link it printed in the window you started it from.',
+    };
+  }
+  const d = await r.json().catch(() => null);
+  if (r.ok && d && d.config) return { ok: true, state: d };
+  return { ok: false, retry: true, error: (d && d.error) || 'The tool did not say how things stand (it answered ' + r.status + ').' };
+}
+
+/**
+ * The notice across the top of the page, or none. Rewritten only when its words change, so
+ * that asking again and again is not announced again and again.
+ */
+function stateNotice(text) {
+  let box = $('state-error');
+  if (!text) {
+    if (box) box.remove();
     return;
   }
+  if (!box) {
+    $('main').insertAdjacentHTML('afterbegin', '<div id="state-error" role="alert"></div>');
+    box = $('state-error');
+  }
+  if (box.dataset.text === text) return;
+  box.dataset.text = text;
+  say(box, 'err', text);
+}
+
+let refreshWait = 0;
+
+async function refresh() {
+  const got = await readState();
+  const answer = got.ok ? got.state : { error: got.error };
+  // The one failure that stops the whole page: no settings to paint from — settings the tool
+  // refuses to guess at (see ConfigUnusableError), or no answer at all. Said at the top of the
+  // page, in the server's words, instead of a page that half-paints and then does nothing; and
+  // asked again, so that settings put right by hand, or a tool that was only busy, bring the
+  // page back without a reload.
+  if (!answer.config) {
+    const text = answer.error || 'The tool could not read its own settings.';
+    stateNotice(got.retry ? text + KEEPS_ASKING : text);
+    if (got.retry) {
+      refreshWait = nextWait(refreshWait);
+      setTimeout(refresh, refreshWait);
+    }
+    return;
+  }
+  refreshWait = 0;
+  stateNotice(null);
   state = answer;
   const c = state.config;
   for (const k of ['tagChildName','tagNote','stripLocation','incremental','writeSidecar']) $(k).checked = c[k];
@@ -1667,13 +1772,17 @@ async function refresh() {
 
   if (state.hasSession) {
     sessionOk = true;
+    // Asked before anything says "Connected": this is where a session Brightwheel has stopped
+    // accepting is found out, and loadChildren sends the page back to step 1 when it is.
+    await loadChildren();
+  }
+  if (state.hasSession && !state.sessionRejected) {
     setStep($('card-connect'), $('num-1'), $('connect-state'), 'complete',
       'Step 1 of 4, complete. Connected' + (state.email ? ' as ' + state.email : '') + '.');
-    show($('connect-msg'), 'ok', 'Connected' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') + '.');
+    say($('connect-msg'), 'ok', 'Connected', state.email && [' as ', bold(state.email)], '.');
     setStep($('card-run'), $('num-3'), $('run-state'), 'active', 'Step 3 of 4. Ready to start.');
-    await loadChildren();
   } else if (state.sessionProblem) {
-    show($('connect-msg'), 'err', esc(state.sessionProblem));
+    say($('connect-msg'), 'err', state.sessionProblem);
   }
   updateRunReady();
   await loadSchedule();
@@ -1683,6 +1792,10 @@ async function refresh() {
   paintPhotos(state.photos);
   paintUpdate();
   paint(state.progress, state.running, state.lastResult);
+  // The update section, once the tool has answered at all: asked here rather than after the
+  // first refresh returns, because a first refresh that found the tool unreachable returns
+  // early, and the retry that later succeeds would otherwise never ask.
+  if (!updateAsked) loadUpdate();
   // A run started before this page was opened (or before a reload) is still going in the
   // terminal. Without restarting the poll here the bar sits motionless, and HIG's
   // progress-indicators guidance is explicit that people read a stationary indicator as a
@@ -1690,19 +1803,62 @@ async function refresh() {
   if (state.running) poll();
 }
 
+/**
+ * Back to step 1, because Brightwheel has stopped accepting the saved session. It is found
+ * out here, when the page asks who is on the account, and the page used to carry on saying
+ * "Connected" beside "Connect first to see your children": both untrue, and neither saying
+ * what to do (security review page-2). Now step 1 is the step to do, with the reason under
+ * it, and the dashboard gives way to the steps (needsSetup).
+ */
+function sessionRefused(sentence) {
+  sessionOk = false;
+  if (state) state.sessionRejected = true;
+  kids = [];
+  put($('kids'), h('li', { class: 'kids-empty' }, 'Connect again to see your children here.'));
+  describeSelection();
+  setStep($('card-connect'), $('num-1'), $('connect-state'), 'active',
+    'Step 1 of 4. Brightwheel no longer accepts the saved session, so connect again.');
+  setStep($('card-children'), $('num-2'), $('children-state'), '', 'Step 2 of 4. Waiting for step 1.');
+  setStep($('card-run'), $('num-3'), $('run-state'), '', 'Step 3 of 4. Waiting for step 1.');
+  say($('connect-msg'), 'err', sentence);
+  updateRunReady();
+  if (state) {
+    placeSetupFlow(!needsSetup(state));
+    paintFacts();
+  }
+}
+
 async function loadChildren() {
-  const r = await api('/api/children');
-  const d = await r.json();
-  if (!d.ok) return;
+  let d = null;
+  try {
+    d = await (await api('/api/children')).json();
+  } catch {
+    d = null;
+  }
+  if (d && d.sessionRejected) {
+    sessionRefused(d.error || 'Brightwheel no longer accepts the saved session. Sign in on Brightwheel’s website again, copy the value fresh, and paste it in the box above.');
+    return;
+  }
+  if (!d || !d.ok) {
+    // Anything else — Brightwheel out of reach, the tool gone — is said beside the names. The
+    // session is left alone, because nothing says it is at fault.
+    const st = $('kids-status');
+    st.classList.add('err');
+    st.textContent = (d && d.error) ||
+      'Could not ask Brightwheel who is on this account. Check the tool is still running in the window you started it from, then reload this page.';
+    return;
+  }
   kids = d.children;
   const included = new Set(d.included);
-  // The element id is positional; the Brightwheel id travels in a data attribute, where
-  // any character is safe once escaped.
-  $('kids').innerHTML = kids.map((k, i) =>
-    '<li><label class="kid" for="kid-' + i + '">' +
-    '<input type="checkbox" id="kid-' + i + '" data-id="' + esc(k.id) + '"' + (included.has(k.id) ? ' checked' : '') + '>' +
-    esc(k.fullName) + '</label></li>').join('');
-  for (const box of document.querySelectorAll('#kids input')) box.addEventListener('change', onChildToggled);
+  // The element id is positional. The Brightwheel id travels in the dataset and the name is a
+  // text node beside the box, so neither is ever read as markup.
+  put($('kids'), kids.map((k, i) => {
+    const box = h('input', { type: 'checkbox', id: 'kid-' + i });
+    box.dataset.id = k.id;
+    box.checked = included.has(k.id);
+    box.addEventListener('change', onChildToggled);
+    return h('li', null, h('label', { class: 'kid', for: 'kid-' + i }, box, k.fullName));
+  }));
   describeSelection();
   setStep($('card-children'), $('num-2'), $('children-state'), 'complete',
     'Step 2 of 4. Found ' + kids.length + ' child' + (kids.length === 1 ? '' : 'ren') + '. Tick the ones to save photos for.');
@@ -1755,7 +1911,7 @@ function checkCookieField(rewrite) {
   cookieVerdict = v;
   if (v.ok && rewrite && v.value !== field.value) field.value = v.value;
   const notes = v.notes.length ? ' (' + v.notes.join('; ') + ')' : '';
-  out.innerHTML = '<span class="' + (v.level === 'err' ? 'bad' : v.level === 'warn' ? 'warn' : 'good') + '">' + esc(v.message) + '</span>' + esc(notes);
+  put(out, h('span', { class: v.level === 'err' ? 'bad' : v.level === 'warn' ? 'warn' : 'good' }, v.message), notes);
   field.setAttribute('aria-invalid', v.ok ? 'false' : 'true');
   btn.disabled = !v.ok;
 }
@@ -1808,11 +1964,15 @@ function paintPhotos(p) {
     if (last && last.ok && last.added > 0) status += ' Last added ' + last.added + ' on ' + day(last.at) + '.';
   }
   $('photos-status').textContent = status;
+  // What a cloud-synced photos folder means for this step, beside the switch, before it is
+  // turned on as well as after: the tool's words, as text.
+  $('photos-cloud').hidden = !p.warning;
+  $('photos-cloud').textContent = p.warning || '';
   const last = p.lastAttempt;
   if (p.enabled && p.problem) {
-    show($('photos-msg'), 'warn', '<b>Nothing can be added to Photos until this is sorted out.</b> ' + esc(p.problem));
+    say($('photos-msg'), 'warn', bold('Nothing can be added to Photos until this is sorted out.'), ' ', p.problem);
   } else if (p.enabled && last && !last.ok) {
-    show($('photos-msg'), 'warn', '<b>The last photos could not be added.</b> ' + esc(last.error || ''));
+    say($('photos-msg'), 'warn', bold('The last photos could not be added.'), ' ', last.error);
   }
 
   const row = $('photos-earlier-row');
@@ -1832,7 +1992,7 @@ $('addToPhotos').onchange = async (e) => {
     const d = await r.json();
     if (!d.ok) {
       box.checked = !on;
-      show($('photos-msg'), 'err', esc(d.error || 'That did not work.'));
+      say($('photos-msg'), 'err', d.error || 'That did not work.');
       return;
     }
     show($('photos-msg'), 'ok', on
@@ -1857,7 +2017,7 @@ $('btn-photos-earlier').onclick = async () => {
   try {
     const r = await api('/api/photos', { method: 'POST', body: JSON.stringify({ earlier: true }) });
     const d = await r.json();
-    if (!d.ok) { show($('photos-msg'), 'err', esc(d.error || 'That did not work.')); return; }
+    if (!d.ok) { say($('photos-msg'), 'err', d.error || 'That did not work.'); return; }
     paintPhotos(d.photos);
     // They go in with a run: a quick look for anything new, then Photos. When a run
     // cannot start here, the next one — daily or by hand — picks them up.
@@ -1902,7 +2062,7 @@ $('btn-dash-logs').onclick = showLogs;
 $('btn-logs-open').onclick = async () => {
   try {
     const d = await (await api('/api/open-logs', { method: 'POST', body: '{}' })).json();
-    show($('logs-msg'), d.opened ? 'ok' : 'warn', esc(d.opened ? 'Opened.' : d.hint || 'There is no log viewer on this computer.'));
+    say($('logs-msg'), d.opened ? 'ok' : 'warn', d.opened ? 'Opened.' : d.hint || 'There is no log viewer on this computer.');
   } catch {
     show($('logs-msg'), 'err', 'Could not reach the tool.');
   }
@@ -1945,7 +2105,7 @@ $('btn-connect').onclick = async () => {
       }
     } else {
       field.setAttribute('aria-invalid', 'true');
-      show($('connect-msg'), 'err', esc(d.error));
+      say($('connect-msg'), 'err', d.error || 'That did not work.');
       field.focus();
     }
   } catch {
@@ -2046,15 +2206,17 @@ async function openArchiveFolder(btn, note) {
  * the button is useless on a computer with no file manager this tool can reach.
  */
 function offerOpenFolder() {
+  // The markup is this file's own; the folder goes in as text.
   $('run-result').insertAdjacentHTML('beforeend',
     '<div class="dir-actions" style="align-items:center">' +
     '<button class="secondary" id="btn-open-done" type="button">Open this folder</button>' +
-    '<span class="path">' + esc((state && state.archiveDirShown) || savedDir) + '</span></div>' +
+    '<span class="path" id="open-done-path"></span></div>' +
     '<p class="dir-note" id="open-done-note" role="status" aria-live="polite"></p>');
+  $('open-done-path').textContent = (state && state.archiveDirShown) || savedDir;
 }
 
 $('btn-open-dir').onclick = () => openArchiveFolder($('btn-open-dir'), $('dir-note'));
-// Delegated, because the summary the second button sits in is rebuilt by innerHTML.
+// Delegated, because the summary the second button sits in is rebuilt each time it is shown.
 $('run-result').addEventListener('click', (e) => {
   if (e.target.id === 'btn-open-done') openArchiveFolder(e.target, $('open-done-note'));
 });
@@ -2075,7 +2237,7 @@ $('btn-run').onclick = async () => {
   const r = await api('/api/sync', { method: 'POST', body: '{}' });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
-    show($('run-result'), 'err', esc(d.error || 'Could not start.'));
+    say($('run-result'), 'err', d.error || 'Could not start.');
     updateRunReady();
     return;
   }
@@ -2093,7 +2255,7 @@ $('btn-stop').onclick = async () => {
     const r = await api('/api/stop', { method: 'POST', body: '{}' });
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
-      show($('run-result'), 'err', esc(d.error || 'Could not stop it.'));
+      say($('run-result'), 'err', d.error || 'Could not stop it.');
       stopping = false;
       updateRunReady();
     }
@@ -2144,7 +2306,9 @@ function paint(p, running, result) {
   updateRunReady();
 
   if (p.phase === 'done') {
-    setStep($('card-run'), $('num-3'), $('run-state'), 'complete', 'Step 3 of 4, finished.');
+    // Not while Brightwheel refuses the saved session: step 3 is waiting for step 1 again
+    // (sessionRefused), however the last run ended.
+    if (!(state && state.sessionRejected)) setStep($('card-run'), $('num-3'), $('run-state'), 'complete', 'Step 3 of 4, finished.');
     bar.dataset.indeterminate = 'false';
     fill.style.width = '100%';
     // "Nothing new" is the normal outcome of a daily run. It must read as success, not
@@ -2152,17 +2316,18 @@ function paint(p, running, result) {
     const ph = result && result.photos;
     // What happened in Photos, as a sentence to add. A run can save nothing new and still
     // add earlier ones to Photos, so this is said whichever way the run itself went.
-    const photosLine = !ph ? ''
-      : ph.ok ? (ph.added > 0 ? ' Added <b>' + ph.added + '</b> to Photos, in the Brightwheel folder.' : '')
-      : ph.reason === 'busy' ? ''
-      : ' <br><br><b>Not added to Photos:</b> ' + esc(ph.error || 'no reason was given.');
+    const photosLine = !ph ? []
+      : ph.ok ? (ph.added > 0 ? [' Added ', bold(ph.added), ' to Photos, in the Brightwheel folder.'] : [])
+      : ph.reason === 'busy' ? []
+      : [h('br'), h('br'), bold('Not added to Photos:'), ' ', ph.error || 'no reason was given.'];
     const photosFailed = Boolean(ph && !ph.ok && ph.reason !== 'busy');
     if (result && result.saved === 0 && result.failed === 0) {
-      show($('run-result'), photosFailed ? 'warn' : 'ok', 'You are up to date &mdash; there were no new photos to save.' + photosLine);
+      say($('run-result'), photosFailed ? 'warn' : 'ok', 'You are up to date — there were no new photos to save.', photosLine);
     } else if (result) {
-      let html = 'Saved <b>' + result.saved + '</b> new item' + (result.saved === 1 ? '' : 's') + '.';
-      if (result.failed > 0) html += ' <b>' + result.failed + '</b> could not be fetched &mdash; press Start saving again to retry them.';
-      show($('run-result'), result.failed > 0 || photosFailed ? 'warn' : 'ok', html + photosLine);
+      say($('run-result'), result.failed > 0 || photosFailed ? 'warn' : 'ok',
+        'Saved ', bold(result.saved), ' new item' + (result.saved === 1 ? '' : 's') + '.',
+        result.failed > 0 && [' ', bold(result.failed), ' could not be fetched — press Start saving again to retry them.'],
+        photosLine);
     }
     // "Where did my photos go" is the question at the end of a run, so answer it with a
     // button rather than a path to copy out.
@@ -2172,20 +2337,52 @@ function paint(p, running, result) {
     // Neither finished nor failed. Everything already saved is on disk and the next run
     // carries on from there, so this reads as an ordinary outcome, not as a warning.
     setStep($('card-run'), $('num-3'), $('run-state'), 'active', p.message);
-    show($('run-result'), 'ok', esc(p.message));
+    say($('run-result'), 'ok', p.message);
   }
   if (p.phase === 'error') {
-    show($('run-result'), 'err', esc(p.message) + ' <br><br>If your session has expired, paste a fresh value ' +
-      ($('setup-flow').hidden
-        ? 'under <button class="linkish" type="button" data-section="account">Account</button>.'
-        : 'in step 1 above.'));
+    say($('run-result'), 'err', p.message, h('br'), h('br'), 'If your session has expired, paste a fresh value ',
+      $('setup-flow').hidden
+        ? ['under ', h('button', { class: 'linkish', type: 'button', 'data-section': 'account' }, 'Account'), '.']
+        : 'in step 1 above.');
     $('card-run').dataset.state = 'active';
   }
 }
 
+/** Which poll is the current one: a newer start takes over from an older one rather than running beside it. */
+let polling = 0;
+/** How long the poll waited last time /api/state did not answer; 0 while it answers. */
+let pollWait = 0;
+
 async function poll() {
-  const r = await api('/api/state');
-  const s = await r.json();
+  const mine = ++polling;
+  const got = await readState();
+  if (mine !== polling) return;
+  if (!got.ok) {
+    // Nothing is known about the run until the tool answers, so the bar holds still rather
+    // than implying progress, and the progress line says why and when it will ask again.
+    // The card is marked as following a run, because in Settings the progress line is shown
+    // only then, and a refusal on the first poll after Start came before any answer said so.
+    // Indeterminate as well as still: left as it was, a bar that last showed a finished run
+    // stayed full, which says "done" about a run nobody can see.
+    $('card-run').toggleAttribute('data-running', true);
+    $('bar').dataset.stopped = 'true';
+    $('bar').dataset.indeterminate = 'true';
+    $('bar').removeAttribute('aria-valuenow');
+    $('bar-fill').style.width = '';
+    if (!got.retry) {
+      $('run-msg').textContent = got.error;
+      stateNotice(got.error);
+      return;
+    }
+    pollWait = nextWait(pollWait);
+    $('run-msg').textContent = got.error + ' Asking again in ' + inSeconds(pollWait) + '.';
+    stateNotice(got.error + KEEPS_ASKING);
+    setTimeout(poll, pollWait);
+    return;
+  }
+  pollWait = 0;
+  stateNotice(null);
+  const s = got.state;
   paint(s.progress, s.running, s.lastResult);
   if (s.running) setTimeout(poll, 700);
   else {
@@ -2219,9 +2416,9 @@ let dupes = null;
 
 /** A time of day on this computer's clock, in its own style: "7:00 PM", or "19:00". */
 const clockTime = (hhmm) => {
-  const [h, m] = String(hhmm).split(':').map(Number);
+  const [hours, minutes] = String(hhmm).split(':').map(Number);
   const d = new Date();
-  d.setHours(h, m, 0, 0);
+  d.setHours(hours, minutes, 0, 0);
   return isNaN(d.getTime()) ? String(hhmm) : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 };
 /** When the next run is, the way a person says it: "today at 7:00 PM", "Thursday at 7:00 PM". */
@@ -2281,32 +2478,30 @@ function paintSchedule() {
   // that starts itself every evening should not be a thing a parent cannot find again.
   const where = sched.location || (proposed && proposed.location);
   const found = where
-    ? '<br><span style="font-size:.875rem">' + (sched.installed ? 'Written down in ' : 'It would be written down in ') +
-      '<span class="path">' + esc(where) + '</span></span>'
-    : '';
+    ? [h('br'), h('span', { style: 'font-size:.875rem' },
+        sched.installed ? 'Written down in ' : 'It would be written down in ', pathPill(where))]
+    : null;
   if (!sched.installed) {
     // Not a warning. Choosing not to schedule it is a perfectly good answer, and a yellow
     // box would tell a parent they had got something wrong.
-    box.innerHTML =
-      '<p style="color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0">' +
-      'Not set up. Photos are saved only when you press Start saving.' + found + '</p>';
+    put(box, h('p', { style: 'color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0' },
+      'Not set up. Photos are saved only when you press Start saving.', found));
     setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active', 'Step 4 of 4. Optional, and not set up.');
     return;
   }
   if (sched.registered === false) {
-    show(box, 'warn', esc(sched.summary) + found);
+    say(box, 'warn', sched.summary, found);
     setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active',
       'Step 4 of 4. A daily run was set up but the computer no longer has it.');
     return;
   }
   if (sched.overdue) {
-    show(box, 'warn', esc(sched.summary) + found);
+    say(box, 'warn', sched.summary, found);
     setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active',
       'Step 4 of 4. A daily run is set up but has not saved anything yet.');
     return;
   }
-  show(box, 'ok',
-    esc(sched.summary) + (sched.nextRun ? '<br>Next run: <b>' + esc(nextWhen(sched.nextRun)) + '</b>.' : '') + found);
+  say(box, 'ok', sched.summary, sched.nextRun && [h('br'), 'Next run: ', bold(nextWhen(sched.nextRun)), '.'], found);
   setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'complete', 'Step 4 of 4, done. ' + sched.summary);
 }
 
@@ -2317,20 +2512,22 @@ function paintSchedule() {
  */
 function paintFacts() {
   if (!state) return;
-  $('dash-connected').innerHTML = state.hasSession
-    ? 'Connected to Brightwheel' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') +
-      (state.sessionSavedAt ? ', since ' + esc(fullWhen(state.sessionSavedAt)) : '') + '.'
-    : 'Not connected to Brightwheel.';
+  put($('dash-connected'), state.sessionRejected
+    ? 'Brightwheel no longer accepts the saved session, so nothing new can be saved until you connect again.'
+    : state.hasSession
+      ? ['Connected to Brightwheel', state.email && [' as ', bold(state.email)],
+        state.sessionSavedAt && ', since ' + fullWhen(state.sessionSavedAt), '.']
+      : 'Not connected to Brightwheel.');
   const last = sched && sched.lastRun;
-  // Whether it worked is said in words, not only in the presence of a number.
-  $('dash-last').innerHTML = last
-    ? (last.trigger === 'manual' ? 'Last run, which you started: <b>' : 'Last run on its own: <b>') +
-      esc(fullWhen(last.at)) + '</b> &mdash; ' +
-      (last.ok ? 'it worked' : 'it did not work') + '. ' + esc(last.message)
-    : (sched && sched.installed ? 'The daily run has not run on its own yet.' : '');
+  // Whether it worked is said in words, not only in the presence of a number. Nothing at all
+  // when there is nothing to say, so that the empty line is hidden (.dash-facts li:empty).
+  put($('dash-last'), last
+    ? [last.trigger === 'manual' ? 'Last run, which you started: ' : 'Last run on its own: ',
+      bold(fullWhen(last.at)), ' — ' + (last.ok ? 'it worked' : 'it did not work') + '. ', last.message]
+    : sched && sched.installed && 'The daily run has not run on its own yet.');
   // No full stop after the path: the pill carries its own padding, so one would sit on its
   // own with a visible gap in front of it.
-  $('dash-folder').innerHTML = 'Photos are in <span class="path">' + esc(state.archiveDirShown || state.config.archiveDir) + '</span>';
+  put($('dash-folder'), 'Photos are in ', pathPill(state.archiveDirShown || state.config.archiveDir));
 }
 
 /** Ask the tool to change the daily run. Returns the refusal, or null when it worked. */
@@ -2343,8 +2540,10 @@ async function postSchedule(path, body) {
       const again = Object.assign({}, body || {}, { replace: true });
       d = await (await api(path, { method: 'POST', body: JSON.stringify(again) })).json();
     }
+    // A refusal still says what is set up now: a change the scheduler refused can leave the
+    // old run in place, or none at all, and the page must not go on showing the old one.
+    if (d.schedule) sched = d.schedule;
     if (!d.ok) return d.error || 'That could not be changed.';
-    sched = d.schedule;
     return null;
   } catch {
     return 'Could not reach the tool. Check it is still running in the window you started it from.';
@@ -2361,7 +2560,7 @@ $('btn-schedule-on').onclick = async () => {
   // then goes into the box it just rewrote.
   paintSchedule();
   paintFacts();
-  if (error) show($('schedule-msg'), 'err', esc(error));
+  if (error) say($('schedule-msg'), 'err', error);
   else if (!$('setup-flow').hidden) {
     $('schedule-msg').insertAdjacentHTML('beforeend',
       '<p style="color:var(--text-muted);font-size:.875rem;margin:var(--s3) 0 0">' +
@@ -2376,7 +2575,7 @@ $('btn-schedule-off').onclick = async () => {
   btn.disabled = false;
   paintSchedule();
   paintFacts();
-  if (error) show($('schedule-msg'), 'err', esc(error));
+  if (error) say($('schedule-msg'), 'err', error);
 };
 
 // ---------------------------------------------------------------- looking after the archive
@@ -2404,15 +2603,12 @@ $('m-children').onclick = async () => {
   try {
     const d = await maintenance('children');
     if (!d.ok) {
-      show(out, 'err', esc(d.error || 'That could not be checked.'));
+      say(out, 'err', d.error || 'That could not be checked.');
     } else {
       const r = d.result;
-      let html = esc(r.summary);
-      if (r.notIncluded.length > 0) {
-        html += '<div style="margin-top:var(--s3)"><button class="secondary" id="m-include" type="button">' +
-          'Save photos for everyone on the account</button></div>';
-      }
-      show(out, r.added.length > 0 || r.removed.length > 0 ? 'warn' : 'ok', html);
+      say(out, r.added.length > 0 || r.removed.length > 0 ? 'warn' : 'ok', r.summary,
+        r.notIncluded.length > 0 && h('div', { style: 'margin-top:var(--s3)' },
+          h('button', { class: 'secondary', id: 'm-include', type: 'button' }, 'Save photos for everyone on the account')));
       const include = $('m-include');
       if (include) {
         include.onclick = async () => {
@@ -2437,27 +2633,23 @@ $('m-check').onclick = async () => {
   try {
     const d = await maintenance('archive');
     if (!d.ok) {
-      show(out, 'err', esc(d.error || 'The folder could not be checked.'));
+      say(out, 'err', d.error || 'The folder could not be checked.');
     } else {
       const r = d.result;
-      let html = esc(r.summary);
       const examples = r.unrecorded.slice(0, 6).concat(r.missing.slice(0, 6));
-      if (examples.length > 0) {
-        html += '<ul style="margin:var(--s3) 0 0;padding-left:1.1rem">' +
-          examples.map((f) => '<li><span class="path">' + esc(f) + '</span></li>').join('') + '</ul>';
-      }
-      if (r.repairable) {
-        html += '<div style="margin-top:var(--s3)"><button class="secondary" id="m-repair" type="button">' +
-          'Fix the list</button><p style="font-size:.875rem;margin:var(--s2) 0 0">This changes only the ' +
-          'tool&rsquo;s own list of what it has saved. No photo is moved, changed or deleted.</p></div>';
-      }
-      show(out, r.repairable ? 'warn' : 'ok', html);
+      say(out, r.repairable ? 'warn' : 'ok', r.summary,
+        examples.length > 0 && h('ul', { style: 'margin:var(--s3) 0 0;padding-left:1.1rem' },
+          examples.map((f) => h('li', null, pathPill(f)))),
+        r.repairable && h('div', { style: 'margin-top:var(--s3)' },
+          h('button', { class: 'secondary', id: 'm-repair', type: 'button' }, 'Fix the list'),
+          h('p', { style: 'font-size:.875rem;margin:var(--s2) 0 0' },
+            'This changes only the tool’s own list of what it has saved. No photo is moved, changed or deleted.')));
       const repair = $('m-repair');
       if (repair) {
         repair.onclick = async () => {
           busy(repair, 'Fixing…');
           const fixed = await maintenance('repair');
-          show(out, fixed.ok ? 'ok' : 'err', esc(fixed.ok ? fixed.result.summary : fixed.error));
+          say(out, fixed.ok ? 'ok' : 'err', fixed.ok ? fixed.result.summary : fixed.error);
         };
       }
     }
@@ -2473,7 +2665,7 @@ $('m-dupes').onclick = async () => {
   busy(btn, 'Looking…');
   try {
     const d = await maintenance('duplicates');
-    if (!d.ok) show(out, 'err', esc(d.error || 'That could not be checked.'));
+    if (!d.ok) say(out, 'err', d.error || 'That could not be checked.');
     else { dupes = d.result; renderDupes(); }
   } catch {
     show(out, 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
@@ -2488,35 +2680,30 @@ $('m-dupes').onclick = async () => {
  */
 function renderDupes() {
   const out = $('m-dupes-out');
-  let html = esc(dupes.summary);
-  if (dupes.files > 0) {
-    html += '<ul style="margin:var(--s3) 0 0;padding-left:1.1rem">';
-    for (const g of dupes.groups) {
-      html += '<li style="margin-bottom:var(--s3)">keeping <span class="path">' + esc(g.keep) + '</span>';
-      for (const extra of g.extra) html += '<br>would delete <span class="path">' + esc(extra) + '</span>';
-      html += '</li>';
-    }
-    html += '</ul>';
-  }
-  if (dupes.files > 0) html += '<div id="m-dupes-actions" style="margin-top:var(--s3)"></div>';
-  show(out, dupes.files > 0 ? 'warn' : 'ok', html);
-  if (dupes.files === 0) return;
-  $('m-dupes-actions').innerHTML =
-    '<button class="secondary" id="m-dupes-go" type="button">' +
-    (dupes.files === 1 ? 'Delete the extra copy' : 'Delete the ' + dupes.files + ' extra copies') + '</button>';
+  const some = dupes.files > 0;
+  say(out, some ? 'warn' : 'ok', dupes.summary,
+    some && h('ul', { style: 'margin:var(--s3) 0 0;padding-left:1.1rem' }, dupes.groups.map((g) =>
+      h('li', { style: 'margin-bottom:var(--s3)' }, 'keeping ', pathPill(g.keep),
+        g.extra.map((extra) => [h('br'), 'would delete ', pathPill(extra)])))),
+    some && h('div', { id: 'm-dupes-actions', style: 'margin-top:var(--s3)' }));
+  if (!some) return;
+  put($('m-dupes-actions'), h('button', { class: 'secondary', id: 'm-dupes-go', type: 'button' },
+    dupes.files === 1 ? 'Delete the extra copy' : 'Delete the ' + dupes.files + ' extra copies'));
   $('m-dupes-go').onclick = confirmDupes;
 }
 
 /** The second press. The list above stays on screen while it is asked. */
 function confirmDupes() {
   const one = dupes.files === 1;
-  $('m-dupes-actions').innerHTML =
-    '<p style="margin:0 0 var(--s3)"><b>This deletes ' + dupes.files + ' file' + (one ? '' : 's') +
-    '</b> &mdash; exactly the ' + (one ? 'one' : 'ones') + ' marked &ldquo;would delete&rdquo; above, and nothing ' +
-    'else. ' + (one ? 'The photo it is a copy of stays where it is.' : 'The photos they are copies of stay where they are.') +
-    ' This cannot be undone.</p>' +
-    '<div class="run-actions"><button id="m-dupes-yes" type="button">Yes, delete them</button>' +
-    '<button class="secondary" id="m-dupes-no" type="button">Keep them</button></div>';
+  put($('m-dupes-actions'),
+    h('p', { style: 'margin:0 0 var(--s3)' },
+      bold('This deletes ' + dupes.files + ' file' + (one ? '' : 's')),
+      ' — exactly the ' + (one ? 'one' : 'ones') + ' marked “would delete” above, and nothing else. ' +
+      (one ? 'The photo it is a copy of stays where it is.' : 'The photos they are copies of stay where they are.') +
+      ' This cannot be undone.'),
+    h('div', { class: 'run-actions' },
+      h('button', { id: 'm-dupes-yes', type: 'button' }, 'Yes, delete them'),
+      h('button', { class: 'secondary', id: 'm-dupes-no', type: 'button' }, 'Keep them')));
   $('m-dupes-no').onclick = renderDupes;
   $('m-dupes-yes').onclick = async () => {
     const yes = $('m-dupes-yes');
@@ -2526,7 +2713,7 @@ function confirmDupes() {
     const paths = dupes.groups.reduce((all, g) => all.concat(g.extra), []);
     const done = await maintenance('duplicates/remove', { paths });
     dupes = null;
-    show($('m-dupes-out'), done.ok ? 'ok' : 'err', esc(done.ok ? done.result.summary : done.error));
+    say($('m-dupes-out'), done.ok ? 'ok' : 'err', done.ok ? done.result.summary : done.error);
   };
 }
 
@@ -2537,6 +2724,8 @@ function confirmDupes() {
    the header when there is something newer, and the steps for the way this copy was
    installed — and asks the question once, under the archive. */
 let update = null;
+/** Whether /api/update has answered once, either way: see the end of refresh. */
+let updateAsked = false;
 
 async function loadUpdate(body) {
   let r;
@@ -2545,6 +2734,7 @@ async function loadUpdate(body) {
   } catch {
     return;
   }
+  updateAsked = true;
   const d = await r.json();
   if (!r.ok) {
     $('updates-status').textContent = d.error || 'That did not work.';
@@ -2643,7 +2833,7 @@ $('btn-update-copy').onclick = async () => {
   }
 };
 
-refresh().then(() => loadUpdate());
+refresh();
 </script>
 </body>
 </html>`;
