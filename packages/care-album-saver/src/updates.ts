@@ -22,7 +22,7 @@ import { currentVersion, installKind, type InstallKind, type VersionInfo } from 
  * clone the README describes, and because each release carries its changelog.
  */
 
-export const REPOSITORY = 'ip2k/care-album-saver';
+const REPOSITORY = 'ip2k/care-album-saver';
 export const RELEASES_URL = `https://github.com/${REPOSITORY}/releases`;
 export const UPDATING_DOC_URL = `https://github.com/${REPOSITORY}/blob/main/docs/UPDATING.md`;
 const LATEST_API = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
@@ -73,7 +73,7 @@ export interface UpdateStatus {
 const EMPTY: UpdateState = { checkedAt: null, attemptedAt: null, latest: null, error: null };
 const statePath = (): string => join(configDir(), 'update-check.json');
 
-export async function loadUpdateState(): Promise<UpdateState> {
+async function loadUpdateState(): Promise<UpdateState> {
   const stored = await readJsonFile<Partial<UpdateState>>(statePath());
   return { ...EMPTY, ...(stored ?? {}), latest: parseStoredRelease(stored?.latest) };
 }
