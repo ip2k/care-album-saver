@@ -1094,7 +1094,9 @@ ${COOKIE_HELP_CSS}
 <script nonce="__NONCE__">
 const TOKEN = '__TOKEN__';
 const $ = (id) => document.getElementById(id);
-const api = (path, opts = {}) => fetch(path + (path.includes('?') ? '&' : '?') + 'token=' + TOKEN, {
+// The token goes in the header only. The tool refuses it in the address of any /api/* request;
+// only the page's own link and /photo (an <img> cannot send a header) carry it there (Q10).
+const api = (path, opts = {}) => fetch(path, {
   ...opts, headers: { 'content-type': 'application/json', 'x-setup-token': TOKEN, ...(opts.headers || {}) }
 });
 
@@ -1371,9 +1373,9 @@ function needsSetup(s) {
   // No session at all: the first thing to do is the first step. Nor one Brightwheel has
   // stopped accepting, found when the page asked who is on the account (loadChildren).
   if (!s.hasSession || s.sessionRejected) return true;
-  // A session that has stopped working, which the server reports as a run refused for it.
-  const failed = s.progress && s.progress.phase === 'error' && /sign in|session|expired/i.test(s.progress.message || '');
-  if (failed) return true;
+  // A run Brightwheel refused for its session, which the server marks as such. A field, not
+  // words: any error that happened to mention a session used to count.
+  if (s.progress && s.progress.phase === 'error' && s.progress.reason === 'session') return true;
   // Connected, but nothing has ever been saved. There is no gallery to show and the steps
   // are not finished — choosing a folder and pressing the button are still ahead. Showing a
   // dashboard here would hide the rest of setup the moment the cookie was pasted.
