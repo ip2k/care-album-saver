@@ -360,6 +360,56 @@ export const PAGE = String.raw`<!doctype html>
   }
   /* The dashboard has no step numbers, so its notes are not indented under one. */
   .dash .hint { margin-left: 0; }
+  /* What the archive is and how it is kept, one plain line each, under the photos. */
+  .dash-facts { list-style: none; margin: var(--s4) 0 0; padding: 0; color: var(--text-muted); font-size: .9375rem; }
+  .dash-facts li { margin: 0 0 var(--s2); }
+  .dash-facts li:empty { display: none; }
+
+  /* Settings: a column of sections on the left, one section showing on the right. */
+  #dlg-settings { max-width: 64rem; }
+  .settings-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); }
+  .settings-nav {
+    display: flex; flex-direction: column; gap: var(--s1);
+    padding: var(--s4) var(--s3); border-right: 1px solid var(--border);
+  }
+  .settings-nav button {
+    background: none; color: var(--text); border: 1px solid transparent; text-align: left;
+    font-weight: 550; font-size: 1rem; padding: .625rem .875rem; min-height: 2.75rem;
+  }
+  .settings-nav button:hover:not(:disabled) { background: var(--surface-sunken); }
+  .settings-nav button[aria-current="page"] {
+    background: var(--accent-tint); color: var(--accent-ink); border-color: var(--accent);
+  }
+  /* Inside a section the cards lose their own frame: the section is the frame. */
+  #dlg-settings .card { border: 0; border-radius: 0; box-shadow: none; padding: 0; margin: 0; background: none; }
+  /* A line between the parts of a section — counting only the parts that are showing, or a
+     hidden note would leave a line above the first thing on the page — but none between a
+     section's heading, its introduction and what it introduces. */
+  #dlg-settings .settings-panel > :not([hidden]) ~ :not([hidden]) {
+    margin-top: var(--s5); padding-top: var(--s5); border-top: 1px solid var(--border);
+  }
+  /* The :not([hidden]) repeats are specificity, not logic: they lift these above the rule
+     before, whose own :not([hidden]) pair would otherwise win and draw the line anyway. */
+  #dlg-settings .settings-panel > .step-head:not([hidden]) + .hint:not([hidden]),
+  #dlg-settings .settings-panel > .hint:not([hidden]) + :not([hidden]) { margin-top: var(--s4); padding-top: 0; border-top: 0; }
+  /* Step numbers belong to the first-time steps, not to a section of Settings. */
+  #dlg-settings .step-head .num { display: none; }
+  #dlg-settings .hint, #dlg-settings .body { margin-left: 0; }
+  #settings-status:empty { display: none; }
+  /* In Settings the steps' first-time explanations make way: the parent has read them, and
+     they are what pushed a section past the bottom of the screen. The empty "Advanced options"
+     disclosure goes too — its contents are in Save Locations. */
+  #dlg-settings .first-run, #dlg-settings details { display: none; }
+  /* After a run, the result's sentence says what the three counters say, and the folder it
+     offers to open is a button on the dashboard and in Save Locations already. While a run
+     is going the counters are the progress, so they stay. */
+  #dlg-settings #card-run:not([data-running]) .stats,
+  #dlg-settings #run-result .dir-actions, #dlg-settings #run-result .dir-note { display: none; }
+  @media (max-width: 44rem) {
+    .settings-layout { grid-template-columns: minmax(0, 1fr); }
+    .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    .settings-nav button { flex: 0 0 auto; }
+  }
   .nowrap { white-space: nowrap; }
 
   /* A button that opens something on this page, dressed as the link beside it. Still a
@@ -525,8 +575,15 @@ ${COOKIE_HELP_CSS}
       <button class="secondary" id="btn-dash-folder" type="button">Open this folder</button>
       <button class="secondary" id="btn-dash-logs" type="button">View the log</button>
     </div>
-    <p class="hint" id="dash-schedule"></p>
-    <p class="hint" id="dash-photos" hidden></p>
+    <!-- What used to be the "This is already set up" card, minus its buttons: those are
+         Settings' sections now, and every one of them is also a button above or in Settings. -->
+    <ul class="dash-facts" aria-label="About your archive">
+      <li id="dash-connected"></li>
+      <li id="dash-schedule"></li>
+      <li id="dash-last"></li>
+      <li id="dash-folder"></li>
+      <li id="dash-photos" hidden></li>
+    </ul>
     <div id="dash-msg" role="status" aria-live="polite"></div>
   </section>
 
@@ -543,7 +600,7 @@ ${COOKIE_HELP_CSS}
           <p class="sr-only" id="connect-state">Step 1 of 3. Not started.</p>
           <ol class="howto" id="howto"></ol>
           ${COOKIE_HELP}
-          <p class="why-ask">
+          <p class="why-ask first-run">
             <b>Why this is needed:</b> it is how the tool proves to Brightwheel that it is
             you, so it can see your own children&rsquo;s photos. It stays on this computer,
             it is not your password, and you can cancel it at any time by signing out of
@@ -610,7 +667,7 @@ ${COOKIE_HELP_CSS}
 
           <details>
             <summary>Advanced options</summary>
-            <div class="inner">
+            <div class="inner" id="advanced-inner">
               <div class="field">
                 <label class="field-label" for="organiseBy">Folder layout</label>
                 <select id="organiseBy">
@@ -644,7 +701,7 @@ ${COOKIE_HELP_CSS}
           <span class="num" aria-hidden="true" id="num-3">3</span>
           <h2 id="h-run">Save the photos</h2>
         </div>
-        <p class="hint">This is the one-time part: the first run fetches everything you already have, so it takes a while. Every run after it only looks for what is new, which takes a moment. You can close this page &mdash; it keeps going in the black window you started it from. Step 4 is what makes it happen without you.</p>
+        <p class="hint first-run">This is the one-time part: the first run fetches everything you already have, so it takes a while. Every run after it only looks for what is new, which takes a moment. You can close this page &mdash; it keeps going in the black window you started it from. Step 4 is what makes it happen without you.</p>
         <div class="body">
           <p class="sr-only" id="run-state">Step 3 of 4. Waiting for step 1.</p>
           <div class="run-actions">
@@ -670,10 +727,10 @@ ${COOKIE_HELP_CSS}
           <span class="num" aria-hidden="true" id="num-4">4</span>
           <h2 id="h-schedule">Keep it up to date on its own</h2>
         </div>
-        <p class="hint">Steps 1 to 3 happen once. This one is what turns them into something that looks after itself, so that next month&rsquo;s photos arrive without you remembering to come back here.</p>
+        <p class="hint first-run">Steps 1 to 3 happen once. This one is what turns them into something that looks after itself, so that next month&rsquo;s photos arrive without you remembering to come back here.</p>
         <div class="body">
           <p class="sr-only" id="schedule-state">Step 4 of 4. Optional.</p>
-          <p class="why-ask">
+          <p class="why-ask first-run">
             <b>What a scheduled task is:</b> a note in your own computer&rsquo;s diary that says
             &ldquo;run this at seven every evening&rdquo;. Your computer does it &mdash; not a
             website, not a server somewhere &mdash; and it only happens while the computer is
@@ -690,7 +747,7 @@ ${COOKIE_HELP_CSS}
             <button class="secondary" id="btn-schedule-off" type="button" hidden>Stop saving them automatically</button>
           </div>
           <div id="schedule-msg" role="status" aria-live="polite"></div>
-          <p style="color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0">
+          <p class="first-run" style="color:var(--text-muted);font-size:.9375rem;margin:var(--s4) 0 0">
             <b>You do not have to.</b> Leave this off and nothing changes: whenever you want the
             newest photos, start the tool again and press <b>Start saving</b> in step 3. It only
             ever looks for what is new, so it is quick.
@@ -700,75 +757,40 @@ ${COOKIE_HELP_CSS}
     </li>
   </ol>
 
-  <!--
-    The management view. Same page, different rendering: when there is a saved session AND a
-    daily run already set up, this card is moved to the top and the four steps are folded
-    into the disclosure below it. A parent who comes back is almost never here to set
-    anything up — they are here because the session expired — so the wizard is not what
-    should greet them.
-  -->
-  <section class="card" id="card-manage" aria-labelledby="h-manage" data-state="complete" hidden>
-    <div class="step-head">
-      <span class="num" aria-hidden="true">&#10003;</span>
-      <h2 id="h-manage">This is already set up</h2>
-    </div>
-    <p class="hint">Nothing here needs doing. This is where you change it, check on it, or fix it.</p>
-    <div class="body">
-      <p id="m-connected" style="margin:0 0 var(--s2);font-size:.9375rem"></p>
-      <p id="m-daily" style="margin:0 0 var(--s2);font-size:.9375rem"></p>
-      <p id="m-last" style="margin:0 0 var(--s2);font-size:.9375rem"></p>
-      <p id="m-folder" style="margin:0 0 var(--s4);font-size:.9375rem"></p>
-
-      <div class="run-actions">
-        <button id="m-run" type="button">Save new photos now</button>
-        <button class="secondary" id="m-open" type="button">Open the photos folder</button>
-        <button class="secondary" id="m-session" type="button">Update my Brightwheel session</button>
-        <button class="secondary" id="m-time" type="button">Change the time</button>
-        <button class="secondary" id="m-off" type="button">Stop the daily run</button>
-      </div>
-      <div id="m-msg" role="status" aria-live="polite"></div>
-
-      <h3 style="font-size:1rem;font-weight:640;margin:var(--s6) 0 var(--s2)">Checking on the archive</h3>
-      <p style="color:var(--text-muted);font-size:.9375rem;margin:0 0 var(--s4)">Each of these answers a question and changes nothing on its own. If something needs fixing, it says so and asks first.</p>
-
-      <div class="field">
-        <button class="secondary" id="m-children" type="button">Has a child been added or left?</button>
-        <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">Asks Brightwheel who is on your account now and compares that with the photos already saved.</p>
-        <div id="m-children-out" role="status" aria-live="polite"></div>
-      </div>
-
-      <div class="field">
-        <button class="secondary" id="m-check" type="button">Check the folder against the list</button>
-        <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">The tool keeps a list of everything it has saved. This compares that list with what is really in the folder, and reports anything on one side and not the other.</p>
-        <div id="m-check-out" role="status" aria-live="polite"></div>
-      </div>
-
-      <div class="field">
-        <button class="secondary" id="m-dupes" type="button">Find photos saved twice</button>
-        <p style="color:var(--text-muted);font-size:.875rem;margin:var(--s2) 0 0">A run that was force-quit can fetch the same photo again under a new name. This finds copies that are identical down to the last byte. It only ever shows them &mdash; nothing is deleted unless you say so.</p>
-        <div id="m-dupes-out" role="status" aria-live="polite"></div>
-      </div>
-    </div>
-  </section>
-
-  <details id="setup-details" hidden>
-    <summary id="setup-summary">Change how it is set up</summary>
-    <div class="inner" id="setup-inner"></div>
-  </details>
   </div>
   </main>
 
 </div>
 
-<!-- Settings and Maintenance. The setup flow is MOVED in here once it is not the main
-     event; there is one of each control in the document, never two. -->
+<!-- Settings and Maintenance, one section at a time, chosen from the column on the left.
+     Once setup is done the setup steps are MOVED into these sections, never copied: there is
+     one of each control in the document, so a setting cannot be changed in one place and
+     left behind in another. Nothing in here folds away; a section is short enough to see
+     whole, which is what a dropdown inside a dialog made impossible. -->
 <dialog id="dlg-settings" aria-labelledby="h-settings">
   <div class="dlg-head">
     <h2 id="h-settings">Settings and Maintenance</h2>
     <button class="icon-btn" id="btn-settings-close" type="button">Close</button>
   </div>
+  <div class="settings-layout">
+    <nav class="settings-nav" aria-label="Settings sections">
+      <button type="button" data-go="account" aria-current="page">Account</button>
+      <button type="button" data-go="children">Children</button>
+      <button type="button" data-go="save">Save Locations</button>
+      <button type="button" data-go="schedule">Schedule</button>
+      <button type="button" data-go="integrations">Integrations</button>
+      <button type="button" data-go="maintenance">Maintenance</button>
+    </nav>
   <div class="dlg-body" id="settings-body">
-    <div id="settings-flow"></div>
+    <section class="settings-panel" data-panel="account" aria-label="Account"></section>
+    <section class="settings-panel" data-panel="children" aria-label="Children" hidden></section>
+    <section class="settings-panel" data-panel="save" aria-labelledby="h-save" hidden>
+      <div class="step-head"><h2 id="h-save">Save Locations</h2></div>
+      <p class="hint">Where the photos go on this computer, and how the folders inside are laid out.</p>
+    </section>
+    <section class="settings-panel" data-panel="schedule" aria-label="Schedule" hidden></section>
+    <section class="settings-panel" data-panel="integrations" aria-label="Integrations" hidden>
+      <p class="hint" id="integrations-none">Nothing to connect to on this computer yet. Adding photos to Apple Photos needs a Mac.</p>
 
     <!-- Settings-only, never part of the setup steps: it is nobody's first decision, and it
          is the one choice that can send photos off this computer. Hidden where there is
@@ -797,6 +819,30 @@ ${COOKIE_HELP_CSS}
         </p>
       </div>
     </section>
+    </section>
+
+    <section class="settings-panel" data-panel="maintenance" aria-labelledby="h-maint" hidden>
+      <div class="step-head"><h2 id="h-maint">Checking on the archive</h2></div>
+      <p class="hint">Each of these answers a question and changes nothing on its own. If something needs fixing, it says so and asks first.</p>
+      <div class="field">
+        <button class="secondary" id="m-children" type="button">Has a child been added or left?</button>
+        <p class="field-hint">Asks Brightwheel who is on your account now and compares that with the photos already saved.</p>
+        <div id="m-children-out" role="status" aria-live="polite"></div>
+      </div>
+      <div class="field">
+        <button class="secondary" id="m-check" type="button">Check the folder against the list</button>
+        <p class="field-hint">The tool keeps a list of everything it has saved. This compares that list with what is really in the folder, and reports anything on one side and not the other.</p>
+        <div id="m-check-out" role="status" aria-live="polite"></div>
+      </div>
+      <div class="field">
+        <button class="secondary" id="m-dupes" type="button">Find photos saved twice</button>
+        <p class="field-hint">A run that was force-quit can fetch the same photo again under a new name. This finds copies that are identical down to the last byte. It only ever shows them &mdash; nothing is deleted unless you say so.</p>
+        <div id="m-dupes-out" role="status" aria-live="polite"></div>
+      </div>
+    </section>
+    <!-- The "Saved" line serves every section, so in Settings it sits under whichever shows. -->
+    <div id="settings-status"></div>
+  </div>
   </div>
 </dialog>
 
@@ -1110,14 +1156,66 @@ function needsSetup(s) {
  * tick boxes, whichever view is showing — which is the only way this could be done without
  * two of everything quietly drifting apart.
  */
+/**
+ * What moves into which section of Settings once setup is done. Each piece keeps a marker at
+ * its place in the steps, so going back to setup — a session that expired — puts every one
+ * of them exactly where it was. The folder field and the advanced options leave step 2 for
+ * Save Locations; the advanced options leave their dropdown as well, because nothing in
+ * Settings folds away.
+ */
+const MOVED = [
+  ['card-connect', 'account'],
+  ['card-children', 'children'],
+  ['dir-field', 'save'],
+  ['advanced-inner', 'save'],
+  ['card-run', 'schedule'],
+  ['card-schedule', 'schedule'],
+  ['config-msg', null],
+].map(([id, panel]) => {
+  const node = $(id);
+  const home = document.createComment(' #' + id + ' lives here during setup ');
+  node.before(home);
+  return { node, panel, home };
+});
+
+const panelFor = (name) => document.querySelector('.settings-panel[data-panel="' + name + '"]');
+const sectionButtons = () => [...document.querySelectorAll('.settings-nav button')];
+/** The four sections that are the setup steps themselves, shown on the page during setup. */
+const STEP_SECTIONS = ['account', 'children', 'save', 'schedule'];
+
+function showSection(name) {
+  for (const panel of document.querySelectorAll('.settings-panel')) panel.hidden = panel.dataset.panel !== name;
+  for (const b of sectionButtons()) {
+    if (b.dataset.go === name) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
+}
+
+/** Open Settings, at a section when the caller knows which one the parent needs. */
+function openSettings(name) {
+  if (name) showSection(name);
+  openDialog('dlg-settings');
+}
+
+for (const b of sectionButtons()) b.onclick = () => showSection(b.dataset.go);
+
 function placeSetupFlow(inSettings) {
-  const flow = $('setup-flow');
-  const home = $('main');
-  const settings = $('settings-flow');
-  const wanted = inSettings ? settings : home;
-  if (flow.parentElement !== wanted) wanted.appendChild(flow);
-  $('dash').hidden = inSettings === false;
-  flow.hidden = false;
+  for (const m of MOVED) {
+    const target = m.panel ? panelFor(m.panel) : $('settings-status');
+    // Only when it is not already there: moving a node that holds focus drops the focus,
+    // and this runs on every refresh, including while someone is typing in Settings.
+    if (inSettings) {
+      if (m.node.parentElement !== target) target.appendChild(m.node);
+    } else if (m.home.nextSibling !== m.node) {
+      m.home.after(m.node);
+    }
+  }
+  $('setup-flow').hidden = inSettings;
+  $('dash').hidden = !inSettings;
+  // During setup those four are on the page itself, so Settings offers only the rest.
+  for (const b of sectionButtons()) b.hidden = !inSettings && STEP_SECTIONS.includes(b.dataset.go);
+  const current = sectionButtons().find((b) => b.getAttribute('aria-current') === 'page');
+  if (!current || current.hidden) showSection(inSettings ? 'account' : 'integrations');
 }
 
 const day = (iso) => {
@@ -1190,6 +1288,7 @@ async function refresh() {
   await loadSchedule();
   placeSetupFlow(!needsSetup(state));
   paintDashboard(state);
+  paintFacts();
   paintPhotos(state.photos);
   paint(state.progress, state.running, state.lastResult);
   // A run started before this page was opened (or before a reload) is still going in the
@@ -1273,7 +1372,7 @@ function checkCookieField(rewrite) {
 const openDialog = (id) => { const d = $(id); if (d.showModal) d.showModal(); else d.setAttribute('open', ''); };
 const closeDialog = (id) => { const d = $(id); if (d.close) d.close(); else d.removeAttribute('open'); };
 
-$('btn-settings').onclick = () => openDialog('dlg-settings');
+$('btn-settings').onclick = () => openSettings();
 $('btn-settings-close').onclick = () => closeDialog('dlg-settings');
 $('btn-help').onclick = () => openDialog('dlg-help');
 $('btn-help-close').onclick = () => closeDialog('dlg-help');
@@ -1293,6 +1392,8 @@ function paintPhotos(p) {
   photosNow = p || null;
   const card = $('card-photos');
   card.hidden = !p || !p.supported;
+  // Integrations says it has nothing to offer only where that is true.
+  $('integrations-none').hidden = !card.hidden;
   // One line on the dashboard: that it is on, or — the case that matters — that it has
   // stopped working, since nothing else on the main page would ever say so.
   const dash = $('dash-photos');
@@ -1415,7 +1516,9 @@ $('btn-logs-open').onclick = async () => {
 
 /* The dashboard's own buttons reuse the controls that already exist, so there is one
    implementation of "run" and one of "open the folder" rather than two that drift. */
-$('btn-dash-run').onclick = () => { $('btn-run').click(); openDialog('dlg-settings'); };
+// The run's progress, its counts and its Stop button are in the Schedule section, so a run
+// started here opens there: a run with nothing visibly moving reads as one that has hung.
+$('btn-dash-run').onclick = () => { openSettings('schedule'); $('btn-run').click(); };
 $('btn-dash-folder').onclick = () => $('btn-open-dir').click();
 
 $('cookie').addEventListener('input', () => checkCookieField(false));
@@ -1545,7 +1648,7 @@ function offerOpenFolder() {
   $('run-result').insertAdjacentHTML('beforeend',
     '<div class="dir-actions" style="align-items:center">' +
     '<button class="secondary" id="btn-open-done" type="button">Open this folder</button>' +
-    '<span class="path">' + esc(savedDir) + '</span></div>' +
+    '<span class="path">' + esc((state && state.archiveDirShown) || savedDir) + '</span></div>' +
     '<p class="dir-note" id="open-done-note" role="status" aria-live="polite"></p>');
 }
 
@@ -1600,6 +1703,7 @@ $('btn-stop').onclick = async () => {
 
 function paint(p, running, result) {
   if (!p) return;
+  $('card-run').toggleAttribute('data-running', Boolean(running));
   $('s-saved').textContent = p.saved;
   $('s-skipped').textContent = p.skipped;
   $('s-failed').textContent = p.failed;
@@ -1681,7 +1785,7 @@ async function poll() {
   else paintPhotos(s.photos);
 }
 
-/* ------------------------------------------------------------------ step 4 and managing it
+/* ------------------------------------------------------------------ step 4, and after it
 
    The page used to read "connect, choose, run once", which is the wrong shape for what this
    tool is. The run that matters is not this one, it is the one in three weeks' time — and a
@@ -1689,18 +1793,17 @@ async function poll() {
    hands the job to the scheduler the operating system already has, and says plainly what
    that does and does not do.
 
-   Coming back is then a different task from setting up, so it gets a different rendering of
-   this same page. Someone who opens the tool a month later is almost never here to choose a
-   folder layout; they are here because the session expired. The management view leads with
-   that, and folds the four steps into a disclosure underneath rather than deleting them —
-   everything in there still works, and "update my session" is one press from the top. */
+   Coming back is then a different task from setting up. Someone who opens the tool a month
+   later wants to see that it is still working, so the page opens on the photos and the
+   facts under them; everything they might change is a section of Settings, one at a time.
+   (An earlier "This is already set up" card sat above the photos with shortcut buttons into
+   a folded-away copy of the steps. Its lines are the dashboard's facts now, and its buttons
+   are the sections themselves.) */
 
 /** The last answer from /api/schedule. */
 let sched = null;
 /** What this computer would set up, before anything has been set up. */
 let proposed = null;
-/** Whether the page has been re-rendered as a management view. One way, per page load. */
-let manageMode = false;
 /** The duplicate report the delete button is allowed to act on, and nothing else. */
 let dupes = null;
 
@@ -1713,9 +1816,23 @@ for (const id of ['connect-state', 'children-state']) {
 }
 
 const smooth = () => (window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
-const shortWhen = (iso) => {
+/** A time of day on this computer's clock, in its own style: "7:00 PM", or "19:00". */
+const clockTime = (hhmm) => {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return isNaN(d.getTime()) ? String(hhmm) : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+};
+/** When the next run is, the way a person says it: "today at 7:00 PM", "Thursday at 7:00 PM". */
+const nextWhen = (iso) => {
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+  if (isNaN(d.getTime())) return '';
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const day = d.toDateString() === new Date().toDateString() ? 'today'
+    : d.toDateString() === tomorrow.toDateString() ? 'tomorrow'
+    : d.toLocaleDateString(undefined, { weekday: 'long' });
+  return day + ' at ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 };
 const fullWhen = (iso) => {
   const d = new Date(iso);
@@ -1735,8 +1852,7 @@ async function loadSchedule() {
   sched = d.schedule;
   proposed = d.proposed;
   paintSchedule();
-  if (d.manage) enterManageMode();
-  paintManage();
+  paintFacts();
 }
 
 function paintSchedule() {
@@ -1753,8 +1869,8 @@ function paintSchedule() {
       ? 'A daily run was set up, but this computer no longer has it. Settings and Maintenance says how to put it back.'
       : stalled
         ? 'The daily run is set up but has not saved anything since. Settings and Maintenance says why.'
-        : 'Saves new photos every day' + (sched.time ? ' at ' + sched.time : '') +
-          (sched.nextRun ? ' — next run ' + shortWhen(sched.nextRun) : '') + '.';
+        : 'Saves new photos every day' + (sched.time ? ' at ' + clockTime(sched.time) : '') +
+          (sched.nextRun ? ' — next run ' + nextWhen(sched.nextRun) : '') + '.';
   $('dash-schedule').classList.toggle('warn-text', lost || stalled);
   if (sched.time) $('schedule-time').value = sched.time;
   $('btn-schedule-off').hidden = !sched.installed;
@@ -1789,49 +1905,30 @@ function paintSchedule() {
     return;
   }
   show(box, 'ok',
-    esc(sched.summary) + (sched.nextRun ? '<br>Next run: <b>' + esc(shortWhen(sched.nextRun)) + '</b>.' : '') + found);
+    esc(sched.summary) + (sched.nextRun ? '<br>Next run: <b>' + esc(nextWhen(sched.nextRun)) + '</b>.' : '') + found);
   setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'complete', 'Step 4 of 4, done. ' + sched.summary);
 }
 
-function enterManageMode() {
-  if (manageMode) return;
-  manageMode = true;
-  document.title = 'Care Album Saver - Managing your archive';
-  $('setup-inner').appendChild(document.querySelector('ol.steps-list'));
-  $('setup-details').hidden = false;
-  $('card-manage').hidden = false;
-  $('main').prepend($('card-manage'));
-}
-
-/** Open the folded-away wizard at one card, for the manage view's buttons. */
-function openSetup(cardId) {
-  $('setup-details').open = true;
-  const card = $(cardId);
-  if (card) card.scrollIntoView({ behavior: smooth(), block: 'start' });
-}
-
-function paintManage() {
-  if (!manageMode || !state) return;
-  $('m-connected').innerHTML =
-    'Connected to Brightwheel' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') +
-    (state.sessionSavedAt ? ', since ' + esc(fullWhen(state.sessionSavedAt)) : '') + '.';
-  // A next run is only true when the computer really still holds the job. Printing one
-  // beside "it is no longer there" would be the page contradicting itself in two lines.
-  const due = sched && sched.installed && sched.registered !== false && sched.nextRun;
-  $('m-daily').innerHTML = sched
-    ? esc(sched.summary) + (due ? ' Next run: <b>' + esc(shortWhen(sched.nextRun)) + '</b>.' : '')
-    : '';
+/**
+ * The archive's facts, on the dashboard under the photos: who it is connected as, when it
+ * last ran on its own and how that went, and where the photos are. The daily-run line is
+ * paintSchedule's, because it has its own warnings.
+ */
+function paintFacts() {
+  if (!state) return;
+  $('dash-connected').innerHTML = state.hasSession
+    ? 'Connected to Brightwheel' + (state.email ? ' as <b>' + esc(state.email) + '</b>' : '') +
+      (state.sessionSavedAt ? ', since ' + esc(fullWhen(state.sessionSavedAt)) : '') + '.'
+    : 'Not connected to Brightwheel.';
   const last = sched && sched.lastRun;
   // Whether it worked is said in words, not only in the presence of a number.
-  $('m-last').innerHTML = last
+  $('dash-last').innerHTML = last
     ? 'Last run on its own: <b>' + esc(fullWhen(last.at)) + '</b> &mdash; ' +
       (last.ok ? 'it worked' : 'it did not work') + '. ' + esc(last.message)
-    : 'It has not run on its own yet.';
+    : (sched && sched.installed ? 'The daily run has not run on its own yet.' : '');
   // No full stop after the path: the pill carries its own padding, so one would sit on its
   // own with a visible gap in front of it.
-  $('m-folder').innerHTML = 'Photos are in <span class="path">' + esc(state.config.archiveDir) + '</span>';
-  $('m-off').hidden = !(sched && sched.installed);
-  $('m-time').textContent = sched && sched.installed ? 'Change the time' : 'Set a daily time';
+  $('dash-folder').innerHTML = 'Photos are in <span class="path">' + esc(state.archiveDirShown || state.config.archiveDir) + '</span>';
 }
 
 /** Ask the tool to change the daily run. Returns the refusal, or null when it worked. */
@@ -1855,12 +1952,12 @@ $('btn-schedule-on').onclick = async () => {
   // paintSchedule owns the button's label and the box, so it runs either way; the refusal
   // then goes into the box it just rewrote.
   paintSchedule();
-  paintManage();
+  paintFacts();
   if (error) show($('schedule-msg'), 'err', esc(error));
-  else if (!manageMode) {
+  else if (!$('setup-flow').hidden) {
     $('schedule-msg').insertAdjacentHTML('beforeend',
       '<p style="color:var(--text-muted);font-size:.875rem;margin:var(--s3) 0 0">' +
-      'Next time you open this tool it will show a page for managing this, rather than these four steps.</p>');
+      'Next time you open this tool it opens on your photos, and all of this is under Settings and Maintenance.</p>');
   }
 };
 
@@ -1870,43 +1967,8 @@ $('btn-schedule-off').onclick = async () => {
   const error = await postSchedule('/api/schedule/off');
   btn.disabled = false;
   paintSchedule();
-  paintManage();
+  paintFacts();
   if (error) show($('schedule-msg'), 'err', esc(error));
-};
-
-// ---------------------------------------------------------------- the management view
-
-$('m-run').onclick = () => {
-  // Reuses step 3 rather than running behind the parent's back: the progress bar, the
-  // counts and the Stop button all live there, and a run with no visible progress is the
-  // thing HIG's progress guidance is written against.
-  openSetup('card-run');
-  $('btn-run').click();
-};
-
-$('m-session').onclick = () => {
-  openSetup('card-connect');
-  $('cookie').focus();
-};
-
-$('m-time').onclick = () => {
-  openSetup('card-schedule');
-  $('schedule-time').focus();
-};
-
-$('m-off').onclick = () => $('btn-schedule-off').click();
-
-$('m-open').onclick = async () => {
-  const btn = $('m-open');
-  btn.disabled = true;
-  try {
-    const d = await (await api('/api/open-folder', { method: 'POST', body: '{}' })).json();
-    if (!d.ok) show($('m-msg'), 'err', esc(d.error || 'The folder could not be opened.'));
-    else $('m-msg').textContent = '';
-  } catch {
-    show($('m-msg'), 'err', 'Could not reach the tool. Check it is still running in the window you started it from.');
-  }
-  btn.disabled = false;
 };
 
 // ---------------------------------------------------------------- looking after the archive
