@@ -296,12 +296,14 @@ test('a record whose file is already gone is not offered as a duplicate to delet
   }
 });
 
-test('sizes are said the way a parent reads them', () => {
-  assert.equal(humanBytes(0), '0 bytes');
-  assert.equal(humanBytes(999), '999 bytes');
-  assert.equal(humanBytes(1500), '1.5 KB');
-  assert.equal(humanBytes(15_000), '15 KB');
-  assert.equal(humanBytes(2_400_000_000), '2.4 GB');
+test('sizes are said the way this computer\'s own file manager says them', () => {
+  // The full table per platform is in units.test.js; this pins that the folder check and
+  // the duplicate report go through the same formatter as the dashboard.
+  assert.equal(humanBytes(0, 'darwin'), '0 bytes');
+  assert.equal(humanBytes(1500, 'darwin'), '2 KB');
+  assert.equal(humanBytes(1500, 'linux'), '1.5 kB');
+  assert.equal(humanBytes(1500, 'win32'), '1.46 KB');
+  assert.equal(humanBytes(2_400_000_000, 'darwin'), '2.4 GB');
 });
 
 // ---------------------------------------------------------------- an empty archive

@@ -1120,11 +1120,6 @@ function placeSetupFlow(inSettings) {
   flow.hidden = false;
 }
 
-function human(bytes) {
-  if (!bytes) return '0 MB';
-  const mb = bytes / 1048576;
-  return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.max(1, Math.round(mb)) + ' MB';
-}
 const day = (iso) => {
   if (!iso) return 'never';
   const d = new Date(iso);
@@ -1138,7 +1133,7 @@ function paintDashboard(s) {
   const stats = $('dash-stats');
   stats.textContent = a.totalFiles === 0
     ? 'Nothing saved yet.'
-    : a.totalFiles + ' photos and videos, ' + human(a.totalBytes) +
+    : a.totalFiles + ' photos and videos, ' + a.totalSize +
       ' \u2014 newest posted ' + day(a.newestPostedAt) +
       '. Last run saved ' + a.lastRunCount + ', on ' + day(a.lastSavedAt) + '.';
 

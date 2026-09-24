@@ -44,6 +44,10 @@ file was started.
 
 ### Fixed
 
+- **Sizes match your file manager.** The dashboard divided by 1,048,576 and called it MB, while
+  the folder check divided by 1,000,000, so one archive read 218 MB on one screen and 231 MB on
+  the next. Both now measure the whole folder and write it as this computer's own file manager
+  does: Finder and Ubuntu's Files count 1 MB as 1,000,000 bytes, Windows Explorer as 1,048,576.
 - **When Brightwheel refuses a pasted value, the page says so in words that fit a browser**,
   and where the right value comes from — instead of a terminal command to run and a guess that
   the session had expired, which a value from the wrong row, or pasted into the demo, is not.
