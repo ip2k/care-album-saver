@@ -612,19 +612,25 @@ export const COOKIE_BROWSERS: ReadonlyArray<{ key: CookieFigure['browser']; name
  * pictures in the document looking like a different product. The light values imitate a
  * developer tools panel in a light theme, the dark ones in a dark theme, so the figure
  * belongs to whichever the reader is in.
+ *
+ * The page's own Rosé Pine palette reaches only what is ours in the picture: the canvas
+ * around the window and the numbered marks drawn over it (Love, mixed towards Text in light
+ * mode until the white number on it reads at 4.5:1). The window keeps the browser's greys
+ * and blues on purpose — it is a picture of something the parent is about to look at, and
+ * it has to look like that thing rather than like this page.
  */
 export const COOKIE_FIGURE_CSS = `
   .ck-panel {
     --f-canvas: var(--surface-sunken);
     --f-panel: #ffffff; --f-chrome: #f1f3f4; --f-sunken: #f7f8fa; --f-line: #ccd3dc;
     --f-ink: #1f2328; --f-dim: #55606e; --f-sel: #dbe8fd; --f-row: #eef4ff;
-    --f-active: #1558c0; --f-mark: #c3351c; --f-mark-ink: #ffffff;
+    --f-active: #1558c0; --f-mark: #a45e76; --f-mark-ink: #fffaf3;
   }
   @media (prefers-color-scheme: dark) {
     .ck-panel {
       --f-panel: #1d2128; --f-chrome: #2a2f38; --f-sunken: #232832; --f-line: #3f4754;
       --f-ink: #e8ebf1; --f-dim: #a7b1c0; --f-sel: #26406b; --f-row: #1f2a3d;
-      --f-active: #8ab4f8; --f-mark: #ff7a5c; --f-mark-ink: #1a1a1a;
+      --f-active: #8ab4f8; --f-mark: #eb6f92; --f-mark-ink: #191724;
     }
   }`;
 
@@ -643,8 +649,8 @@ export const COOKIE_HELP_CSS = `${COOKIE_FIGURE_CSS}
     display: inline-flex; align-items: center; gap: var(--s2);
     background: var(--surface-sunken); color: var(--accent-ink);
     border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-    padding: var(--s2) var(--s4); font: 550 .9375rem/1.4 inherit;
-    cursor: pointer; min-height: 2.75rem;
+    padding: var(--s2) var(--s4); font: inherit; font-weight: 550; font-size: 1.0625rem; line-height: 1.4;
+    cursor: pointer; min-height: 2.875rem;
   }
   .ck-toggle:hover { background: var(--border); }
   .ck-caret { display: inline-block; transition: transform .15s; }

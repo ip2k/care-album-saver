@@ -30,7 +30,7 @@ const WIDTH = 640;
  */
 const host = (svg) => `<!doctype html>
 <html><head><meta charset="utf-8"><style>
-  :root { color-scheme: light; --surface-sunken: #eef1f6; --radius-sm: 8px; }
+  :root { color-scheme: light; --surface-sunken: #f2e9e1; --radius-sm: 8px; }
   body {
     margin: 0; background: var(--surface-sunken);
     font: 1rem/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
