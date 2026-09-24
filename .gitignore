@@ -84,3 +84,6 @@ coverage/
 
 # Claude Code worktrees used by parallel agents
 .claude/worktrees/
+
+# The mark scripts/deploy.js leaves in the production clone. Never committed.
+.care-album-saver-production
