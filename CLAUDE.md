@@ -59,14 +59,27 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 228 tests passing on 2026-09-23, with the Apple Photos option merged, no network required
-  (`pnpm test`). The CI matrix in `.github/workflows/ci.yml` is written for Ubuntu, macOS
-  and Windows against Node 20, 22, 24 and 26 but **has never run**. The remote now exists —
-  `origin` is https://github.com/ip2k/care-album-saver, **public**, and still empty: nothing
-  has been pushed. Before the first push, scan the whole history, not just the tree: an
-  earlier commit's screenshots held the owner's home path (fixed later, still in history).
-  The win32 rehearsal (`CARE_ALBUM_TEST_PLATFORM=win32 pnpm test`) is 228 tests, 226
-  passed, 2 skipped.
+- 310 tests passing on 2026-09-23 (evening, at 3a44cbe), no network required (`pnpm test`).
+  The CI matrix in `.github/workflows/ci.yml` is written for Ubuntu, macOS and Windows
+  against Node 20, 22, 24 and 26 but **has never run**. The remote exists — `origin` is
+  https://github.com/ip2k/care-album-saver, **public**, and still empty: nothing has been
+  pushed. Before the first push, scan the whole history, not just the tree: an earlier
+  commit's screenshots held the owner's home path (fixed later, still in history). No CI
+  job builds the Docker image; `test/dockerfile.test.js` checks what it copies exists.
+- **Production and development are separate (2026-09-23).** Production is a clone on
+  `main` at ~/Applications/care-album-saver, changed only by `node scripts/deploy.js`,
+  which builds and runs the whole suite there, puts production back on its previous commit
+  if anything fails, and moves the owner's daily run onto it. **After merging to main,
+  deploy.** Development is *marked*, not inferred: deploy.js writes
+  `care-album-saver-development` into this checkout's git common dir, so this checkout and
+  every worktree of it refuse to install the real daily run, while a parent's plain clone
+  (which has no mark) is an ordinary install. Dev UI work uses `scripts/demo.js`.
+- **The update check is ask-once and must stay that way (settled with the owner,
+  2026-09-23).** `checkForUpdates` is null until the parent answers on the dashboard; only
+  `/api/update` sets it. Then GitHub's releases API is asked at most daily, only from the
+  setup page, never from the daily run, with no cookie, token or tool-named User-Agent.
+  Tests are barred from the network by `CARE_ALBUM_NO_UPDATE_CHECK` (set in test-env.js).
+  See src/updates.ts, src/version.ts (install kinds) and docs/UPDATING.md.
 - **Adding to Apple Photos is off by default and must stay that way** (settled 2026-09-23).
   It is the one setting that can send photos off the machine — with iCloud Photos on, Apple
   uploads them — so it is turned on only through `/api/photos`, which asks macOS for
@@ -115,11 +128,12 @@ The global rule is an audit every ~10,000 lines added since the last mark, so th
 is due at roughly **12,600** lines. An earlier edit here wrote 15,000, which did not follow
 from any recorded mark; 2,593 + 10,000 is where it actually falls.
 
-At 6527f06, with the four `ux/*` branches merged, the tree was **8,843** source lines.
-On 2026-09-23, with the Apple Photos option merged, it is **10,850** — 8,257 added since
-the mark, so the audit is not yet due but is about 1,750 lines away. The
-2026-09-22 review (docs/DIRECTIONS-FOR-OPUS.md) already lists dead code to remove when it
-comes: the `openBrowser` option, `dist/api/login.*`, fourteen unused `media-ferry` exports.
+At 6527f06, with the four `ux/*` branches merged, the tree was **8,843** source lines;
+with the Apple Photos option merged, **10,850**. On 2026-09-23 at 3a44cbe it is
+**12,891** — 10,298 added since the mark, so **the dead-code audit is now due**. The
+2026-09-22 review (docs/DIRECTIONS-FOR-OPUS.md) already lists things to remove when it
+comes: the `openBrowser` option, `dist/api/login.*`, fourteen unused `media-ferry` exports
+(now under src/ferry since the fold).
 
 Counting method, since the original figure does not say: `wc -l` over every `.ts` file
 under `packages/*/src`, excluding tests, scripts and the generated `dist/`. That method
