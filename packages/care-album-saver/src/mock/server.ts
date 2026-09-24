@@ -251,10 +251,11 @@ const LOGIN_PAGE = `<!doctype html><html><head><title>Sign in - brightwheel</tit
 
 export interface MockServer {
   url: string;
-  port: number;
   close: () => Promise<void>;
-  /** Every request served, in order. `search` is the query string, so a test can tell pages apart. */
-  /** Every request, in order. `userAgent` is what it identified itself as. */
+  /**
+   * Every request served, in order. `search` is the query string, so a test can tell pages
+   * apart; `userAgent` is what the request identified itself as.
+   */
   requests: { method: string; path: string; search: string; userAgent: string }[];
 }
 
@@ -375,7 +376,10 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
         options.backDatedUploads,
         options.futureDatedPosts,
       );
-      // Honour the server-side filters the real API supports.
+      // Honour the filters other clients say the real API supports. Whether action_type
+      // filters or is ignored is still open (docs/QUESTIONS-FOR-FABLE.md B1), and
+      // start_date/end_date are unprobed (B4-7 in docs/DIRECTIONS-FOR-OPUS.md). Because the
+      // mock filters, no test here can catch a live server that ignores action_type.
       const actionType = url.searchParams.get('action_type');
       if (actionType) all = all.filter((a) => a.action_type === actionType);
       const startDate = url.searchParams.get('start_date');
@@ -401,7 +405,6 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
 
   return {
     url: baseUrl,
-    port,
     requests,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };

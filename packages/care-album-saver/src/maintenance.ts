@@ -1,6 +1,4 @@
-import { execFile } from 'node:child_process';
 import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { platform as osPlatform } from 'node:os';
 import { join, posix, relative, sep } from 'node:path';
 import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from './ferry/index.js';
 import type { BrightwheelClient } from './api/client.js';
@@ -563,6 +561,3 @@ export async function removeDuplicates(config: Config, options: { confirm: strin
             : 'The photos they were copies of are still here.'),
   };
 }
-
-// ------------------------------------------------------------------ opening the folder
-
