@@ -5,11 +5,16 @@ name: ci
 # merged, not after a parent installs it. The matrix is the only place a Windows path or
 # a Node 20 gap is ever exercised; no developer machine on this project is Windows and
 # none runs Node 20.
+#
+# `pull_request` and never `pull_request_target`: a fork's run gets a read-only token and
+# no repository secrets, and that is what makes running a stranger's code here safe.
 on:
   push:
     branches: [main]
   pull_request:
 
+# Read the repository, nothing else. No job here writes to it, comments, releases or
+# publishes a page, and none names a secret.
 permissions:
   contents: read
 
@@ -26,6 +31,9 @@ jobs:
         node: [22, 24, 26]
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The token is not left in .git/config, where the code under test could read it.
+          persist-credentials: false
       # pnpm comes from its own action rather than `corepack enable`: Node 25 stopped
       # bundling corepack, so on the 26 cells that step would find nothing to enable.
       - uses: pnpm/action-setup@v6
@@ -46,11 +54,28 @@ jobs:
         env:
           CARE_ALBUM_CONFIG_DIR: ${{ runner.temp }}/bw-config
 
+  # On a fork's pull request this runs the fork's own scripts/screenshots.js and uploads the
+  # pictures it wrote, which is safe because nothing can come of it (security review sc-3):
+  #
+  # - The token can only read, and is not on disk: the job's own permissions say
+  #   `contents: read` (so a later widening of the workflow's does not reach it), and the
+  #   checkout does not persist it. No secret is named, so a fork's run has none to find.
+  # - The upload is a workflow artifact, attached to that run and deleted after 7 days.
+  #   Nothing downloads it, commits it or publishes it: there is no `workflow_run` workflow
+  #   in this repository, and docs/images changes only when a person runs
+  #   `node scripts/screenshots.js` and commits what they have looked at. A fork can make
+  #   the artifact contain anything; it is a picture for a reviewer, not an input.
+  # - The pnpm cache a pull request writes is scoped to that pull request's ref, so a run on
+  #   main can never restore it.
   screenshots:
     name: guide screenshots still capture
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
           version: 12
