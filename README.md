@@ -168,7 +168,7 @@ pnpm build
 node packages/care-album-saver/dist/cli.js setup
 ```
 
-`pnpm install` needs [pnpm](https://pnpm.io/installation) and Node 20 or newer. Everything
+`pnpm install` needs [pnpm](https://pnpm.io/installation) and Node 22 or newer. Everything
 after the first run is just the last line again. If you would rather type
 `care-album-saver` than the whole path, run `pnpm link --global` inside
 `packages/care-album-saver` once.
@@ -561,7 +561,7 @@ One test file on its own:
 node --test --import ./scripts/test-env.js packages/care-album-saver/test/sync-resilience.test.js
 ```
 
-CI runs the same suite on Ubuntu, macOS and Windows against Node 20, 22, 24 and 26 — twelve
+CI runs the same suite on Ubuntu, macOS and Windows against Node 22, 24 and 26 — twelve
 combinations (`.github/workflows/ci.yml`). Two of the tests assert owner-only file
 permissions, which Windows does not have; there they are reported as skipped with the reason
 printed, never quietly passed. `CARE_ALBUM_TEST_PLATFORM=win32 pnpm test` rehearses
