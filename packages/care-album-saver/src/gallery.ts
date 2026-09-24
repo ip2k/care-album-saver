@@ -44,15 +44,33 @@ export interface ArchiveSummary {
   totalSize: string;
   /** The most recent posted time in the archive, which is how fresh it really is. */
   newestPostedAt: string | null;
-  /** The files the most recent run added, newest first. */
+  /** One page of the files the most recent run added, newest first. */
   recent: GalleryItem[];
-  /** How many the most recent run added, which is `recent.length` before the display cap. */
+  /** How many the most recent run added — every page of them, not only this one. */
   lastRunCount: number;
+  /** Which page `recent` is, from 0, and how many there are. At least one, even when empty. */
+  page: number;
+  pages: number;
+  pageSize: number;
   /** When the archive was last added to. Null for an archive that has never had a run. */
   lastSavedAt: string | null;
 }
 
 const VIDEO = /\.(mp4|mov|m4v)$/i;
+
+/** Thumbnails to a page: three rows of eight on a wide screen, which fits the one-screen budget. */
+export const GALLERY_PAGE_SIZE = 24;
+
+/**
+ * The longest pause between two saves that still counts as one run.
+ *
+ * A run saves files back to back, seconds apart; the slowest thing inside one is a retry,
+ * which waits at most thirty seconds, or a Retry-After, which in practice is a minute or
+ * two. The next run is a day later — or, when somebody presses "Save new photos" twice,
+ * minutes later, and then the two are shown together, which is what they look like to the
+ * person who pressed it.
+ */
+const RUN_GAP = 30 * 60 * 1000;
 
 /** Every record in the archive's manifest, or none when there is no manifest it can read. */
 export async function records(config: Config): Promise<ManifestRecord[]> {
@@ -70,14 +88,6 @@ export async function records(config: Config): Promise<ManifestRecord[]> {
   }
 }
 
-/**
- * The most recent run's files, and what the archive holds in total.
- *
- * "The most recent run" is taken from `downloadedAt` rather than from a run id, because the
- * manifest has never recorded one and inventing one now would make every archive written
- * before today look like it had no runs at all. Files saved within a few minutes of the
- * newest one are the same run — a run takes minutes, and the next one is a day later.
- */
 /**
  * The folder's size, remembered until the tool's list changes.
  *
@@ -97,23 +107,37 @@ async function sizeOnDisk(root: string): Promise<number> {
   return bytes;
 }
 
+/**
+ * The most recent run's files, a page at a time, and what the archive holds in total.
+ *
+ * "The most recent run" is taken from `downloadedAt` rather than from a run id, because the
+ * manifest has never recorded one and inventing one now would make every archive written
+ * before today look like it had no runs at all. A run is a burst: starting from the newest
+ * file, every file saved within RUN_GAP of the one after it belongs to the same run. (This
+ * used to be a fixed ninety minutes from the newest file, which cut the start off any first
+ * run that took longer than that — and the dashboard now shows all of a run, so it would
+ * have shown.)
+ */
 export async function summarise(
   config: Config,
-  limit = 12,
-  options: { platform?: NodeJS.Platform } = {},
+  options: { page?: number; pageSize?: number; platform?: NodeJS.Platform } = {},
 ): Promise<ArchiveSummary> {
   const all = await records(config);
   const totalBytes = all.length === 0 ? 0 : await sizeOnDisk(config.archiveDir);
   const withTime = all
-    .map((r) => ({ r, at: Date.parse(r.downloadedAt ?? '') }))
+    .map((r, index) => ({ r, index, at: Date.parse(r.downloadedAt ?? '') }))
     .filter((x) => Number.isFinite(x.at))
     .sort((a, b) => b.at - a.at);
 
   const lastSavedAt = withTime[0]?.at ?? null;
-  // A run is a burst. Ninety minutes is longer than any first run this tool has taken and
-  // far shorter than the gap to the next day's.
-  const WINDOW = 90 * 60 * 1000;
-  const sameRun = lastSavedAt === null ? [] : withTime.filter((x) => lastSavedAt - x.at <= WINDOW);
+  let runLength = withTime.length === 0 ? 0 : 1;
+  while (runLength < withTime.length && withTime[runLength - 1]!.at - withTime[runLength]!.at <= RUN_GAP) runLength++;
+  const sameRun = withTime.slice(0, runLength);
+
+  const pageSize = Math.max(1, Math.floor(options.pageSize ?? GALLERY_PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(sameRun.length / pageSize));
+  const asked = Math.floor(Number(options.page ?? 0));
+  const page = Number.isFinite(asked) ? Math.min(Math.max(asked, 0), pages - 1) : 0;
 
   const postedTimes = all
     .map((r) => (r.provenance as { postedAt?: string } | undefined)?.postedAt)
@@ -127,11 +151,14 @@ export async function summarise(
     newestPostedAt: postedTimes.at(-1) ?? null,
     lastRunCount: sameRun.length,
     lastSavedAt: lastSavedAt === null ? null : new Date(lastSavedAt).toISOString(),
-    recent: sameRun.slice(0, limit).map((x) => {
+    page,
+    pages,
+    pageSize,
+    recent: sameRun.slice(page * pageSize, (page + 1) * pageSize).map((x) => {
       const p = (x.r.provenance ?? {}) as { postedAt?: string; note?: string; studentName?: string; kind?: string };
       const parts = x.r.path.split(posix.sep);
       return {
-        id: all.indexOf(x.r),
+        id: x.index,
         label: parts.at(-1) ?? x.r.path,
         postedAt: p.postedAt ?? null,
         note: p.note ?? null,

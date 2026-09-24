@@ -13,6 +13,12 @@ file was started.
 
 ### Added
 
+- **A photo viewer, and all of the last run on the dashboard.** The dashboard shows every photo
+  and video the last run saved, twenty-four to a page, newest first. Clicking one opens it over
+  the page rather than in a new tab: ← and →, or the arrows at the edges of the screen, step
+  through the whole run, and Escape, the ✕ in the corner, or a click anywhere on the dark area
+  around the photo closes it and returns to the page where you were. Videos play in place and
+  can be scrubbed, in Safari too.
 - **Production and development are separate.** `node scripts/deploy.js` keeps a production
   copy on `main` (by default `~/Applications/care-album-saver`), builds and tests it there, and
   moves the daily run onto it; `node scripts/production.js setup` opens its setup page. A
@@ -53,6 +59,11 @@ file was started.
 
 ### Fixed
 
+- The dashboard's photos and numbers catch up when a run started from the page finishes,
+  instead of at the next reload.
+- A last run that took longer than ninety minutes lost its first photos from the dashboard: which
+  files were "the last run" was a fixed window from the newest one. It is now every file saved
+  without a half-hour pause between them.
 - A folder typed into the page must be a full path (or start with `~/`). A relative one was
   quietly put inside the tool's own folder. The command line's `--dir` still means relative to
   where you typed it.
