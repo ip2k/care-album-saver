@@ -64,6 +64,11 @@ file was started.
 
 ### Fixed
 
+- `scripts/deploy.js` could deploy only once: every later deploy failed a test that assumed the
+  suite never runs in production. And when a deploy did fail, the daily run had already been
+  switched to the new build, which the script said had not happened. A failed deploy now puts
+  production back on the commit it was on and rebuilds it, and production's tests always run in
+  folders of their own.
 - The dashboard's photos and numbers catch up when a run started from the page finishes,
   instead of at the next reload.
 - A last run that took longer than ninety minutes lost its first photos from the dashboard: which
