@@ -6,7 +6,6 @@ FROM node:22-slim AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json ./
-COPY packages/media-ferry/package.json packages/media-ferry/
 COPY packages/care-album-saver/package.json packages/care-album-saver/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY packages ./packages
