@@ -76,12 +76,15 @@ Photos on they are removed from your other devices too.
 
 ## Two Photos settings worth knowing about
 
-**Copy items to the Photos library** (Photos › Settings › General › Importing). With this on,
-which is how Photos comes, each photo is copied into the Photos library. With it off, Photos
-only points at the file in your archive folder — and
-[Apple's own documentation](https://support.apple.com/guide/photos/change-where-photos-and-videos-are-stored-pht1ed9b966d/mac)
-says files kept outside the library are not stored in iCloud and will not reach your other
-devices. They also go missing in Photos if you move or rename the archive folder.
+**Copy items to the Photos library** (Photos › Settings › General › Importing). **Leave this
+on**, which is how Photos comes. With it on, each photo is copied into the Photos library.
+With it off, Photos only points at the file it was given instead of keeping a copy — and this
+tool gives Photos a temporary copy of each photo, not the file in your folder (see
+[How it works](#how-it-works)), and deletes that copy once Photos has it, so those photos would
+go missing in Photos. Photos gives no way for this tool to see the setting, so it cannot warn
+you. (Even before this, [Apple's own documentation](https://support.apple.com/guide/photos/change-where-photos-and-videos-are-stored-pht1ed9b966d/mac)
+said files kept outside the library are not stored in iCloud and do not reach your other
+devices.)
 
 **Storage.** With copying on, each photo takes space twice on this Mac: once in your folder
 and once in the Photos library. With iCloud Photos on, **Optimize Mac Storage** (Photos ›
@@ -98,16 +101,32 @@ After a run, the tool works out which saved files have not been handed to Photos
 them by album, and runs the script once per album, up to fifty files at a time:
 
 ```sh
-osascript add-to-photos.applescript Brightwheel Robin-Maple 2026-W38 -- /path/one.jpg /path/two.mp4
+/usr/bin/osascript add-to-photos.applescript Brightwheel Robin-Maple 2026-W38 -- /private/copy/one.jpg /private/copy/two.mp4
 ```
 
-The script finds each folder and the album, makes any that are missing, imports the files
-into the album, and prints how many Photos took. It never deletes, moves, renames or edits
+Before anything else, the script checks that the Photos it is about to talk to is **Apple's
+own**, the one in `/System/Applications`, which nothing can change while System Integrity
+Protection is on. Another app can call itself "Photos", or claim Photos' identifier; if the
+Photos your Mac would open is not Apple's, or any program running as Photos is not, the script
+stops and nothing is added. Asking macOS where Photos is does not open it.
+
+Then it finds each folder and the album, makes any that are missing, imports the files into
+the album, and prints how many Photos took. It never deletes, moves, renames or edits
 anything already in Photos, and it reads nothing from your library except those folders and
 that album, looked up by name.
 
 A few decisions in it are worth explaining:
 
+- **Photos gets private copies, and only of photos this tool saved.** It is never handed the
+  files in your photos folder. Each one is copied into a folder only your account can open
+  (on a Mac's own disk the copy is a clone and takes no extra space), the copy's fingerprint
+  (SHA-256) is checked against the record this tool keeps of every photo it saved, and only a
+  copy that matches goes to Photos; the copies are deleted once Photos has them. That record,
+  `fingerprints.json`, lives beside your settings rather than in the photos folder, so nothing
+  else that can change that folder — another computer it syncs with, say — can choose what goes
+  into Photos. A photo that has been changed, or put there by something else, is left out and
+  named on the page, so you can look at it. Photos saved by an earlier version of this tool,
+  before it kept that record, are taken as they are on disk, once, the first time it runs.
 - **Names and files are arguments, never part of the script.** Each one reaches the script as
   a separate piece of data, so a file named `"; do shell script …` is an odd file name and
   nothing more. No shell is involved at any point.
@@ -142,9 +161,19 @@ photos or cannot.
 | *Photos did not answer in time* | Open Photos yourself once and check it shows your library rather than a welcome screen or a question. Then press **Save new photos**. |
 | *Photos could not be opened on this Mac* | Check Photos opens normally from your Applications folder. |
 | *Another run is adding photos to Photos right now* | Nothing to do; the other run is doing it. |
+| *…not a file this tool saved on this Mac, or not as it saved it* | Something changed those photos, or put them in your folder, after this tool saved its own. If it was you (an edit, say), add them to Photos by hand. If not, look at them before you do. |
+| *Nothing was added to Photos: the Photos this Mac would open is at …* | Another app has taken the name or identity of Apple's Photos. Find it (the message says where it is), and remove it if you do not know what it is. |
 
 In every case your photos are safe in your folder, and the ones that were not added wait for
 the next run.
+
+## Shared albums and a Shared Library
+
+The script works only inside the **Brightwheel** folder it makes at the top of your library,
+and folders cannot be shared in Photos, so it cannot add anything to a shared album. If you use
+an **iCloud Shared Library**, whether new imports land in your personal library or the shared
+one is Photos' own setting; the script does not choose. Check it before turning this on if you
+share a library with anyone.
 
 ## Not on Windows or Linux
 

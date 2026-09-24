@@ -256,7 +256,9 @@ test('on Linux without systemd it falls back to cron, and keeps the crontab that
   const state = await schedule.install('19:45', env);
   assert.equal(state.mechanism, 'cron');
   assert.ok(crontab.includes(theirs.trim()), 'their own job must survive untouched');
-  assert.match(crontab, /^45 19 \* \* \* "\/usr\/bin\/node" "\/opt\/bw\/cli\.js" run --scheduled >> ".*daily\.log" 2>&1$/m);
+  // Single quotes, since cron hands the line to /bin/sh (security review processes-1; the
+  // awkward paths are in schedule-quoting-and-failures.test.js).
+  assert.match(crontab, /^45 19 \* \* \* '\/usr\/bin\/node' '\/opt\/bw\/cli\.js' run --scheduled >> '.*daily\.log' 2>&1$/m);
   assert.equal(crontab.match(/care-album-saver: the daily run/g).length, 1);
 
   // Changing the time rewrites the one block rather than adding a second.
@@ -438,7 +440,7 @@ test('the page carries a fourth step that explains the daily run in a parent’s
     assert.match(card, /press <b>Start saving<\/b> in step 3/);
 
     // The steps still say how many there are, and the count is now four everywhere.
-    assert.ok(!/Step \d of 3/.test(page.slice(page.indexOf('<script>'))), 'no leftover "of 3" in the script');
+    assert.ok(!/Step \d of 3/.test(page.slice(page.indexOf('<script nonce='))), 'no leftover "of 3" in the script');
     assert.ok(card.includes('Step 4 of 4'));
   } finally {
     await handle.close();
@@ -450,7 +452,8 @@ test('once set up, Settings is sections chosen from a column, with nothing folde
   const { handle, html } = await setupUi();
   try {
     const page = await html();
-    const script = page.slice(page.indexOf('<script>') + 8, page.indexOf('</script>'));
+    // The script tag carries the response's CSP nonce (security review page-3).
+    const script = page.slice(page.indexOf('>', page.indexOf('<script nonce=')) + 1, page.indexOf('</script>'));
     new Script(script); // it must still be a script a browser can read
     const settings = page.slice(page.indexOf('<dialog id="dlg-settings"'), page.indexOf('</dialog>', page.indexOf('<dialog id="dlg-settings"')));
 

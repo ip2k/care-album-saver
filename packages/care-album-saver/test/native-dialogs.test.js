@@ -73,7 +73,8 @@ function recorder(replies = {}) {
   const calls = [];
   const spawn = async (file, args, timeoutMs) => {
     calls.push({ file, args, timeoutMs });
-    const reply = replies[file];
+    // By the program's own name: osascript is called by its full path, other tools by name.
+    const reply = replies[file.split('/').pop()];
     if (!reply) return { code: -1, stdout: '', stderr: '', missing: true };
     return { code: 0, stdout: '', stderr: '', ...(typeof reply === 'function' ? await reply(file, args) : reply) };
   };
@@ -123,7 +124,7 @@ test('a picked folder is stored, and the dialog is opened with an argument array
 
     assert.equal(native.calls.length, 1);
     const [only] = native.calls;
-    assert.equal(only.file, 'osascript');
+    assert.equal(only.file, '/usr/bin/osascript', 'by its full path, never looked up on PATH');
     assert.ok(Array.isArray(only.args), 'an argument array, never a command line');
     assert.deepEqual(only.args, ['-e', 'POSIX path of (choose folder with prompt "Choose where to save your photos")']);
   } finally {

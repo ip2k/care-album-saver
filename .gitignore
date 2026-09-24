@@ -35,12 +35,24 @@ Care*Album*Photos/
 Brightwheel*Photos/
 archive/
 downloads/
+# Every kind sync saves: MEDIA_EXTENSIONS in packages/care-album-saver/src/sync.ts.
 *.jpg
 *.jpeg
+*.png
+*.gif
+*.webp
 *.heic
+*.heif
+*.avif
+*.tif
+*.tiff
+*.bmp
 *.mp4
 *.mov
-*.png
+*.m4v
+*.3gp
+*.webm
+*.avi
 
 # Documentation screenshots are the one exception: they come from the mock server
 # and contain only synthetic, invented children.
@@ -63,10 +75,21 @@ archive.json
 *.xmp
 *.jpg.json
 *.jpeg.json
+*.png.json
+*.gif.json
+*.webp.json
 *.heic.json
+*.heif.json
+*.avif.json
+*.tif.json
+*.tiff.json
+*.bmp.json
 *.mp4.json
 *.mov.json
-*.png.json
+*.m4v.json
+*.3gp.json
+*.webm.json
+*.avi.json
 
 # ── Browser automation state ─────────────────────────────────────────────────
 user-data-dir/

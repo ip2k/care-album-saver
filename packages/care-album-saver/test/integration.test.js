@@ -365,9 +365,13 @@ test('the setup page is structurally sound and accessible', async () => {
     // Without this the bar sits still, which reads as a hang that is not happening.
     assert.match(html, /if \(state\.running\) poll\(\)/, 'reopening during a run must restart polling');
 
-    // Every server-supplied string reaching innerHTML must go through the escaper.
-    for (const sink of ['d.error', 'p.message', 'k.fullName', 'state.email']) {
-      assert.ok(html.includes('esc(' + sink + ')'), sink + ' must be escaped before innerHTML');
+    // No server-supplied string reaches innerHTML at all: they go in as text nodes, through
+    // say() and h(), so there is no escaper left to forget (security review page-3; the
+    // full check of every markup sink is in test/page-warnings.test.js).
+    assert.ok(!/\besc\(/.test(html), 'no escaper, because nothing from the server is parsed as markup');
+    for (const sink of ['d.error', 'p.message', 'state.email']) {
+      assert.ok(html.includes(sink), sink + ' is still shown');
+      assert.ok(!new RegExp('innerHTML[^;]*\\b' + sink.replace('.', '\\.')).test(html), sink + ' never reaches innerHTML');
     }
 
     // Jargon a non-technical parent would not know, per HIG inclusion guidance.

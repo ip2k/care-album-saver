@@ -59,7 +59,7 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 345 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+- 467 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
   because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
   of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
   24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
@@ -76,9 +76,12 @@ stores, and this tool is deliberately local-only with no cloud component.
   object database garbage-collected the same night: none of the eight blobs remains
   anywhere locally, and `main` is the only branch. CI is green on every
   cell since 90bcdff (Ubuntu, macOS and Windows × Node 22/24/26, the screenshots job, and
-  the security workflow's gitleaks scan over the full history); the first two runs failed
-  on the test script and on tests that assumed a Mac, both fixed the same night. The review's open WARNINGs are in the
-  report with fixes; the ★ ones go in before a first release. The brief the review was run
+  the security workflow's gitleaks scan, which on a push or pull request covers only that
+  event's commits; it scans the whole history when run by hand or on its weekly schedule,
+  added 2026-09-24); the first two runs failed on the test script and on tests that assumed
+  a Mac, both fixed the same night. Every CRITICAL and WARNING in the review is fixed: the ★
+  ones on 2026-09-23 (PR #2), the rest on 2026-09-24, each lane reviewed adversarially (the
+  report's §4.4 and §4.5); its NOTEs (§4.3, §4.4) are still open. The brief the review was run
   from, `docs/SECURITY-REVIEW-HANDOFF.md`, is in git history at d13f8ff; its durable part (the
   threat model, trust boundaries and assets) is now in SECURITY.md.
 - **Production and development are separate (2026-09-23).** Production is a clone on
@@ -102,7 +105,11 @@ stores, and this tool is deliberately local-only with no cloud component.
   uploads them — so it is turned on only through `/api/photos`, which asks macOS for
   permission first and records *from when*; a settings patch cannot set it. Everything the
   tool asks Photos to do is in `applescript/add-to-photos.applescript`, run with argv and
-  never with `-e`. Photos gets a `Brightwheel` folder mirroring the disk layout. No test may
+  never with `-e`, by `/usr/bin/osascript`; the script refuses unless the Photos it would
+  talk to is `/System/Applications/Photos.app`. Photos is handed private copies, each checked
+  against `fingerprints.json` in the config directory (what sync saved, kept where the
+  archive's co-writers cannot edit it), never the archive's own files — so it needs Photos'
+  "Copy items to the Photos library" left on. Photos gets a `Brightwheel` folder mirroring the disk layout. No test may
   drive the real Photos app: `scripts/test-env.js` sets `CARE_ALBUM_NO_PHOTOS`, and
   `src/photos.ts` refuses to start osascript while it is set. See docs/PHOTOS.md.
 - **Proven by test, against real bytes:** what is written into a photo and into a video,
