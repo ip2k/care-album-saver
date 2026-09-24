@@ -184,6 +184,12 @@ export function extensionOf(url: string, kind: 'image' | 'video'): string {
  * has its notes beside it. The `.json` is part of saving a photo, as it always was; the
  * `.xmp` is an extra the parent asked for, and one that cannot be put in place is reported
  * (`xmpNotPlaced`) without failing the photo, as a sidecar ExifTool could not write is.
+ *
+ * Every file is made owner-only (ARCHIVE_FILE_MODE) before it leaves the staging folder.
+ * This is the one place all of an item's files pass through, whoever wrote them: the `.json`
+ * is created 0600 already, but the download and ExifTool's `.xmp` take the umask's default.
+ * Done by path, which is safe here and only here: the staging folder is 0700, so nothing but
+ * this account can have put anything at these names.
  */
 async function saveStaged<T extends object>(
   dir: string,
@@ -192,9 +198,11 @@ async function saveStaged<T extends object>(
 ): Promise<T & { staging: string; xmpNotPlaced: string | null }> {
   const staging = await mkdtemp(join(dir, '.saving-'));
   const place = (name: string) =>
-    rename(join(staging, name), join(dir, name)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+    ownerOnly(join(staging, name))
+      .then(() => rename(join(staging, name), join(dir, name)))
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
   try {
     const done = await work(join(staging, filename));
     await place(`${filename}.json`);
@@ -202,11 +210,36 @@ async function saveStaged<T extends object>(
     await place(`${filename}.xmp`).catch((error: NodeJS.ErrnoException) => {
       xmpNotPlaced = `The .xmp sidecar for ${filename} could not be put in place (${error.code ?? error.message}); the photo itself is saved.`;
     });
+    await ownerOnly(join(staging, filename));
     await rename(join(staging, filename), join(dir, filename));
     return { ...done, staging, xmpNotPlaced };
   } finally {
     await rm(staging, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * The mode of every file the tool writes into the archive: readable and writable by this
+ * account alone (security review fs-10).
+ *
+ * Before, only `archive.json` had a mode of its own; every photo, sidecar and week README took
+ * the umask's default: usually 0644 from a terminal, and 0600 from the daily job on a Mac,
+ * whose launchd job sets Umask 077. One archive held both, depending on which kind of run
+ * saved each file. Owner-only is the one both can agree on, and it matches the archive's
+ * root, which every run makes 0700 (`ensureOwnerOnly`, which also says so to a parent who had
+ * opened it up): behind that folder a wider file mode shared nothing, and was only a promise
+ * that held for some files and not others. Files saved before this keep the mode they have.
+ * Windows has no POSIX modes (files inherit their folder's ACL), so there is nothing to set.
+ */
+const ARCHIVE_FILE_MODE = 0o600;
+
+/**
+ * Make one staged file owner-only, as far as its filesystem allows. A failure is not the
+ * photo's: a share or a drive that keeps no modes must not cost a parent the picture, and a
+ * folder the tool cannot make private is already reported, once, by `ensureOwnerOnly`.
+ */
+async function ownerOnly(path: string): Promise<void> {
+  if (platform() !== 'win32') await chmod(path, ARCHIVE_FILE_MODE).catch(() => {});
 }
 
 /** A child's or a week's folder in the archive is a link to somewhere else. See realFolderUnder. */
@@ -252,8 +285,9 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     'Saved by care-album-saver. These files are yours; nothing here phones home.',
     '',
   ].join('\n');
-  // A fixed name in a folder other things can write to: see writeAtomically.
-  await writeAtomically(join(dir, 'README.md'), body);
+  // A fixed name in a folder other things can write to: see writeAtomically. Owner-only, as
+  // every file the tool writes into the archive is (ARCHIVE_FILE_MODE).
+  await writeAtomically(join(dir, 'README.md'), body, ARCHIVE_FILE_MODE);
 }
 
 /**
