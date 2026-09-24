@@ -1,13 +1,14 @@
-import { mkdir, open, rm, stat, utimes } from 'node:fs/promises';
+import { mkdir, open, realpath, rm, stat, utimes } from 'node:fs/promises';
 import { platform as osPlatform } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config } from './config.js';
-import type { ManifestRecord } from './ferry/index.js';
+import { hashFile, type ManifestRecord } from './ferry/index.js';
 import { records } from './gallery.js';
 import { runProgram, type SpawnCommand } from './native.js';
 import { containedFile } from './contain.js';
 import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
+import { checkArchiveDir } from './safety.js';
 
 /**
  * Adding saved photos to the Photos app, on a Mac, when the parent has asked for it.
@@ -99,7 +100,8 @@ interface PhotosState {
   lastAttempt?: PhotosAttempt | null;
 }
 
-export type PhotosFailure = 'unsupported' | 'denied' | 'timeout' | 'busy' | 'failed';
+/** `changed`: Photos was fine, but some files were not the ones this tool saved. See `addToPhotos`. */
+export type PhotosFailure = 'unsupported' | 'denied' | 'timeout' | 'busy' | 'failed' | 'changed';
 
 export interface PhotosResult {
   ok: boolean;
@@ -108,6 +110,12 @@ export interface PhotosResult {
   remaining: number;
   /** Listed in the manifest but no longer on disk, so not handed over. */
   missing: number;
+  /**
+   * On disk, but no longer the file this tool saved — its SHA-256 differs from the one
+   * recorded — so not handed over, and not written down as added either. Optional because
+   * the callers that stand in a result of their own for a throw have none to count.
+   */
+  changed?: number;
   reason?: PhotosFailure;
   error?: string;
 }
@@ -130,6 +138,12 @@ export interface PhotosStatus {
    * it off, rather than hiding the whole card as if this were not a Mac.
    */
   problem: string | null;
+  /**
+   * Something the parent should know that does not stop anything: that the photos folder
+   * looks cloud-synced, so whatever else can write to it has a say in what reaches Photos.
+   * See `cloudWarning`.
+   */
+  warning: string | null;
 }
 
 /**
@@ -193,14 +207,35 @@ interface Waiting {
   album: string[];
 }
 
+/**
+ * Whether a folder name is one this tool could have written, and so may name an album.
+ *
+ * Every folder it makes is a child's name through `safeStem` or an ISO week, and neither
+ * starts with a dot or holds a control character. A dot-named folder is one the archive's
+ * own tools pass over (a killed run's `.saving-` staging folder, or somebody's hidden
+ * folder), so what is in it is nobody's photographs. `--` separates names from files in the
+ * script's arguments, and a name equal to it would move that boundary; no layout writes one,
+ * so that is a lock on a door nobody uses.
+ */
+function nameThisToolWrites(name: string): boolean {
+  return name !== '--' && !name.startsWith('.') && !/[\u0000-\u001f\u007f]/.test(name);
+}
+
 /** Which files are due, and how many earlier ones are waiting on the parent's say-so. */
 async function sortOut(config: Config, all: readonly ManifestRecord[], state: PhotosState): Promise<{ due: Waiting[]; earlier: number }> {
   const from = config.addToPhotosFrom ? Date.parse(config.addToPhotosFrom) : Number.NEGATIVE_INFINITY;
   const root = resolve(config.archiveDir);
+  // The archive where it really is, so that albums can be named from where each file really
+  // is. Unresolvable, and containedFile would refuse every entry anyway.
+  const realRoot = await realpath(root).catch(() => null);
+  if (!realRoot) return { due: [], earlier: 0 };
   const due: Waiting[] = [];
   const seen = new Set<string>();
   let earlier = 0;
   for (const record of all) {
+    // The list is read as it is found, unchecked (gallery.ts's records), and the hash is
+    // now compared as text; an entry without a string for either is not one this tool wrote.
+    if (typeof record?.sha256 !== 'string' || typeof record.path !== 'string') continue;
     if (!record.sha256 || state.added[record.sha256] || seen.has(record.sha256)) continue;
     seen.add(record.sha256);
     // A list edited by anything else that can write the folder could name a file outside
@@ -208,10 +243,12 @@ async function sortOut(config: Config, all: readonly ManifestRecord[], state: Ph
     // not write, so those are ignored rather than trusted — resolved, not compared as text.
     const file = await containedFile(root, record.path);
     if (!file) continue;
-    const album = albumPathFor(record.path);
-    // `--` separates names from files in the script's arguments; a name equal to it would
-    // move that boundary. No layout writes one, so this is a lock on a door nobody uses.
-    if (album.some((name) => name === '--')) continue;
+    // The album is named after the folders the file is really in, not after the path the
+    // list gives: containedFile lets a path through a link that lands inside the archive, and
+    // the list's words for it were chosen by whoever wrote the list (security review
+    // processes-5). For every entry this tool wrote, the two are the same.
+    const album = albumPathFor(relative(realRoot, file).split(sep).join('/'));
+    if (!album.slice(1).every(nameThisToolWrites)) continue;
     if (Date.parse(record.downloadedAt ?? '') < from) {
       earlier += 1;
       continue;
@@ -219,6 +256,40 @@ async function sortOut(config: Config, all: readonly ManifestRecord[], state: Ph
     due.push({ record, file, album });
   }
   return { due, earlier };
+}
+
+/**
+ * What to say when the photos folder looks cloud-synced — and why this warns rather than
+ * refuses (security review processes-5, the question it left open).
+ *
+ * A folder that something else can write to is a folder whose contents that something has a
+ * say in, and this step hands those contents to Photos, and with iCloud Photos on, to Apple.
+ * Refusing the step there would be the stricter answer, and it is not taken, because:
+ *
+ *  - It would switch off a setup that works, on the strength of a guess. `checkArchiveDir`
+ *    judges by the path alone, and it flags Desktop and Documents because macOS and Windows
+ *    often sync them — often, not always, and they are where many people keep things. A
+ *    parent whose photos stopped reaching Photos one evening, with nothing changed on their
+ *    side, would be told nothing they could act on.
+ *  - The parent has already chosen twice: the folder, after being told it looks synced (and
+ *    every run repeats that in its warnings), and Photos, after macOS asked their permission.
+ *  - What a sync peer could do through this step is now narrow. A photo it changed is left
+ *    out and reported (`addToPhotos` compares every file with the SHA-256 recorded when it
+ *    was saved). What remains is a new photo placed together with an entry in archive.json,
+ *    and a peer that can do that can already put whatever it likes in the folder the parent
+ *    browses.
+ *
+ * So it is said where the switch is, in `photosStatus`, and the choice stays the parent's.
+ */
+function cloudWarning(config: Config): string | null {
+  if (!checkArchiveDir(config.archiveDir).warning) return null;
+  return (
+    'Your photos folder looks like it may be synced to a cloud service. If it is, anything else that can ' +
+    'change that folder — another computer signed in to the same account, say — has a say in what is added ' +
+    'to Photos. This tool leaves out any photo that is no longer the one it saved, but a new photo put there ' +
+    'together with an entry in the folder’s archive.json would be added like any other. If that matters to ' +
+    'you, keep your photos folder somewhere only this Mac can change.'
+  );
 }
 
 /** What the page shows: whether it is on, and what is waiting. */
@@ -246,6 +317,8 @@ export async function photosStatus(config: Config, options: PhotosOptions = {}):
     lastAttempt: state.lastAttempt ?? null,
     scriptUrl: PHOTOS_SCRIPT_URL,
     problem,
+    // Shown whether or not it is on: the moment to know is before turning it on.
+    warning: supported ? cloudWarning(config) : null,
   };
 }
 
@@ -279,6 +352,23 @@ function explain(code: number, stderr: string): { reason: PhotosFailure; error: 
     return { reason: 'failed', error: 'Photos could not be opened on this Mac, so nothing was added to it.' };
   }
   return { reason: 'failed', error: `Photos did not take them${said ? `: ${said}` : '.'}` };
+}
+
+/**
+ * The sentence for files left out because they are no longer what this tool saved: which
+ * ones, so the parent can find them, and what to do about each kind of cause.
+ */
+function changedReport(paths: readonly string[], added: number): string {
+  const one = paths.length === 1;
+  const it = one ? 'it' : 'them';
+  const which = paths.slice(0, 3).join(', ') + (paths.length > 3 ? `, and ${paths.length - 3} more` : '');
+  return (
+    `${one ? 'One photo was' : `${paths.length} photos were`} not added to Photos, because ` +
+    `${one ? 'it is' : 'they are'} no longer the file this tool saved: ${which}. Something has changed ${it} since — ` +
+    `an edit of your own, or another program or computer that can write to your photos folder. If you changed ${it} ` +
+    `yourself, you can add ${it} to Photos by hand; if you did not, look at ${it} before you do.` +
+    (added > 0 ? ` The other ${added} ${added === 1 ? 'was' : 'were'} added.` : '')
+  );
 }
 
 /**
@@ -352,10 +442,12 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
   const spawn = options.spawn ?? realSpawn;
   let added = 0;
   let missing = 0;
+  /** The list's paths for files that are no longer what was saved, for the report. */
+  const changed: string[] = [];
   try {
     const state = await loadState();
     const { due } = await sortOut(config, await records(config), state);
-    if (due.length === 0) return { ok: true, added: 0, remaining: 0, missing: 0 };
+    if (due.length === 0) return { ok: true, added: 0, remaining: 0, missing: 0, changed: 0 };
 
     const albums = new Map<string, Waiting[]>();
     for (const item of due) {
@@ -371,20 +463,37 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
     for (const key of keys) {
       const items = albums.get(key) ?? [];
       for (let i = 0; i < items.length; i += BATCH) {
+        // Stopped: what Photos has taken is written down, the rest waits for the next run.
+        // Asked before the batch is read and hashed, which is the slow part of a batch.
+        if (options.signal?.aborted) return { ok: true, added, remaining, missing, changed: changed.length };
         const batch: Waiting[] = [];
         for (const item of items.slice(i, i + BATCH)) {
           // One file gone from disk would fail the whole call in AppleScript, and then
-          // every call after it, for ever. It is left out instead, and counted.
+          // every call after it, for ever. It is left out instead, and counted — as is one
+          // that is there but cannot be read, which Photos could not read either.
           const there = await stat(item.file).then((s) => s.isFile(), () => false);
-          if (there) batch.push(item);
-          else {
+          const actual = there ? await hashFile(item.file).catch(() => null) : null;
+          if (actual === null) {
             missing += 1;
             remaining -= 1;
+            continue;
           }
+          // Only the file this tool saved goes to Photos (security review processes-5). The
+          // SHA-256 in the list was taken of the finished file as it was put in place, so a
+          // file that no longer matches has been changed since — by the parent, perhaps, or
+          // by anything else that can write the folder, such as another computer it syncs
+          // with — and what reaches Photos, and iCloud, is not for that to choose. It is left
+          // out, not written down as added (so it is looked at again next time, and goes in
+          // if it is put back), and reported. The check is made just before the batch is
+          // handed over; a swap in the moment between is beyond what any check here can see.
+          if (actual !== item.record.sha256.toLowerCase()) {
+            changed.push(item.record.path);
+            remaining -= 1;
+            continue;
+          }
+          batch.push(item);
         }
         if (batch.length === 0) continue;
-        // Stopped: what Photos has taken is written down, the rest waits for the next run.
-        if (options.signal?.aborted) return { ok: true, added, remaining, missing };
 
         await utimes(lockPath(), new Date(), new Date()).catch(() => {});
         const album = batch[0]!.album;
@@ -395,7 +504,7 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
             : explain(result.code, result.stderr);
           state.lastAttempt = { at: new Date().toISOString(), ok: false, added, error: why.error };
           await saveState(state);
-          return { ok: false, added, remaining, missing, ...why };
+          return { ok: false, added, remaining, missing, changed: changed.length, ...why };
         }
         const now = new Date().toISOString();
         for (const b of batch) state.added[b.record.sha256] = now;
@@ -406,9 +515,20 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
       }
     }
 
+    // A changed file makes the attempt a failure, although Photos took everything it was
+    // given: that way it is said everywhere a failure is — the page's Photos card, the
+    // run's own line, the daily log and, once, a notification — rather than only counted.
+    // Said again on every run that finds it, until the file is put back or moved out.
+    if (changed.length > 0) {
+      const error = changedReport(changed, added);
+      state.lastAttempt = { at: new Date().toISOString(), ok: false, added, error };
+      await saveState(state);
+      return { ok: false, added, remaining: 0, missing, changed: changed.length, reason: 'changed', error };
+    }
+
     state.lastAttempt = { at: new Date().toISOString(), ok: true, added };
     await saveState(state);
-    return { ok: true, added, remaining: 0, missing };
+    return { ok: true, added, remaining: 0, missing, changed: 0 };
   } finally {
     await release();
   }

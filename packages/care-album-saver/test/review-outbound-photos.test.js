@@ -34,6 +34,7 @@ import { closeMetadata } from '../dist/metadata.js';
  *  - outbound-7: an answer's size was capped, if at all, only after all of it was read.
  *  - outbound-2: a Retry-After was obeyed however long it asked for.
  *  - outbound-4: an empty post id collapsed every post into the first one.
+ *  - processes-5, the rest: the Photos step trusted the list for what it handed over.
  */
 
 before(assertIsolatedConfigDir);
@@ -317,4 +318,197 @@ test('outbound-4: a feed whose posts all carry an empty id is saved whole, and t
     await mock.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// ------------------------------------------------------------------ processes-5
+//
+// No test drives the real Photos app: every call goes to a stand-in that records what it
+// was asked to run (as in photos.test.js), and test-env.js sets CARE_ALBUM_NO_PHOTOS besides.
+
+/** A stand-in for execFile that says yes and remembers every call. */
+function recorder() {
+  const calls = [];
+  const spawn = async (file, args) => {
+    calls.push({ file, args: [...args] });
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  return { calls, spawn };
+}
+
+/** A recorded call as the script sees it: names before `--`, files after. */
+function parts(call) {
+  assert.equal(call.file, 'osascript');
+  assert.equal(call.args[0], PHOTOS_SCRIPT);
+  const rest = call.args.slice(1);
+  const at = rest.indexOf('--');
+  return { names: rest.slice(0, at), files: rest.slice(at + 1) };
+}
+const handedOver = (photos) => photos.calls.flatMap((c) => parts(c).files);
+/** Whether a handed-over file is the one the list calls `path` (handed-over paths are real ones). */
+const isRecord = (file, path) => file.endsWith(sep + path.split('/').join(sep));
+
+const manifestOf = async (dir) => JSON.parse(await readFile(join(dir, 'archive.json'), 'utf8'));
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+/** The mock's photos saved into `dir`, and the config that turns Photos on for all of them. */
+async function savedForPhotos(dir) {
+  const mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 4 });
+  try {
+    const client = new BrightwheelClient({ session: new Secret(SESSION), baseUrl: `${mock.url}/api/v1`, delayMs: 0 });
+    await sync(client, configFor(dir), () => {}, { allowTemporaryDir: true });
+  } finally {
+    await mock.close();
+  }
+  return configFor(dir, { addToPhotos: true, addToPhotosFrom: null });
+}
+
+test('processes-5: a file that is no longer the one saved is not handed to Photos, not recorded, and is reported', async () => {
+  await freshConfigDir();
+  const dir = await mkdtemp(join(tmpdir(), 'cas-photos-changed-'));
+  try {
+    const config = await savedForPhotos(dir);
+    const { files } = await manifestOf(dir);
+    assert.ok(files.length >= 2, 'something to add besides the changed one');
+    const target = files[0];
+    const onDisk = join(dir, ...target.path.split('/'));
+    const original = await readFile(onDisk);
+    await writeFile(onDisk, Buffer.concat([original, Buffer.from('changed by somebody else')]));
+
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    const handed = handedOver(photos);
+    assert.ok(!handed.some((f) => isRecord(f, target.path)), 'the changed file is not handed over');
+    assert.equal(handed.length, files.length - 1, 'everything else is');
+    assert.equal(result.ok, false, 'reported everywhere a failure is');
+    assert.equal(result.reason, 'changed');
+    assert.equal(result.changed, 1);
+    assert.equal(result.added, files.length - 1);
+    assert.ok(result.error.includes(target.path), 'names the file, so the parent can find it');
+    assert.match(result.error, /no longer the file this tool saved/);
+    assert.match(result.error, new RegExp(`The other ${files.length - 1} were added`));
+
+    const status = await photosStatus(config, { platform: 'darwin' });
+    assert.equal(status.lastAttempt.ok, false, 'the page shows it beside the switch');
+    assert.equal(status.lastAttempt.error, result.error);
+    assert.equal(status.pending, 1, 'not written down as added: it is looked at again next time');
+
+    // Still changed: said again, and Photos is not even asked.
+    const again = recorder();
+    const second = await addToPhotos(config, { platform: 'darwin', spawn: again.spawn });
+    assert.equal(second.reason, 'changed');
+    assert.equal(again.calls.length, 0);
+
+    // Put back: it goes in like any other.
+    await writeFile(onDisk, original);
+    const restored = recorder();
+    const third = await addToPhotos(config, { platform: 'darwin', spawn: restored.spawn });
+    assert.equal(third.ok, true);
+    assert.equal(third.added, 1);
+    assert.ok(isRecord(handedOver(restored)[0], target.path));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: an album is named after the folder a file is really in, not the list\'s words for it', posixOnly, async () => {
+  await freshConfigDir();
+  const dir = await mkdtemp(join(tmpdir(), 'cas-photos-album-'));
+  try {
+    const config = await savedForPhotos(dir);
+    const manifest = await manifestOf(dir);
+    const [child] = manifest.files[0].path.split('/');
+    // A link inside the archive to the child's folder, and an entry reaching a real photo
+    // through it — first, so it is the one of the two entries for that photo considered.
+    await symlink(join(dir, child), join(dir, 'Chosen By Someone Else'));
+    const forged = { ...manifest.files[0], path: manifest.files[0].path.replace(child, 'Chosen By Someone Else') };
+    manifest.files.unshift(forged);
+    await writeFile(join(dir, 'archive.json'), JSON.stringify(manifest));
+
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    assert.equal(result.ok, true);
+    for (const call of photos.calls) {
+      const { names } = parts(call);
+      assert.equal(names[0], PHOTOS_FOLDER);
+      assert.ok(!names.includes('Chosen By Someone Else'), `no album named by the list: ${names.join(' › ')}`);
+    }
+    assert.ok(handedOver(photos).some((f) => isRecord(f, manifest.files[1].path)), 'the photo still goes in, under its real album');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: a file in a hidden folder is not one this tool saved, and is not handed over', async () => {
+  await freshConfigDir();
+  const dir = await mkdtemp(join(tmpdir(), 'cas-photos-hidden-'));
+  try {
+    const config = await savedForPhotos(dir);
+    const manifest = await manifestOf(dir);
+    // A photo of somebody else's choosing, with a list entry whose hash matches it exactly.
+    const planted = Buffer.from('planted, with a matching entry');
+    await mkdir(join(dir, '.saving-planted'));
+    await writeFile(join(dir, '.saving-planted', 'x.jpg'), planted);
+    manifest.files.push({ ...manifest.files[0], path: '.saving-planted/x.jpg', sha256: sha256(planted) });
+    await writeFile(join(dir, 'archive.json'), JSON.stringify(manifest));
+
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    assert.equal(result.ok, true);
+    assert.ok(!handedOver(photos).some((f) => f.includes('.saving-planted')));
+    assert.equal(result.added, manifest.files.length - 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: a list entry of the wrong shape is passed over rather than taking the step down', async () => {
+  await freshConfigDir();
+  const dir = await mkdtemp(join(tmpdir(), 'cas-photos-shape-'));
+  try {
+    const config = await savedForPhotos(dir);
+    const manifest = await manifestOf(dir);
+    manifest.files.push(null, { ...manifest.files[0], sha256: 12345 }, { ...manifest.files[0], path: ['a'] });
+    await writeFile(join(dir, 'archive.json'), JSON.stringify(manifest));
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.added, manifest.files.length - 3);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: a photos folder that looks cloud-synced is warned about where the switch is, and still works', async () => {
+  await freshConfigDir();
+  // Outside the temporary folder, which the folder check refuses before it would warn; the
+  // repository's own cache, as photos.test.js uses.
+  const base = join(REPO_ROOT, 'node_modules', '.cache', `cas-cloud-${Math.random().toString(16).slice(2, 10)}`);
+  const dir = join(base, 'Dropbox', 'Care Album Photos');
+  await mkdir(dir, { recursive: true });
+  try {
+    const config = await savedForPhotos(dir);
+    const status = await photosStatus(config, { platform: 'darwin' });
+    assert.match(status.warning ?? '', /synced to a cloud service/);
+    assert.match(status.warning, /has a say in what is added to Photos/);
+    assert.equal(status.problem, null, 'a warning, not a stop');
+
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    assert.equal(result.ok, true, 'a setup that works keeps working');
+    assert.equal(result.added, (await manifestOf(dir)).files.length);
+
+    // Said before it is turned on too, when the choice is being made; never off a Mac.
+    assert.match((await photosStatus({ ...config, addToPhotos: false }, { platform: 'darwin' })).warning ?? '', /cloud/);
+    assert.equal((await photosStatus(config, { platform: 'linux' })).warning, null);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: a folder that does not look synced carries no warning', async () => {
+  await freshConfigDir();
+  // A path that is neither temporary nor synced, and need not exist for the answer.
+  const plain = join(parsePath(tmpdir()).root, `cas-nowhere-${Date.now()}`, 'Care Album Photos');
+  const status = await photosStatus(configFor(plain, { addToPhotos: true }), { platform: 'darwin' });
+  assert.equal(status.warning, null);
 });
