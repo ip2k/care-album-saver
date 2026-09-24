@@ -136,7 +136,11 @@ Web server, page, outbound, supply chain and docs (all verified):
 - **FIXED 2026-09-23** (PR #3): `tmpdir()` is in the substitution list. — **img (reviewer)** `scripts/screenshots.js`'s `scrubPersonal()` has no pair for `tmpdir()`, which is how three early shots printed a per-user hash. Fix: add `tmpdir()` to the substitution list.
 - **docs-2** **FIXED 2026-09-23**: enabled by the owner's instruction. — GitHub's private vulnerability reporting was **off** on the repository while `SECURITY.md` names it as the only channel (owner: enable it). **docs-3, docs-4, docs-7** **FIXED** before 2026-09-24 (checked then: neither phrase, nor a stale count, appears in any document). — **docs-3** README says the tool talks to Brightwheel "and to nothing else" — untrue with the update check on (fix the sentence). **docs-4** Three docs promise that signing out of Brightwheel "invalidates it immediately", which nothing has verified (soften). **docs-7** Three documents give three test counts; README says 121 (it is 320).
 
-### 4.3 NOTES (open; the lanes' ids, for the next pass)
+### 4.3 NOTES — fixed on 2026-09-24, except as §4.6 lists
+
+**Status, 2026-09-24:** every id below was fixed, found already fixed, or decided, in the
+pass §4.6 describes; what is left open, and why, is listed at its end. The list is kept as it
+was written, for the ids.
 
 fs-7 (stale-lock takeover race; fix by `rename` before `rm`), fs-8 (`Manifest.open` does not validate records: `files:[null]` throws a raw TypeError through sync, `/api/gallery` and maintenance — web-9 the same), fs-9 (`CON.x` passes the Windows reserved-name check), fs-10 (every file except `archive.json` is written at umask default), fs-11 (`checkArchiveDir` is lexical and accepts the tool's own config folder), fs-12 (a NUL in a note makes ExifTool refuse the whole write, so that photo also loses its dates), processes-3/6/7/8/9/10, web-7/8/10/11/12/13 (Host and Origin checks ignore the port; `?i=` accepts `0x1`; `String.replace` `$`-patterns in the banner splice; `xml()` does not escape `'`), page-6…12, outbound-8…13 (`--base-url` sends the session to any origin the owner names, including `http://`), sc-5…13 (no `packageManager` field; the image ships `src/` and all test files; deploy.js runs fetched `main` as the owner; Node 20 in the CI matrix while the only dependency needs ≥22 — those cells will fail on the first run), docs-6…15 (the handoff and CLAUDE.md status lines are already stale in places; 60 local branches, 14 of them `worktree-wf_*`), and one for the owner: the Mac's folder layout (`~/Developer/…`, `~/Applications/…`) appears in the handoff, CHANGELOG, CLAUDE.md, `scripts/deploy.js` and a test fixture — a layout, not an identity, but a deliberate yes or no before the push. Outbound's verifier added: a media URL is any non-empty string, so the API can point `download()` at any URL reachable from the parent's machine (fix: require the CDN's scheme and host); the sign-in heuristic runs on any non-JSON body before the status is considered (a captive portal reads as "signed out"); `CARE_ALBUM_SESSION` in `name=value` form goes out doubled.
 
@@ -200,6 +204,80 @@ check in the script, `/usr/bin/osascript`, and the private copies. The identity 
 exercised on this Mac only as far as asking LaunchServices, which does not open Photos; no
 test drives the real Photos app, so the script's end-to-end behaviour against Photos is for
 the owner to confirm once by hand.
+
+### 4.6 The NOTEs, fixed and reviewed adversarially (2026-09-24)
+
+Five file-disjoint lanes again (schedule and command line; archive and locks; outbound and
+metadata; page and server; supply chain and docs), each an implementer in its own worktree
+followed by one read-only adversarial reviewer (workflow `wf_b1ceec66-b3f`, ten agents). The
+lanes reported 63 items: 56 fixed, 4 found already fixed (page-5, sc-5, sc-13, docs-15), and 3
+not changed by decision (below). Five §4.3 ids were in no lane's list and were checked in the
+main session: web-8 and page-7 (the page is filled in with replacer functions) and web-12 (the
+script runs by nonce, `base-uri 'none'`) were already fixed; outbound-10 is handled where the
+date is printed (`/api/state` checks it); processes-7 was open and is fixed below.
+
+Every reviewer returned CONCERNS: 5 WARNINGs and 25 NOTEs, no CRITICAL. The usage limits ruled
+out a second fan-out, so all 30 were fixed in the main session, each WARNING with a test shown
+to fail on the code before it:
+
+| # | Lane | Finding | Severity | Outcome |
+|---|---|---|---|---|
+| F1 | schedule | The "scheduler changed" fix read exit 127 (not installed) as a refusal: on Linux, a run set up with systemd after systemctl went, or with cron after crontab went, could be neither moved nor turned off | WARNING (regression) | 127 means that scheduler can run nothing: systemd's files and enable link are removed; a real refusal names the files to delete |
+| F2 | archive | processes-10 part-fixed: a lock whose time was set once to the future counted as fresh for ever (unreadable, this computer's with a live pid, or "perhaps this computer's"), and so did the takeover guard and `photos.lock` | WARNING | `touchedWithin`: no more than 5 min ahead counts as a refresh; a future-dated lock gets the one-minute wait (a real holder with a fast clock refreshes in it); an unreadable lock is not in use past a minute; `lutimes` |
+| F3 | outbound | `verify` (plain and `--deep`) asked any media address in the feed, following redirects, and printed the answer | WARNING | media addresses and every redirect held to `mediaUrlRefusal`; a refusal is said without the address |
+| F4 | page | The port was read from `server.address()` per request, null once `close()` began: a request in flight crashed the process | WARNING (regression) | the port is read once after `listen()`; the gate runs in its own `try` |
+| F5 | supply | deploy.js said "Not deployed: Deployed abc1234 to production…" after production had been updated | WARNING | "Deployed, but not finished" |
+| F6 | schedule | Crontab recovery took a person's own line of the same shape after a block whose end line was deleted | NOTE | a line is ours only by its words: `<node> <…/cli.js> run --scheduled >> <…/daily.log> 2>&1` |
+| F7 | schedule | Deleting only the marker, as its comment invites, left both lines running and doubled them on reinstall | NOTE | a stray end line takes our lines directly above it |
+| F8 | schedule | The live-API test guard missed a trailing dot, in-process clients and the setup page | NOTE | in the client's constructor, for the whole domain, dot or not |
+| F9 | schedule | The printed `--child <id>` failed for an id beginning with `-` | NOTE | `--child=<id>` |
+| F10 | schedule | SECURITY.md and the README still said `--base-url` sends the session anywhere | NOTE | corrected |
+| F11 | archive | fs-11 part-fixed: `link/..` was judged by spelling, while the system follows the link first | NOTE | the real location is found from the path as typed |
+| F12 | archive | The race tests barely told old code from new; tests failed in a checkout inside the temp folder | NOTE | six processes race for one lock, six rounds; those tests skip with a reason there. The Photos-lock test checks the outcome; its mechanism is the run lock's, tested there |
+| F13 | archive | A named pipe at `archive.json` held a run (with the lock taken) and each page look for ever | NOTE | `readListText`: opened without blocking, an ordinary file only |
+| F14 | archive | A stem cut to 120 characters could end in a dot | NOTE | stripped again after the cut |
+| F15 | outbound | A same-origin redirect carrying `user:pw@` reached error text raw | NOTE | refused on every hop |
+| F16 | outbound | `Retry-After: 00000000005` read as a year | NOTE | counted without leading zeros |
+| F17 | outbound | A regression would hang a test for six hours instead of failing it | NOTE | the body ends by itself; timeouts |
+| F18 | outbound | Removing control characters changes a child's folder when the name carried one | NOTE | decided: kept, and said in the CHANGELOG; nothing is downloaded again |
+| F19 | outbound | Staged files were chmodded by path, which follows links | NOTE | by handle, `O_NOFOLLOW` |
+| F20 | outbound | Media-rule gaps: some IPv6 ranges, special-use names | NOTE | `::ffff:0:0/96`, `64:ff9b:1::/48`, `100::/64`, `2001:db8::/32` added; `.test`/`.example`/`.invalid` decided against (see DECISIONS) |
+| F21 | outbound | Run failures still said only "fetch failed" | NOTE | `failureReason` in sync, each warning, the daily log and the last message |
+| F22 | outbound | Housekeeping: branch behind `main`, no CHANGELOG entry, fs-10 unrecorded | NOTE | integrated on `main`; CHANGELOG; SECURITY.md and DECISIONS |
+| F23 | page | The address token was refused only under `/api/`, not allowed only on `/` and `/photo` | NOTE | an allowlist: `GET /` and `GET /photo` |
+| F24 | page | Save and Start reported any unreadable answer as "cannot reach the tool" | NOTE | only no answer is; a 403 says to open the new link |
+| F25 | supply | A config folder that was a link to the home folder narrowed the home folder; special bits were dropped | NOTE | compared and changed at real paths; `0o7700` |
+| F26 | supply | The daily.log probe could not fail; three comments put the log in the config folder | NOTE | corrected, and said |
+| F27 | supply | "Only your account can open" without its caveat in three places; doctor's "one request" | NOTE | caveat added (README's Docker section, the page's FAQ, PHOTOS.md); retries named |
+| F28 | supply | SECURITY.md's run-lock row would miss the one-day rule | NOTE | updated, with F2 |
+| F29 | supply | No CHANGELOG entry for the config folder's new mode | NOTE | added |
+| F30 | supply | The owner's npm and GitHub records | NOTE | 0.1.1 published with the new address (0.1.0 to be unpublished by the owner); `a52f841`, a merge-button commit replaced on `main`, to be added to the GitHub Support request |
+
+Also done in the main session, from the lanes' own lists of what they could not reach:
+`verify`'s requests take the session header from the client's one builder (outbound-13's third
+part); `environment.ts` and `version.ts` find this copy the way `copyRoot` does, so an npm
+install inside someone's git project is not read as a clone (processes-9's rest); `/photo` sends
+a type it does not know as an attachment (page-9's server half); the Task Scheduler comment
+says only what the documentation says; processes-7 (one decoder per stamped stream; blank lines
+decided when they end); `bin` is `dist/cli.js`, which npm rewrote `./dist/cli.js` to at each
+publish while warning that it had been "removed".
+
+**Still open, each with its reason:**
+- *photos-pending* is an upper bound, not an exact count: an exact one would hash every pending
+  file on each status read, and for older archives it would need the baseline, which writes.
+- *A notice when the daily run is skipped for days by a held lock* (the archive lane's
+  suggestion) is not built: the obvious signal, the time since the last run, gives false alarms
+  when two computers share an archive, and with F2 a lock planted once no longer stops runs.
+- *sc-6*: pnpm is pinned exactly everywhere instead of by a `packageManager` field, whose lockfile
+  entry needs registry access to write. The Docker build stage has not been built with 12.5.1.
+- *web-12*'s residue: a script injected into the page could still leave by top-level navigation,
+  which CSP does not govern. No injection has been found.
+- Minor and harmless today: `schedule.ts`'s `xml()` does not escape `'` (element content only);
+  `fingerprints.ts` filters the list with its own check rather than `usableRecord`; archive dates
+  are validated where the page shows them, not where gallery.ts reads them; bidi and format
+  characters are not stripped from names; a 408 is not retried.
+- Not verified on a real machine: Task Scheduler registration (CI runs the tests on Windows, but
+  no test registers a task); launchctl, systemctl and crontab (stand-in runners only).
 
 ## 5. What was verified, and what was not
 

@@ -59,7 +59,7 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 467 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+- 630 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
   because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
   of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
   24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
@@ -81,7 +81,9 @@ stores, and this tool is deliberately local-only with no cloud component.
   added 2026-09-24); the first two runs failed on the test script and on tests that assumed
   a Mac, both fixed the same night. Every CRITICAL and WARNING in the review is fixed: the ★
   ones on 2026-09-23 (PR #2), the rest on 2026-09-24, each lane reviewed adversarially (the
-  report's §4.4 and §4.5); its NOTEs (§4.3, §4.4) are still open. The brief the review was run
+  report's §4.4 and §4.5). Its NOTEs (§4.3, §4.4) were fixed on 2026-09-24 in five more
+  lanes, each reviewed adversarially, and the reviewers' 30 findings (5 WARNINGs) fixed after
+  them; §4.6 lists what is still open and why. The brief the review was run
   from, `docs/SECURITY-REVIEW-HANDOFF.md`, is in git history at d13f8ff; its durable part (the
   threat model, trust boundaries and assets) is now in SECURITY.md.
   **A third rewrite, of one commit, on 2026-09-24 at the owner's instruction** (main 1742186):
@@ -91,8 +93,13 @@ stores, and this tool is deliberately local-only with no cloud component.
   built on it, was rebuilt onto the new commit in the same atomic push. **Merge only locally
   (`git merge --no-ff -F`), never with GitHub's merge, squash or rebase buttons, "Update branch",
   web edits or suggestion commits**: each of those writes the profile name into history.
-  GitHub still serves the old commits through closed PRs' `refs/pull/*/head` and PR #4's
-  merge-commit link; only GitHub Support can remove those.
+  **A fourth, of one commit, the same day** (main 395a89c): PR #9, the 0.1.1 release, was
+  merged with the button too (a52f841). It was the tip of `main`, so it was replaced by an
+  identical commit with the ip2k identity before v0.1.1 was tagged, because a tag and npm's
+  provenance record fix a commit id for good. The owner was asked to set the GitHub profile's
+  display name to ip2k, which would make the button write nothing personal.
+  GitHub still serves the old commits through closed PRs' `refs/pull/*/head` and PR #4's and
+  #9's merge-commit links; only GitHub Support can remove those.
 - **Production and development are separate (2026-09-23).** Production is a clone on
   `main` at ~/Applications/care-album-saver, changed only by `node scripts/deploy.js`,
   which builds and runs the whole suite there, puts production back on its previous commit
@@ -100,13 +107,16 @@ stores, and this tool is deliberately local-only with no cloud component.
   deploy.** Development is *marked*, not inferred: deploy.js writes
   `care-album-saver-development` into this checkout's git common dir, so this checkout and
   every worktree of it refuse to install the real daily run, while a parent's plain clone
-  (which has no mark) is an ordinary install. Dev UI work uses `scripts/demo.js`.
+  (which has no mark) is an ordinary install. Dev UI work uses `scripts/demo.js`. The owner
+  starts the production setup page by hand, `node scripts/production.js setup --port 4720`;
+  it is no longer in `.claude/launch.json`, where a session could start it (review sc-12).
 - **The update check is ask-once and must stay that way (settled with the owner,
   2026-09-23).** `checkForUpdates` is null until the parent answers on the dashboard; only
   `/api/update` sets it. Then GitHub's releases API is asked at most daily, only from the
   setup page, never from the daily run, with no cookie, token or tool-named User-Agent.
-  Tests are barred from the network by `CARE_ALBUM_NO_UPDATE_CHECK` and from desktop notifications
-  by `CARE_ALBUM_NO_NOTIFY` (both set in test-env.js).
+  Tests are barred from the network by `CARE_ALBUM_NO_UPDATE_CHECK`, from Brightwheel's own
+  API by `CARE_ALBUM_NO_LIVE_API` (checked in every client's constructor), and from desktop
+  notifications by `CARE_ALBUM_NO_NOTIFY` (all three set in test-env.js).
   See src/updates.ts, src/version.ts (install kinds), docs/UPDATING.md and, for how it works
   and what a release must consist of, docs/UPDATE-CHECK.md.
 - **Adding to Apple Photos is off by default and must stay that way** (settled 2026-09-23).
@@ -169,9 +179,9 @@ dead code: the pre-rename fallbacks (`BRIGHTWHEEL_*` env vars, the old config fo
 old default archive folder, the `capturedAt` sidecar key) — all still load-bearing for the
 owner's own install until that folder is migrated; the unused server-side filter options in
 `src/api/client.ts` (docs/DECISIONS.md Q8); the parser fallbacks for API shapes no live account
-has shown; the nine npm-based install routes in `src/version.ts` (moot until the package is
-published); the `?token=` on `/api/*` requests (docs/DECISIONS.md Q10); and
-whether `src/index.ts` is a library surface at all.
+has shown; the nine npm-based install routes in `src/version.ts` (no longer moot: the
+package is on npm since 2026-09-24); and whether `src/index.ts` is a library surface at all.
+(The `?token=` on `/api/*` requests, once in this list, was settled and built: DECISIONS A3.)
 
 Counting method, since the original figure does not say: `wc -l` over every `.ts` file
 under `packages/*/src`, excluding tests, scripts and the generated `dist/`. That method

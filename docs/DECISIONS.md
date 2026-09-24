@@ -40,7 +40,7 @@ document and the work list that followed it) are in git history at d13f8ff, as
   [decided elsewhere](#decided-elsewhere)
 - Open: [the API](#what-nobody-has-checked-yet-about-brightwheels-api) (Q1–Q8) ·
   [sessions](#what-only-a-real-account-can-answer-about-sessions) (Q9) ·
-  [agreed but not built](#agreed-but-not-built) (Q10–Q16)
+  [agreed but not built](#agreed-but-not-built) (Q11–Q16; Q10 built, see A3)
 
 ---
 
@@ -145,7 +145,12 @@ needs all three.
   would be locked out.
 - *A one-shot bootstrap link.* Only worth it if the tool ever opens the browser itself.
 
-Still open: [Q10](#q10-the-token-only-where-a-header-cannot-carry-it).
+**Built 2026-09-24** (it was [Q10](#q10-the-token-only-where-a-header-cannot-carry-it); security
+review web-7, page-8, web-10). The token is taken from the `x-setup-token` header, which every
+request the page makes carries, and from the address only for a `GET` of the page itself or of
+`/photo`, the two places a header cannot be sent: an allowlist, so a route added later does not
+start taking it from the address unasked. The `Host` and `Origin` checks compare the port
+exactly.
 
 ### A4. What protects a fork is that nothing secret is ever in the tree
 
@@ -471,6 +476,18 @@ Settled decisions with a document of their own:
 - **Zero runtime dependencies.** Node's standard library only; ExifTool is optional, and
   without it everything goes into the `.json` sidecars. [README](../README.md#how-the-code-is-laid-out).
 - **Why the design is safe, and what it does not protect against.** [SECURITY.md](../SECURITY.md).
+- **Decided while fixing the security review's notes** (2026-09-24; each with its reasons in
+  [SECURITY-REVIEW-2026-09-23.md](SECURITY-REVIEW-2026-09-23.md) §4.6):
+  - Every file the tool saves into the archive is owner-only (`0600`), like its folders; files
+    saved earlier keep their modes (fs-10).
+  - A list entry that is not in the form this tool writes stops the run and offers the repair,
+    rather than being dropped silently (fs-8).
+  - Control characters are removed from names, not replaced, so a name that carried one gets
+    a new folder; nothing is downloaded again (processes-8).
+  - The special-use names `.test`, `.example` and `.invalid` are not refused as media hosts:
+    a local resolver answering for them is the same gap as any public name resolving to a
+    private address, which only a connect-time check could close.
+  - The Node path in the Task Scheduler task stays unquoted, as the task schema describes it.
 
 ---
 
@@ -559,12 +576,8 @@ old the stored session is, so its lifetime can be learnt.
 
 #### Q10. The token only where a header cannot carry it
 
-The page puts the setup token in every request's address as well as in the `x-setup-token`
-header. It should need the header on `/api/*` and accept `?token=` only where a header cannot
-be sent — the page itself, and the `<img>` and `<video>` requests to `/photo` — so the address
-carries it as rarely as possible. And the `Host` and `Origin` checks should compare the port exactly.
-Harmless today, because the token is never ambient; it is the check a future cookie would rest
-on. See [A3](#a3-the-setup-pages-token-goes-in-the-link-not-in-a-cookie).
+Built on 2026-09-24; what was decided is in
+[A3](#a3-the-setup-pages-token-goes-in-the-link-not-in-a-cookie).
 
 #### Q11. A second switch for the nursery, the poster and the note
 
