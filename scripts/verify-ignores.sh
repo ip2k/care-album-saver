@@ -154,8 +154,10 @@ must_ignore "$SOME/child.jpeg"                   "photo"
 must_ignore "$SOME/child.heic"                   "photo"
 must_ignore "$SOME/clip.mp4"                     "video"
 must_ignore "$SOME/clip.mov"                     "video"
-must_ignore "Care Album Photos/a.jpg"            "default archive folder"
-must_ignore "Brightwheel Photos/a.jpg"           "default archive folder, pre-rename"
+# The lock file, not a photo: *.jpg would catch a photo with the folder rule gone, and the
+# lock (pid, host name and start time, left behind by a crashed run) is caught by nothing else.
+must_ignore "Care Album Photos/.care-album-saver.lock"  "default archive folder"
+must_ignore "Brightwheel Photos/.care-album-saver.lock" "default archive folder, pre-rename"
 
 echo
 echo "Everything else an archive run writes must be ignored:"

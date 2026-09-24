@@ -3,12 +3,20 @@ name: security
 # Runs on every push and pull request, including from forks. A fork that accidentally
 # commits a session cookie gets told before it is merged here.
 #
+# On a push or a pull request gitleaks-action scans only that event's commits (a
+# `base^..head` range, from its src/gitleaks.js). Run by hand, or weekly on its own, it scans
+# the whole history, which is the only thing that finds a secret in an older commit that no
+# later push touches (security review sc-4).
+#
 # Linux only, on purpose: verify-ignores.sh is bash and gitleaks-action is a container.
 # Building and testing across operating systems is ci.yml's job.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'
 
 permissions:
   contents: read
@@ -20,7 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0   # Full history: a secret committed then "removed" is still there.
+          # All of history, which the scheduled and by-hand scans read in full; a push or a pull
+          # request reads its own range of it. A secret committed then "removed" is still there.
+          fetch-depth: 0
           # Nothing after this fetches: gitleaks reads the local history, and the token it
           # is handed below goes to the API, not to git. So none is left in .git/config for
           # a pull request's own scripts/verify-ignores.sh to find.

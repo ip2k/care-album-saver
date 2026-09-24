@@ -8,18 +8,75 @@
 #
 # No exceptions, not even for folders that only exist at the root: `**/` also matches at
 # the root, and test/dockerignore.test.js fails on any rule that does not start with it.
+#
+# Every rule in .gitignore above its "Build and tooling" heading has one here too, the
+# credentials and everything an archive run writes, so a file kept out of git by name is
+# kept out of the image the same way; test/dockerignore.test.js checks that they agree.
 **/.git
 **/.claude
 **/docs
 **/node_modules
 **/dist
 **/*.tsbuildinfo
+**/.care-album-saver-production
+
+# Credentials and personal data.
 **/*.har
+**/har
 **/*.env
 **/.env*
 **/session.json
 **/config.json
 **/cookies.*
+**/*.pem
+**/*.key
+**/secrets
+
+# Browser automation state.
+**/user-data-dir
+**/playwright-state.json
+**/storageState.json
+**/.playwright
+
+# Photos, and everything an archive run writes beside them.
 **/Care*Album*Photos/
 **/Brightwheel*Photos/
-**/.care-album-saver-production
+**/archive
+**/downloads
+**/[0-9][0-9][0-9][0-9]-W[0-9][0-9]
+**/archive.json
+**/*.xmp
+**/*.jpg
+**/*.jpeg
+**/*.png
+**/*.gif
+**/*.webp
+**/*.heic
+**/*.heif
+**/*.avif
+**/*.tif
+**/*.tiff
+**/*.bmp
+**/*.mp4
+**/*.mov
+**/*.m4v
+**/*.3gp
+**/*.webm
+**/*.avi
+**/*.jpg.json
+**/*.jpeg.json
+**/*.png.json
+**/*.gif.json
+**/*.webp.json
+**/*.heic.json
+**/*.heif.json
+**/*.avif.json
+**/*.tif.json
+**/*.tiff.json
+**/*.bmp.json
+**/*.mp4.json
+**/*.mov.json
+**/*.m4v.json
+**/*.3gp.json
+**/*.webm.json
+**/*.avi.json

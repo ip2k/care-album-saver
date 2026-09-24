@@ -104,6 +104,21 @@ const MUST_EXCLUDE = {
   dist: ['dist/cli.js', `${PKG}/dist/cli.js`, `${PKG}/dist/api/client.js`],
   node_modules: ['node_modules/typescript/package.json', `${PKG}/node_modules/exiftool-vendored/package.json`],
   'the production marker': ['.care-album-saver-production', `${PKG}/.care-album-saver-production`],
+  'keys, certificates and secrets': ['server.pem', `${PKG}/private.key`, `${PKG}/secrets/token.txt`, `${PKG}/har/notes.txt`],
+  'browser automation state': [
+    `${PKG}/storageState.json`,
+    `${PKG}/playwright-state.json`,
+    `${PKG}/user-data-dir/Default/Cookies`,
+    `${PKG}/.playwright/state.json`,
+  ],
+  'photos and sidecars in a folder of any name': [
+    `${PKG}/kids/archive.json`,
+    `${PKG}/kids/Robin-Maple/2026-W38/README.md`,
+    `${PKG}/kids/2026-09-18_1.webp`,
+    `${PKG}/kids/2026-09-18_1.webp.json`,
+    `${PKG}/kids/2026-09-18_1.m4v`,
+    `${PKG}/kids/2026-09-18_1.jpg.xmp`,
+  ],
   'git, agent worktrees and docs': [
     '.git/config',
     `${PKG}/.git/HEAD`,
@@ -151,6 +166,23 @@ for (const [kind, paths] of Object.entries(MUST_EXCLUDE)) {
     for (const path of paths) assert.equal(excluded(RULES, path), true, `${path} would be sent to the builder`);
   });
 }
+
+test('every rule .gitignore has for credentials and archive files has its match here', () => {
+  // The two files are kept by hand and drifted apart once already: .dockerignore had no rule
+  // for keys, browser state or photos outside the default folders while .gitignore did.
+  // Each .gitignore rule above its build-and-tooling heading is turned into a file it would
+  // catch, and that file must be kept out of the image too, at the root and deep in packages/.
+  const gitignore = readFileSync(join(ROOT, '.gitignore'), 'utf8').replace(/\r\n/g, '\n');
+  const personal = gitignore.slice(0, gitignore.indexOf('# ── Build and tooling'));
+  const rules = personal.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith('!'));
+  assert.ok(rules.length > 40, `read ${rules.length} rules`);
+  for (const rule of rules) {
+    const sample = rule.replace(/\[0-9\]/g, '1').replace(/\*/g, 'x') + (rule.endsWith('/') ? 'inside.txt' : '');
+    for (const path of [sample, `${PKG}/src/deep/${sample}`]) {
+      assert.equal(excluded(RULES, path), true, `.gitignore's "${rule}" keeps ${path} out of git, but it would reach the image`);
+    }
+  }
+});
 
 test('and lets in every file the image is built from', () => {
   const sources = [...MUST_KEEP, ...filesUnder(`${PKG}/src`), ...filesUnder(`${PKG}/applescript`)];

@@ -82,8 +82,11 @@ for (const { name, text } of workflows) {
   });
 
   test(`${name}: no secret but the run's own token is named`, () => {
-    const secrets = [...text.matchAll(/secrets\.([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]);
-    for (const secret of secrets) assert.equal(secret, 'GITHUB_TOKEN', `${name} names secrets.${secret}`);
+    // Every way an expression can reach the secrets: secrets.X, secrets['X'] and the whole
+    // object at once (toJSON(secrets)). Only secrets.GITHUB_TOKEN is allowed. Only inside
+    // ${{ }}, the one place they can be reached: a job may be called `secrets`.
+    const uses = secretsIn(text);
+    for (const use of uses) assert.equal(use, 'secrets.GITHUB_TOKEN', `${name} reaches the secrets as ${use}`);
   });
 
   test(`${name}: no checkout leaves the token in .git/config for the code it checked out`, () => {
@@ -91,6 +94,13 @@ for (const { name, text } of workflows) {
     assert.ok(checkouts.length >= 1, 'found the checkouts');
     for (const step of checkouts) assert.match(step, /^\s+persist-credentials: false$/m, step);
   });
+}
+
+/** Each reach for the secrets inside a ${{ }} expression, as written: `secrets.X` or bare `secrets`. */
+function secretsIn(text) {
+  return [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)].flatMap(([, expression]) =>
+    [...expression.matchAll(/\bsecrets\b(\.[A-Za-z_][A-Za-z0-9_]*)?/g)].map((m) => m[0]),
+  );
 }
 
 test('the screenshots job can read, upload one artifact, and nothing else', () => {
@@ -101,15 +111,19 @@ test('the screenshots job can read, upload one artifact, and nothing else', () =
 
   // Its own permissions, so that widening the workflow's for some other job leaves it alone.
   assert.match(body, /^ {4}permissions:\n {6}contents: read$/m);
-  assert.doesNotMatch(body, /secrets\./, 'it names no secret at all');
+  assert.deepEqual(secretsIn(body), [], 'it names no secret at all, in any spelling');
 
   // Every action it uses is one of these; a new one (a release, a Pages deploy, a
   // commit-back) has to be argued in here.
   const allowed = ['actions/checkout', 'pnpm/action-setup', 'actions/setup-node', 'actions/upload-artifact'];
   const steps = stepsOf(job);
   for (const step of steps) {
-    const uses = /uses: ([^@\s]+)@/.exec(step);
-    if (uses) assert.ok(allowed.includes(uses[1]), `the screenshots job uses ${uses[1]}`);
+    // Every `uses:` line, in whatever form: a local action (./…) or a container
+    // (docker://…) has no `@`, and must not slip past because of it.
+    for (const [, ref] of step.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)) {
+      const at = /^([\w.-]+\/[\w.-]+)@[\w.-]+$/.exec(ref);
+      assert.ok(at && allowed.includes(at[1]), `the screenshots job uses ${ref}`);
+    }
     assert.doesNotMatch(step, /git (push|commit)|\bgh /, 'nothing it runs writes back to GitHub');
   }
 

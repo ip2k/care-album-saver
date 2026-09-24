@@ -181,6 +181,16 @@ test('a credential rule that has stopped matching fails, as it did in the first 
   assert.match(lineFor(r.out, 'config.json'), /^ {2}ok /);
 });
 
+test('a default archive folder rule that has gone fails, though its photos are still caught by extension', posixOnly, () => {
+  for (const [rule, probe] of [['Care*Album*Photos/', 'Care Album Photos/.care-album-saver.lock'], ['Brightwheel*Photos/', 'Brightwheel Photos/.care-album-saver.lock']]) {
+    const repo = makeRepo();
+    writeFileSync(join(repo, '.gitignore'), rulesWith([[rule, null]]));
+    const r = run(repo);
+    assert.equal(r.status, 1, r.out);
+    assert.match(lineFor(r.out, probe), /FAILED .*would be committable/);
+  }
+});
+
 test('a rule only in a personal ignore file does not count: it does not travel with a clone', posixOnly, () => {
   const repo = makeRepo();
   writeFileSync(join(repo, '.gitignore'), rulesWith([['session.json', null], ['config.json', null]]));
