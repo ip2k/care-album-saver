@@ -439,6 +439,10 @@ async function main(): Promise<number> {
         stdout.write('\n  Stopping after the current photo…\n');
       };
       process.on('SIGINT', onInterrupt);
+      // SIGTERM is how the scheduler says stop — turning the daily run off, changing its
+      // time or reinstalling it. Node's default is to die on the spot, which lost the list of
+      // everything saved since the last 25 and had the next run fetch those again as copies.
+      process.on('SIGTERM', onInterrupt);
 
       let lastLine = '';
       let result;
@@ -479,10 +483,12 @@ async function main(): Promise<number> {
           await schedule.notify(schedule.FAILED_NOTICE).catch(() => false);
         }
         process.off('SIGINT', onInterrupt);
+        process.off('SIGTERM', onInterrupt);
         if (!stop.signal.aborted) await photosStep(config, Boolean(values.scheduled)).catch(() => {});
         throw error;
       } finally {
         process.off('SIGINT', onInterrupt);
+        process.off('SIGTERM', onInterrupt);
       }
       if (values.scheduled) {
         await schedule.recordRun({
