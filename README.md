@@ -158,7 +158,7 @@ website, which invalidates it immediately. Do that first, before trying to rewri
 
 The setup assistant walks you through everything. **[Full illustrated guide →](docs/GUIDE.md)**
 
-**This is not on npm yet**, so it is built from a clone. That is four commands, once:
+**This is not on npm yet**, so it is built from a clone. That is five commands, once:
 
 ```sh
 git clone https://github.com/ip2k/care-album-saver.git
@@ -174,9 +174,10 @@ after the first run is just the last line again. If you would rather type
 `packages/care-album-saver` once.
 
 Then open the link it prints. Three steps: connect your account, tick the children you want
-and check the settings, then press **Start saving**. Each setting saves itself the moment
-you change it, so there is nothing to remember to press, and while a run is going there is a
-**Stop** button beside **Start saving**.
+and check the settings, then press **Start saving** — and optionally set up a daily run
+(step 4). Each setting saves itself the moment you change it, so there is nothing to
+remember to press, and while a run is going there is a **Stop** button beside
+**Start saving**.
 
 <p align="center">
   <img src="docs/images/01-connect.png" alt="The setup assistant, showing how to find your Brightwheel session" width="780">
@@ -190,18 +191,20 @@ care-album-saver run        # save any new photos
 
 ### Running it every day
 
-**macOS / Linux** — add to `crontab -e`:
+The tool sets this up itself. On the setup page it is step 4, **Save new photos every
+day**; from the terminal it is:
 
+```sh
+care-album-saver schedule on --at 19:00   # every evening at seven
+care-album-saver schedule                 # is it set up, and how did the last run go?
+care-album-saver schedule off             # stop
 ```
-0 19 * * *  /usr/bin/node /path/to/care-album-saver/packages/care-album-saver/dist/cli.js run
-```
 
-Use the full path to `npx`, not a bare `npx`. A scheduled job looks for programs in only a
-few places and usually does not find it. Type `which npx` in your terminal and paste what
-it prints — with Homebrew it is often `/opt/homebrew/bin/npx`.
-
-**Windows** — Task Scheduler needs `npx.cmd`, not `npx`.
-[The guide explains both](docs/GUIDE.md#doing-it-automatically-every-day).
+It hands the job to the scheduler your computer already has — launchd on a Mac, a systemd
+timer on Linux (or a crontab line where there is no systemd), Task Scheduler on Windows —
+and writes in the full paths to Node and to this tool, so there is no crontab line to write
+by hand and nothing for the scheduler to go looking for.
+[The guide has the details](docs/GUIDE.md#doing-it-automatically-every-day).
 
 **Docker** — there is no published image. Nobody builds one for you, so build it yourself
 from this repository. The session and the photos are mounted in, never baked into the image:
@@ -212,7 +215,7 @@ docker build -t care-album-saver .
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   -v ~/.config/care-album-saver:/config \
-  -v ~/Brightwheel\ Photos:/photos \
+  -v ~/Care\ Album\ Photos:/photos \
   care-album-saver run --dir /photos
 ```
 
@@ -263,9 +266,18 @@ a clone like the one above, updating is `git pull`, `pnpm install` and `pnpm bui
 | `setup` | Open the setup assistant in your browser. Easiest way to start. |
 | `login` | Paste your session in the terminal instead. |
 | `run` | Save any new photos. `Ctrl` + `C` stops it after the photo it is on. |
+| `schedule` | Show whether new photos are being saved automatically, when the next run is, and how the last one went. |
+| `schedule on --at <HH:MM>` | Save new photos every day at that time, using your computer's own scheduler. Without `--at` it is 19:00. |
+| `schedule off` | Stop saving them automatically. |
 | `children` | List the children on your account, with the id Brightwheel uses for each. |
+| `recheck` | Ask Brightwheel who is on the account now, compare that with the archive, and say if anyone is not being saved. |
+| `check` | Compare the photos folder with the tool's own list of it (`archive.json`). Changes nothing. |
+| `check --repair` | The same, and then fix the list, without downloading anything. |
+| `duplicates` | Find photos saved twice, and show them. Deletes nothing. |
+| `duplicates --remove` | The same, and then offer to delete the extra copies. It lists them and asks you to type `yes` before deleting any. |
 | `doctor` | Check everything is working. It never prints your session, only a short fingerprint of it — but it does print your folder paths, which contain your computer's user name. |
 | `verify` | Check that Brightwheel's API still has the shape this tool expects. Read-only: it saves no photos, and prints no names, notes or ids. |
+| `verify --deep` | The same, and also read three photos to check whether they carry a capture time or a location, then delete them. |
 | `where` | Show where your files and settings are kept. |
 
 | Option | Default | |
@@ -274,6 +286,7 @@ a clone like the one above, updating is `git pull`, `pnpm install` and `pnpm bui
 | `--all` | off | Re-check everything, not just new photos |
 | `--child <id or name>` | every child | Only this child, for this one run. Repeat it for several. |
 | `--no-name-tag` | off | Do not write any name into the photo |
+| `--at <HH:MM>` | `19:00` | Time of day for the daily run, on the 24-hour clock. Used with `schedule on`. |
 | `--port <n>` | chosen for you | Port for the setup assistant |
 | `--base-url <url>` | Brightwheel's own | Point at a different API. Used by the tests. |
 
@@ -331,10 +344,6 @@ The tool only moves its "everything up to here is done" marker for a child when 
 walked that child's whole feed with nothing left behind. An interrupted run holds the newest
 photos and nothing older, so treating its newest photo as the marker would silently skip the
 rest of the feed for ever. It does not.
-
-The first `run` after upgrading from a version that had no such marker reads each child's
-whole feed once. That pass downloads nothing you already have — it only reads the listing,
-to work out where to carry on from — and every run after it is quick again.
 
 ---
 
@@ -472,9 +481,8 @@ anything. It makes a handful of read-only requests — a few reads of the API, a
 that a photo link still answers — and downloads no photos. Mostly it reports which fields
 are present and what type each one is: never a child's name, never a note, never an id,
 never a date. A few plain values do appear, and they are listed here so that nothing in the
-report comes as a surprise — how many children and how many posts it counted, whether the
-two dates on a post differ and by how many minutes, the internet address photos are served
-from, and the names (not the contents) of the security parameters on a photo link. None of that identifies anybody, which is why the report is safe to paste into
+report comes as a surprise — how many posts it counted, whether the two dates on a post
+differ and by how many minutes, the internet address photos are served from, and the names (not the contents) of the security parameters on a photo link. None of that identifies anybody, which is why the report is safe to paste into
 a bug report.
 
 ### Before you use this: Brightwheel's terms
@@ -514,7 +522,7 @@ your child's data, ask the school.
 |---|---|
 | [`care-album-saver`](packages/care-album-saver) | The tool itself: API client, metadata, week folders, CLI and setup assistant. |
 | [`applescript/`](packages/care-album-saver/applescript) | The one AppleScript the optional Apple Photos setting runs, kept as a file of its own so it can be read in one place. |
-| [`src/ferry/`](packages/care-album-saver/src/ferry) | The service-agnostic half, kept as its own directory: resumable downloads, stable identity for signed URLs, content hashing, safe filenames, ISO weeks. It knows nothing about Brightwheel. |
+| [`src/ferry/`](packages/care-album-saver/src/ferry) | The service-agnostic half, kept as its own directory: downloading to a `.part` file and renaming it into place, stable identity for signed URLs, integrity checksums, safe filenames, ISO weeks and the archive list. It knows nothing about Brightwheel. |
 
 It used to be a second package, `media-ferry`, and was folded back in on 23 September 2026.
 The reason is worth recording: publishing this tool would have made it depend on
@@ -544,7 +552,7 @@ beside each photo instead of into the photo.
 ```sh
 pnpm install
 pnpm build
-pnpm test                        # 121 tests, no network needed
+pnpm test                        # 121 tests, against a local mock; no network needed
 ```
 
 One test file on its own:
