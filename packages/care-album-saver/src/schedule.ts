@@ -301,12 +301,45 @@ export interface LastRun {
   message: string;
   /** Whether the schedule started it or a person did. */
   trigger: 'schedule' | 'manual';
+  /**
+   * When the scheduler itself last started a run, carried across the runs a person starts.
+   * Manual runs are recorded too — so that a run the parent just made counts as today's and
+   * the missed-run catch-up does not repeat it — but "the daily run has not saved anything
+   * since it was set up" is a question about the scheduler alone, and a button pressed on
+   * the page must not answer it.
+   */
+  scheduledAt?: string | null;
 }
 
 export const lastRunPath = (): string => join(configDir(), 'last-run.json');
 
 export async function recordRun(run: LastRun): Promise<void> {
-  await writeSecureFile(lastRunPath(), JSON.stringify(run, null, 2));
+  const previous = await loadLastRun();
+  const scheduledAt =
+    run.trigger === 'schedule' ? run.at : previous?.scheduledAt ?? (previous?.trigger === 'schedule' ? previous.at : null);
+  await writeSecureFile(lastRunPath(), JSON.stringify({ ...run, scheduledAt }, null, 2));
+}
+
+/** The record of a run that finished, stopped or not, in the words the page and the log use. */
+export function finishedRun(
+  result: { saved: number; failed: number; stopped: boolean },
+  trigger: LastRun['trigger'],
+): LastRun {
+  return {
+    at: new Date().toISOString(),
+    // A run cut short has not brought the archive up to date, whatever it managed before it
+    // stopped, so it is not recorded as a clean one.
+    ok: result.failed === 0 && !result.stopped,
+    saved: result.saved,
+    failed: result.failed,
+    message: result.stopped
+      ? `Stopped part-way; ${result.saved} item${result.saved === 1 ? '' : 's'} saved before that are kept.`
+      : result.saved === 0 && result.failed === 0
+        ? 'There were no new photos to save.'
+        : `${result.saved} new item${result.saved === 1 ? '' : 's'} saved` +
+          (result.failed > 0 ? `, ${result.failed} could not be fetched.` : '.'),
+    trigger,
+  };
 }
 
 /**
@@ -878,7 +911,8 @@ export async function status(env: ScheduleEnvironment = {}): Promise<ScheduleSta
    * after installation, so a job set up this afternoon is not accused of anything.
    */
   const installedAt = Date.parse(record.installedAt ?? '');
-  const lastAt = lastRun ? Date.parse(lastRun.at) : NaN;
+  // The scheduler's own last run, not the last run of any kind: see LastRun.scheduledAt.
+  const lastAt = lastRun ? Date.parse(lastRun.scheduledAt ?? (lastRun.trigger === 'schedule' ? lastRun.at : '')) : NaN;
   const dueSince = Number.isFinite(installedAt) ? installedAt + 2 * 24 * 3600 * 1000 : NaN;
   const overdue =
     registered !== false &&

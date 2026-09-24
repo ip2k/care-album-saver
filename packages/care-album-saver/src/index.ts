@@ -40,3 +40,4 @@ export {
   type PhotosStatus,
 } from './photos.js';
 export { acceptableUserAgent, browserUserAgent, chromeMajor } from './api/identity.js';
+export { RunInProgressError, RUN_LOCK_FILENAME, takeRunLock } from './run-lock.js';

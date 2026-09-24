@@ -427,6 +427,9 @@ async function main(): Promise<number> {
         config.includeStudents = chosen;
         stdout.write(`  Only: ${children.filter((c) => chosen.includes(c.id)).map((c) => c.fullName).join(', ')}\n`);
       }
+      // A run limited to some children with --child has not brought the whole archive up to
+      // date, so it is not recorded as the day's run.
+      const coversTheDay = !values.child?.length;
       // Ctrl+C: finish the photo being saved, write the manifest, stop. Anything harsher
       // throws away the download in flight and, worse, the record of the ones before it.
       // A second Ctrl+C is a parent saying they meant it, and ends the process there.
@@ -462,6 +465,16 @@ async function main(): Promise<number> {
           { signal: stop.signal },
         );
       } catch (error) {
+        // Another run holds the folder. Not a failure and not a record: that run is doing the
+        // work, it records its own outcome, and it does the Photos step too. This one says so
+        // and leaves, having read and fetched nothing.
+        if (error instanceof Error && error.name === 'RunInProgressError') {
+          stdout.write(`  ${error.message}\n`);
+          if (values.scheduled) {
+            await schedule.appendLog(`${new Date().toISOString()}  SKIPPED another run was already saving photos`);
+          }
+          return 0;
+        }
         // A scheduled run fails at seven in the evening with nobody watching. Unless the
         // failure is written down, the tool has no way to answer "is this still working?"
         // — and an expired session looks exactly like an archive that is up to date.
@@ -481,6 +494,15 @@ async function main(): Promise<number> {
           // is what makes anyone ask it. Fixed text — the error is not in it — and a
           // desktop with no notifier just means the record is the only trace.
           await schedule.notify(schedule.FAILED_NOTICE).catch(() => false);
+        } else if (coversTheDay) {
+          await schedule.recordRun({
+            at: new Date().toISOString(),
+            ok: false,
+            saved: 0,
+            failed: 0,
+            message: scrub(error instanceof Error ? error.message : String(error)),
+            trigger: 'manual',
+          });
         }
         process.off('SIGINT', onInterrupt);
         process.off('SIGTERM', onInterrupt);
@@ -491,21 +513,7 @@ async function main(): Promise<number> {
         process.off('SIGTERM', onInterrupt);
       }
       if (values.scheduled) {
-        await schedule.recordRun({
-          at: new Date().toISOString(),
-          // A run cut short has not brought the archive up to date, whatever it managed
-          // before it stopped, so it is not recorded as a clean night.
-          ok: result.failed === 0 && !result.stopped,
-          saved: result.saved,
-          failed: result.failed,
-          message: result.stopped
-            ? `Stopped part-way; ${result.saved} item${result.saved === 1 ? '' : 's'} saved before that are kept.`
-            : result.saved === 0 && result.failed === 0
-              ? 'There were no new photos to save.'
-              : `${result.saved} new item${result.saved === 1 ? '' : 's'} saved` +
-                (result.failed > 0 ? `, ${result.failed} could not be fetched.` : '.'),
-          trigger: 'schedule',
-        });
+        await schedule.recordRun(schedule.finishedRun(result, 'schedule'));
         await schedule.appendLog(
           `${new Date().toISOString()}  ${result.failed === 0 && !result.stopped ? 'OK     ' : 'PARTIAL'}  ` +
             `${result.saved} saved, ${result.skipped} already had, ${result.failed} could not be fetched`,
@@ -515,6 +523,9 @@ async function main(): Promise<number> {
         `\n  ${result.stopped ? 'Stopped' : 'Done'}. ${result.saved} new, ${result.skipped} already had, ` +
           `${result.failed} failed.\n  Photos are in: ${result.archiveDir}\n`,
       );
+      // Recorded as well, so that the daily run's missed-run catch-up sees today is covered
+      // and does not start the same work again at the next login.
+      if (!values.scheduled && coversTheDay) await schedule.recordRun(schedule.finishedRun(result, 'manual'));
       if (result.stopped) stdout.write('  Run the same command again to carry on where it left off.\n');
       for (const w of result.warnings) stdout.write(`  Note: ${scrub(w)}\n`);
       if (!result.stopped) await photosStep(config, Boolean(values.scheduled));
