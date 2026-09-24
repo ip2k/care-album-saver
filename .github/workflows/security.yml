@@ -21,6 +21,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0   # Full history: a secret committed then "removed" is still there.
+          # Nothing after this fetches: gitleaks reads the local history, and the token it
+          # is handed below goes to the API, not to git. So none is left in .git/config for
+          # a pull request's own scripts/verify-ignores.sh to find.
+          persist-credentials: false
       - name: Verify .gitignore actually blocks credentials
         run: ./scripts/verify-ignores.sh
       - name: Scan for credentials
@@ -39,6 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       # Same pnpm setup as ci.yml, so the two workflows cannot drift apart.
       - uses: pnpm/action-setup@v6
         with:
