@@ -1,9 +1,11 @@
-import { DEFAULT_BASE_URL, MAX_RESPONSE_BYTES, SESSION_COOKIE } from './api/client.js';
+import { DEFAULT_BASE_URL, MAX_RESPONSE_BYTES, apiHeaders } from './api/client.js';
 import { BodyTooLargeError, readBodyText } from './http-body.js';
 import { assertJsonResponse } from './api/schema.js';
 import { browserUserAgent } from './api/identity.js';
 import { scrub } from './secrets.js';
 import type { Secret } from './secrets.js';
+import { checkBaseUrl, refuseLiveApiUnderTest } from './config.js';
+import { loopbackOrigin, mediaUrlRefusal } from './ferry/url.js';
 
 /**
  * A bounded, read-only check of the live Brightwheel API that reveals SHAPE, never CONTENT.
@@ -27,7 +29,8 @@ import type { Secret } from './secrets.js';
  *
  * Without --deep it makes four requests (three to the API, one HEAD to the media host
  * without the session) and downloads no media; with --deep it also downloads up to three
- * photos to a temporary directory, reads them and deletes them.
+ * photos to a temporary directory, reads them and deletes them. A media address is asked only
+ * if it passes the rule downloads keep (`fetchMedia`).
  */
 
 export interface FieldCheck {
@@ -70,6 +73,53 @@ function check(obj: Record<string, unknown>, fields: string[]): FieldCheck[] {
  * for a login page (whose message carries nothing at all) and otherwise names only what it
  * is given, which is why it is given a word and not a URL.
  */
+/** Why a media address was not asked. Its message never carries the address. */
+class MediaNotFetched extends Error {}
+
+/** The redirect statuses fetch would follow on its own, and as many as it follows. */
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+const MAX_MEDIA_REDIRECTS = 20;
+
+/**
+ * A media address from the feed, asked under the rule download() keeps (security review §4.6,
+ * F3): https, no user name or password, not this computer or the local network
+ * (`mediaUrlRefusal`), with the API's own origin trusted only when the API is on this
+ * computer. Redirects are followed by hand, each one held to the same rule. Without this,
+ * `verify` asked whatever address the feed named, so a feed could have it probe the parent's
+ * own network and print the answer in a report they are told is safe to share.
+ */
+async function fetchMedia(
+  start: string,
+  init: RequestInit,
+  trustedOrigin: string | null,
+  doFetch: typeof fetch,
+): Promise<Response> {
+  const first = mediaUrlRefusal(start, trustedOrigin);
+  if (first) throw new MediaNotFetched(`the feed's media address was not asked, because ${first}.`);
+  let current = new URL(start);
+  for (let hops = 0; ; hops += 1) {
+    const response = await doFetch(current.href, { ...init, redirect: 'manual' });
+    if (!REDIRECTS.has(response.status)) return response;
+    await response.body?.cancel().catch(() => {});
+    const location = response.headers.get('location');
+    let next: URL;
+    try {
+      if (!location) throw new Error('no location');
+      next = new URL(location, current);
+    } catch {
+      throw new MediaNotFetched('the media host redirected to an address that could not be read.');
+    }
+    if (hops >= MAX_MEDIA_REDIRECTS) {
+      throw new MediaNotFetched(`the media host redirected more than ${MAX_MEDIA_REDIRECTS} times.`);
+    }
+    const refused = mediaUrlRefusal(next.href, trustedOrigin);
+    if (refused) {
+      throw new MediaNotFetched(`the media host redirected to an address this tool does not fetch from, because ${refused}.`);
+    }
+    current = next;
+  }
+}
+
 async function raw(
   path: string,
   label: string,
@@ -77,13 +127,8 @@ async function raw(
   baseUrl: string,
   fetchImpl: typeof fetch,
 ): Promise<Record<string, unknown>> {
-  const response = await fetchImpl(`${baseUrl}${path}`, {
-    headers: {
-      Cookie: `${SESSION_COOKIE}=${session.expose()}`,
-      Accept: 'application/json',
-      'X-Client-Name': 'web',
-    },
-  });
+  // The browser identity is added by the fetch this is handed, as to every request here.
+  const response = await fetchImpl(`${baseUrl}${path}`, { headers: apiHeaders(session) });
   // Capped while it is read, as the client's own requests are (security review outbound-7):
   // this command reads the same endpoints, and an endless or bomb-sized answer here would
   // fill memory as surely as one to a run.
@@ -104,6 +149,12 @@ export async function verify(
   session: Secret,
   options: { baseUrl?: string; fetchImpl?: typeof fetch; deep?: boolean; userAgent?: string | null } = {},
 ): Promise<VerifyReport> {
+  // This command composes its own requests, so it makes the command line's two refusals
+  // itself: no session in the clear to anywhere but this computer (security review
+  // outbound-13), and none to the real Brightwheel from a test (docs-14). A caller that hands
+  // in its own fetch reaches no network through this, so the second does not apply to it.
+  if (options.baseUrl !== undefined) checkBaseUrl(options.baseUrl);
+  if (!options.fetchImpl) refuseLiveApiUnderTest(options.baseUrl);
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   // Every request this command makes carries the same browser identity a run does, the
   // media ones included. Left to itself, fetch would announce `node` on each of them.
@@ -111,6 +162,8 @@ export async function verify(
   const baseFetch = options.fetchImpl ?? fetch;
   const doFetch: typeof fetch = (input, init = {}) =>
     baseFetch(input, { ...init, headers: { ...((init.headers as Record<string, string>) ?? {}), 'User-Agent': userAgent } });
+  const trustedMedia = loopbackOrigin(baseUrl);
+  const askMedia = (url: string, init: RequestInit = {}) => fetchMedia(url, init, trustedMedia, doFetch);
   const report: VerifyReport = { reachable: false, sessionValid: false, checks: [], findings: [], warnings: [] };
 
   // 1 — the account.
@@ -291,7 +344,7 @@ export async function verify(
       if (withMedia.length === 0) {
         report.warnings.push('--deep found no photo to examine on this page.');
       } else {
-        const probe = await probeCaptureTimes(withMedia, doFetch);
+        const probe = await probeCaptureTimes(withMedia, askMedia);
         report.findings.push(...probe);
       }
     }
@@ -334,13 +387,24 @@ export async function verify(
           // goes unanswered and the report says that plainly rather than quietly omitting
           // it. The useful half — "is the signature alone enough?" — is what downloading
           // actually depends on, and that is the half kept.
-          const without = await doFetch(mediaUrl, { method: 'HEAD' });
-          report.findings.push(
-            `Media fetch WITHOUT the session cookie: HTTP ${without.status}.` +
-              (without.ok
-                ? ' CONFIRMED: the URL signature alone is enough, which is what downloading relies on.'
-                : ' Unexpected — investigate before trusting downloads.'),
-          );
+          let without: Response | null = null;
+          try {
+            without = await askMedia(mediaUrl, { method: 'HEAD' });
+          } catch (error) {
+            if (!(error instanceof MediaNotFetched)) throw error;
+            report.warnings.push(
+              `Media fetch WITHOUT the session cookie: not attempted, because ${error.message} ` +
+                'A run would refuse this photo in the same way.',
+            );
+          }
+          if (without) {
+            report.findings.push(
+              `Media fetch WITHOUT the session cookie: HTTP ${without.status}.` +
+                (without.ok
+                  ? ' CONFIRMED: the URL signature alone is enough, which is what downloading relies on.'
+                  : ' Unexpected — investigate before trusting downloads.'),
+            );
+          }
           report.findings.push(
             'NOT CHECKED, deliberately: what the media host does WITH the session cookie. ' +
               'This tool sends your Brightwheel session to the Brightwheel API and nowhere ' +
@@ -374,7 +438,7 @@ export async function verify(
  */
 async function probeCaptureTimes(
   items: Record<string, unknown>[],
-  doFetch: typeof fetch,
+  askMedia: (url: string) => Promise<Response>,
 ): Promise<string[]> {
   let exiftool: { read: (f: string) => Promise<Record<string, unknown>>; end: () => Promise<void> };
   try {
@@ -397,7 +461,14 @@ async function probeCaptureTimes(
   try {
     for (const [i, item] of items.entries()) {
       const url = (item.media as Record<string, unknown>).image_url as string;
-      const response = await doFetch(url);
+      let response: Response;
+      try {
+        response = await askMedia(url);
+      } catch (error) {
+        if (!(error instanceof MediaNotFetched)) throw error;
+        out.push(`--deep did not fetch a photo to examine: ${error.message}`);
+        continue;
+      }
       if (!response.ok) {
         out.push(`--deep could not fetch a photo to examine (HTTP ${response.status}).`);
         continue;

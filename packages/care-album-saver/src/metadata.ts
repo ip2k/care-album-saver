@@ -214,9 +214,26 @@ function videoTags(input: MetadataInput): TagSet {
   return tags;
 }
 
+/**
+ * C0 control characters other than tab, line feed and carriage return; DEL; the C1 block.
+ *
+ * A NUL in a note made exiftool-vendored refuse the whole write — it will not put one into
+ * the line-based protocol it speaks to ExifTool — so the photo lost its dates and its
+ * location strip along with the note, and the refusal it gave quoted the note, child's name
+ * and all, into the run's warnings (security review fs-12). The API reader already removes
+ * these (schema.ts `text`); they are removed again here, from every value written, because
+ * this is the last step before ExifTool and a MetadataInput need not have come from there.
+ */
+const UNWRITABLE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+
+function writable(value: string | string[]): string | string[] {
+  return Array.isArray(value) ? value.map((v) => v.replace(UNWRITABLE, '')) : value.replace(UNWRITABLE, '');
+}
+
 /** The tag table for a file, chosen by what Brightwheel says the file is. */
 export function buildTags(input: MetadataInput): TagSet {
-  return input.activity.kind === 'video' ? videoTags(input) : imageTags(input);
+  const tags = input.activity.kind === 'video' ? videoTags(input) : imageTags(input);
+  return Object.fromEntries(Object.entries(tags).map(([name, value]) => [name, writable(value)]));
 }
 
 /**
@@ -238,9 +255,14 @@ async function writeJsonSidecar(input: MetadataInput): Promise<void> {
     savedBy: 'care-album-saver',
   };
   // Its name is predictable from the photo's, so it goes through writeAtomically: a symlink
-  // planted at `<photo>.json` is replaced, never written through.
-  await writeAtomically(`${input.filePath}.json`, JSON.stringify(sidecar, null, 2));
+  // planted at `<photo>.json` is replaced, never written through. Owner-only, as every file
+  // the tool writes into the archive is, whatever the umask (security review fs-10): it names
+  // the child, the school and the teacher.
+  await writeAtomically(`${input.filePath}.json`, JSON.stringify(sidecar, null, 2), SIDECAR_MODE);
 }
+
+/** See writeJsonSidecar; the same mode as the manifest and every file sync places. */
+const SIDECAR_MODE = 0o600;
 
 export interface MetadataResult {
   /** The tags were written into the file itself. */
@@ -324,15 +346,12 @@ export async function applyMetadata(input: MetadataInput): Promise<MetadataResul
     // others. A half-kept promise is worse than a plainly stated one, and the risk of
     // corrupting a family's only copy of a photo is not worth the difference. Saying so is
     // the honest fix; installing ExifTool is the real one.
-    const location = input.stripLocation
-      ? ' Location information could not be removed from inside the photo either, because that needs ExifTool as well — if this photo arrived with coordinates in it, they are still there.'
-      : '';
     return {
       embedded: false,
       sidecar: true,
       reason:
         'ExifTool is not installed, so the date and the other details were saved alongside ' +
-        `the photo, in the .json file beside it, rather than inside the photo itself.${location}`,
+        `the photo, in the .json file beside it, rather than inside the photo itself.${locationKept(input, 'because that needs ExifTool as well')}`,
     };
   }
 
@@ -347,7 +366,18 @@ export async function applyMetadata(input: MetadataInput): Promise<MetadataResul
   }
 
   const embed = await writeTags(tool, input.filePath, tags);
-  if (!embed.ok) return { embedded: false, sidecar: true, reason: embed.reason };
+  if (!embed.ok) {
+    // The deletions travel in the same write as the dates, so a write that failed removed no
+    // location either — said, as it is when ExifTool is missing, rather than left to be
+    // assumed from a switch that is on (security review fs-12).
+    return {
+      embedded: false,
+      sidecar: true,
+      reason:
+        `ExifTool could not write into this photo (${embed.reason}), so the date and the other details ` +
+        `are only in the .json file beside it.${locationKept(input, 'because that was part of the same write')}`,
+    };
+  }
   if (!input.writeSidecar) return { embedded: true, sidecar: true };
 
   // An .xmp file can only hold XMP; the EXIF, IPTC and QuickTime fields have no home there.
@@ -358,6 +388,16 @@ export async function applyMetadata(input: MetadataInput): Promise<MetadataResul
   return aside.ok
     ? { embedded: true, sidecar: true, xmpSidecar: true }
     : { embedded: true, sidecar: true, xmpSidecar: false, reason: `The .xmp sidecar was not written: ${aside.reason}` };
+}
+
+/**
+ * The sentence for a photo whose location was to be removed and was not, with why — or
+ * nothing when the parent did not ask for it to be removed.
+ */
+function locationKept(input: MetadataInput, why: string): string {
+  return input.stripLocation
+    ? ` Location information could not be removed from inside the photo either, ${why} — if this photo arrived with coordinates in it, they are still there.`
+    : '';
 }
 
 /** One ExifTool write, with its outcome read for what it is. */

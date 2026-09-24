@@ -22,6 +22,13 @@
  *
  * Why this exists: the daily run used to point at the development checkout's dist/, so every
  * build of a branch in progress went live at the next scheduled run.
+ *
+ * What it runs, and as whom (security review sc-8): everything here runs as you, with your
+ * session and your photos within reach. It fetches this checkout's `main` into production and
+ * then runs that commit's own code there — the build, the whole test suite, and pnpm with the
+ * lockfile that commit carries — before the daily run is moved onto it. Nothing is fetched
+ * from anywhere else, but nothing is checked either: deploying a `main` is trusting it, so
+ * merge to `main` only what you have read.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -55,6 +62,12 @@ const run = (cmd, args, cwd, opts = {}) => {
 };
 const fail = (why) => {
   process.stderr.write(`\n  Not deployed: ${why}\n`);
+  process.exit(1);
+};
+// For a failure after production is updated and marked: it was deployed, so "Not deployed"
+// would say the opposite of what happened. Only moving the daily run is left undone.
+const unfinished = (why) => {
+  process.stderr.write(`\n  Deployed, but not finished: ${why}\n`);
   process.exit(1);
 };
 
@@ -91,6 +104,11 @@ if (!dry || existsSync(join(PROD, '.git'))) {
   // failure from here on puts the previous commit back and rebuilds it.
   let step = 'installing';
   try {
+    // Exactly what main's lockfile says (--frozen-lockfile), from pnpm's store on this computer
+    // where it can (--prefer-offline: a deploy should not wait on the registry for packages it
+    // already has). Install scripts are left as pnpm leaves them for a parent's clone, which
+    // is what CI tests; the Dockerfile and the audit job add --ignore-scripts because they run
+    // nothing afterwards, while this goes on to run main's own build and tests anyway.
     run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], PROD, { mutates: true });
     step = 'building';
     run('pnpm', ['run', 'build'], PROD, { mutates: true });
@@ -108,6 +126,8 @@ if (!dry || existsSync(join(PROD, '.git'))) {
     if (before === devMain) fail(`${what}. Production was already on ${before.slice(0, 7)}, so this changed nothing it runs.\n  ${out}`);
     try {
       run('git', ['reset', '--hard', before], PROD, { mutates: true, quiet: true });
+      // The same install as above, now against the previous commit's lockfile, so that its
+      // dependencies are the ones it was tested with.
       run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], PROD, { mutates: true, quiet: true });
       run('pnpm', ['exec', 'tsc', '--build', '--clean'], PROD, { mutates: true, quiet: true });
       run('pnpm', ['run', 'build'], PROD, { mutates: true, quiet: true });
@@ -136,13 +156,27 @@ if (!dry || existsSync(join(PROD, '.git'))) {
   try {
     time = dry && !existsSync(cli) ? null : readScheduledTime();
   } catch (error) {
-    fail(`Deployed ${devMain.slice(0, 7)} to production, but the daily run was not moved there: its settings could not be read.\n  ${error.message}`);
+    unfinished(`${devMain.slice(0, 7)} is in production, but the daily run was not moved there: its settings could not be read.\n  ${error.message}`);
   }
   if (time) {
     say(`Moving the daily run (${time}) to production…`);
     // --replace: moving the daily run between copies is what deploying is for, including
     // from an earlier production folder, which the tool otherwise refuses to take it from.
-    say(run(process.execPath, [cli, 'schedule', 'on', '--at', time, '--replace'], PROD, { mutates: true }).split('\n').join('\n  '));
+    let moved;
+    try {
+      moved = run(process.execPath, [cli, 'schedule', 'on', '--at', time, '--replace'], PROD, { mutates: true });
+    } catch (error) {
+      // Production is already on the new commit and marked by now; only the move failed. Said
+      // in words, with what the tool printed — its own account of where the daily run is now
+      // (a refused install puts back the job it was replacing, or says there is none) — rather
+      // than as a stack trace from execFileSync (security review sc-8). Its stderr has already
+      // appeared above; its stdout is only in the error.
+      const said = String(error.stdout ?? '').trim().split('\n').join('\n  ');
+      unfinished(`${devMain.slice(0, 7)} is in production, but the daily run was not moved there: ` +
+        `\`schedule on --at ${time}\` failed, and what it printed says where the daily run is now.\n` +
+        `  To try again: node "${cli}" schedule on --at ${time} --replace` + (said ? `\n  ${said}` : ''));
+    }
+    say(moved.split('\n').join('\n  '));
   } else {
     say('No daily run is set up, so there is nothing to move.');
   }

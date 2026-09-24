@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join } from 'node:path';
-import { mkdir, readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { chmod, mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import { writeAtomically } from './ferry/index.js';
 
 /**
@@ -100,8 +100,49 @@ export function defaultArchiveDir(): string {
  * rather than implying a protection we do not provide.
  */
 export async function writeSecureFile(path: string, contents: string): Promise<void> {
-  await mkdir(join(path, '..'), { recursive: true, mode: 0o700 });
+  const folder = join(path, '..');
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  if (resolve(folder) === resolve(configDir())) await makeOwnerOnly(folder);
   await writeAtomically(path, contents, 0o600);
+}
+
+/**
+ * Make the config folder owner-only when it is not already (security review docs-9).
+ *
+ * `mkdir`'s mode applies only to a folder it creates. One that was there first keeps its own:
+ * a folder made by hand, one named by CARE_ALBUM_CONFIG_DIR, or the image's /config, which
+ * the Dockerfile makes at the default 755. Every file the tool writes into it is 0600 all the
+ * same, so its contents are safe either way; what a 755 folder gives away is the names — that
+ * there is a session.json, a photos.json, a last-run.json — and room for someone else to
+ * stand beside them. So the folder is narrowed to its owner's bits, the same treatment sync
+ * gives the photos folder (ensureOwnerOnly in sync.ts), but only:
+ *
+ *  - when this account owns it. Someone else's folder, a root-owned bind mount for instance,
+ *    cannot be changed by this account and is not this tool's to change; it is left as it is.
+ *  - never wider. A folder already stricter than 0700 is left alone.
+ *  - never the home folder, should the config folder ever be pointed there: that would take
+ *    away what other accounts are meant to reach in it, macOS's Public folder among them.
+ *
+ * Anything that stops it — a folder it does not own, a file system without POSIX modes, a
+ * refusal — leaves the folder as it was and the file is still written 0600; the session is
+ * not held back over the folder's mode. Windows has no POSIX modes, as in writeSecureFile.
+ */
+async function makeOwnerOnly(folder: string): Promise<void> {
+  if (platform() === 'win32' || typeof process.getuid !== 'function') return;
+  try {
+    // Compared, and changed, where each really is (§4.6, F25): a config folder that is a link
+    // to the home folder, or a home reached through a linked prefix, compared equal by
+    // spelling only when they were spelled alike, while stat and chmod followed the link and
+    // narrowed the home folder itself.
+    const [real, home] = await Promise.all([realpath(folder), realpath(homedir())]);
+    if (real === home) return;
+    const { mode, uid } = await stat(real);
+    if (uid !== process.getuid() || (mode & 0o077) === 0) return;
+    // The owner's bits and the special ones (setgid, sticky): only the others' go.
+    await chmod(real, mode & 0o7700);
+  } catch {
+    /* Left as it was; see above. */
+  }
 }
 
 /**

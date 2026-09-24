@@ -4,8 +4,18 @@ import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { stdin, stdout } from 'node:process';
-import { BrightwheelClient } from './api/client.js';
-import { ConfigUnusableError, DEFAULT_CONFIG, loadConfig, loadSession, saveConfig, saveSession, SessionUnusableError } from './config.js';
+import { BrightwheelClient, failureReason } from './api/client.js';
+import {
+  checkBaseUrl,
+  ConfigUnusableError,
+  DEFAULT_CONFIG,
+  loadConfig,
+  loadSession,
+  refuseLiveApiUnderTest,
+  saveConfig,
+  saveSession,
+  SessionUnusableError,
+} from './config.js';
 import { configDir, legacyConfigDir, configPath, sessionPath } from './paths.js';
 import { Secret, scrub } from './secrets.js';
 import { inspectCookiePaste } from './paste.js';
@@ -53,7 +63,9 @@ Options
                      settings are not changed)
   --at <HH:MM>       Time of day for the daily run (24-hour clock)
   --port <number>    Port for the setup assistant
-  --base-url <url>   Point at a different API (used by the tests)
+  --base-url <url>   Talk to this API instead of Brightwheel's (the tests' mock). Your
+                     saved session is sent to it, so it must be https, or http to
+                     this computer itself
   --help             Show this message
 
 Your session is stored in your user config folder, never in this project folder:
@@ -84,10 +96,11 @@ let failureAnnounced = false;
  * and a desktop with no notifier just means the record is the only trace.
  */
 async function recordScheduledFailure(error: unknown): Promise<void> {
-  const message = scrub(error instanceof Error ? error.message : String(error));
+  // What happened, not only fetch's "fetch failed": the daily log is where a parent looks (§4.6, F21).
+  const message = failureReason(error);
   await schedule.appendLog(`FAILED  ${message}`);
   await schedule.recordRun({ at: new Date().toISOString(), ok: false, saved: 0, failed: 0, message, trigger: 'schedule' });
-  await schedule.notify(schedule.FAILED_NOTICE).catch(() => false);
+  await schedule.notify('failed').catch(() => false);
 }
 
 async function photosStep(config: Config, scheduled: boolean): Promise<void> {
@@ -105,15 +118,24 @@ async function photosStep(config: Config, scheduled: boolean): Promise<void> {
     stdout.write(`  Not added to Photos: ${scrub(outcome.error ?? 'no reason given')}\n`);
   }
   if (!scheduled) return;
+  // The Photos record can be read again, so it is what remembers the last attempt once more:
+  // a damaged record's notice, below, has been dealt with.
+  if (before && !before.problem) await schedule.forgetNotice('photos').catch(() => {});
   if (outcome.ok && outcome.added === 0) return;
   await schedule.appendLog(
     `PHOTOS  ` +
       (outcome.ok ? `added ${outcome.added} to Photos` : `not added: ${scrub(outcome.error ?? 'no reason given')}`),
   );
+  if (outcome.ok || outcome.reason === 'busy') return;
   // Said once, when it starts failing: a permission that was never granted would otherwise
-  // fail quietly every evening while the page is the only place that knows.
-  if (!outcome.ok && outcome.reason !== 'busy' && before?.lastAttempt?.ok !== false) {
-    await schedule.notify(schedule.PHOTOS_NOTICE).catch(() => false);
+  // fail quietly every evening while the page is the only place that knows. The Photos record
+  // is what says the last attempt already failed — and while that record is itself damaged it
+  // says nothing, so the notice came back every evening (security review §4.4). Then the
+  // problem is remembered beside it instead, and said once for each different one.
+  if (before?.problem) {
+    await schedule.announceOnce('photos', before.problem).catch(() => false);
+  } else if (before?.lastAttempt?.ok !== false) {
+    await schedule.notify('photos').catch(() => false);
   }
 }
 
@@ -150,6 +172,24 @@ async function main(): Promise<number> {
   }
 
   const baseUrl = values['base-url'];
+  // Refused before anything is read, let alone sent (security review outbound-13).
+  if (baseUrl !== undefined) {
+    try {
+      checkBaseUrl(baseUrl);
+    } catch (error) {
+      stdout.write(`  ${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+  }
+  /**
+   * The API to hand a client: --base-url, or Brightwheel's own — except in a test, which
+   * must name one (scripts/test-env.js; the review's docs-14). Asked where a client is made,
+   * so that the commands a test runs without touching the API are unaffected.
+   */
+  const api = (): string | undefined => {
+    refuseLiveApiUnderTest(baseUrl);
+    return baseUrl;
+  };
   let config: Config;
   // Why the settings could not be read, for the three commands that still run without them.
   let configProblem: string | null = null;
@@ -182,9 +222,13 @@ async function main(): Promise<number> {
     configProblem = error.message;
     config = { ...DEFAULT_CONFIG };
   }
-  if (values.dir) config.archiveDir = values.dir;
-  if (values.all) config.incremental = false;
-  if (values['no-name-tag']) config.tagChildName = false;
+  // What the command line says about the settings, kept apart so that `login`, which saves
+  // them, can save these and nothing else (see there).
+  const overrides: Partial<Config> = {};
+  if (values.dir) overrides.archiveDir = values.dir;
+  if (values.all) overrides.incremental = false;
+  if (values['no-name-tag']) overrides.tagChildName = false;
+  Object.assign(config, overrides);
 
   switch (command) {
     case 'where': {
@@ -255,13 +299,20 @@ async function main(): Promise<number> {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
-      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
+      const client = new BrightwheelClient({ session: session.session, baseUrl: api(), userAgent: session.userAgent });
       const check = await checkChildren(client, config);
       stdout.write(`\n  ${check.summary}\n`);
       if (check.notIncluded.length > 0) {
+        // By id, not by name (security review processes-8). The names come from Brightwheel,
+        // and inside double quotes a `$(…)` or a backtick in one runs when the command is
+        // pasted into a shell. An id is Brightwheel's too, so it is quoted when it is anything
+        // but letters, digits and . _ - — which every id seen so far is.
         stdout.write(
-          `\n  To include everyone, open the setup assistant, or run with --child for a one-off:\n` +
-            `    care-album-saver run ${check.notIncluded.map((c) => `--child "${c.name}"`).join(' ')}\n`,
+          `\n  To include everyone, open the setup assistant, or run with --child for a one-off\n` +
+            `  (care-album-saver children lists each child with their id):\n` +
+            // --child=<id>, not --child <id>: parseArgs reads an id beginning with '-' after a
+            // space as another option, and refuses the command (§4.6, F9).
+            `    care-album-saver run ${check.notIncluded.map((c) => `--child=${shellArgument(c.id)}`).join(' ')}\n`,
         );
       }
       stdout.write('\n');
@@ -335,7 +386,7 @@ async function main(): Promise<number> {
         environment() === 'development' && !baseUrl
           ? 'Development copy — this page is using your real settings, session and photos. Production is the copy scripts/deploy.js installs.'
           : undefined;
-      const ui = await startWebUi({ port: values.port ? Number(values.port) : 0, baseUrl, banner });
+      const ui = await startWebUi({ port: values.port ? Number(values.port) : 0, baseUrl: api(), banner });
       stdout.write(
         `\n  Setup assistant is ready.\n\n  Open this link in your browser:\n\n    ${ui.url}\n\n` +
           `  This page is only reachable from this computer.\n  Press Ctrl+C when you are finished.\n\n`,
@@ -390,14 +441,18 @@ async function main(): Promise<number> {
       for (const note of verdict.notes) stdout.write(`  (${note})\n`);
       if (verdict.level === 'warn') stdout.write(`  ${verdict.message}\n`);
       const secret = new Secret(verdict.value);
-      const client = new BrightwheelClient({ session: secret, baseUrl });
+      const client = new BrightwheelClient({ session: secret, baseUrl: api() });
       const check = await client.verifySession();
       if (!check.ok) {
         stdout.write(`\n  Could not sign in: ${scrub(check.reason)}\n`);
         return 1;
       }
       await saveSession(secret, check.email);
-      await saveConfig(config);
+      // Read again now, not the copy loaded before the prompt, and changed only where the
+      // command line said to (the review's §4.4, "login race"). The paste can take minutes,
+      // and writing back the settings as they were then undid whatever changed meanwhile —
+      // the daily run turned on or moved from the setup page, a folder chosen there.
+      await saveConfig({ ...(await loadConfig()), ...overrides });
       stdout.write(`\n  Signed in${check.email ? ` as ${check.email}` : ''}. Now run: care-album-saver run\n`);
       return 0;
     }
@@ -408,7 +463,7 @@ async function main(): Promise<number> {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
-      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
+      const client = new BrightwheelClient({ session: session.session, baseUrl: api(), userAgent: session.userAgent });
       const me = await client.me();
       const children = await client.students(me.id);
       const width = Math.max(...children.map((c) => c.fullName.length));
@@ -445,7 +500,7 @@ async function main(): Promise<number> {
       // The shape and length only — enough to tell "wrong row" from "expired", never the value.
       const shape = inspectCookiePaste(session.session.expose());
       stdout.write(`  Session shape: ${shape.kind} (${session.session.length} characters)\n`);
-      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
+      const client = new BrightwheelClient({ session: session.session, baseUrl: api(), userAgent: session.userAgent });
       const check = await client.verifySession();
       stdout.write(`  Session works: ${check.ok ? 'yes' : `no — ${scrub(check.reason)}`}\n`);
       let exif = 'no (dates are saved in .json files next to each photo)';
@@ -480,7 +535,7 @@ async function main(): Promise<number> {
         return 1;
       }
       try {
-        const report = await verify(session.session, { baseUrl, deep: values.deep, userAgent: session.userAgent });
+        const report = await verify(session.session, { baseUrl: api(), deep: values.deep, userAgent: session.userAgent });
         stdout.write(formatReport(report));
         stdout.write('  This output is safe to share.\n\n');
         return report.sessionValid ? 0 : 1;
@@ -505,6 +560,10 @@ async function main(): Promise<number> {
       // the first thing a scheduled run does is ask whether its occurrence is already
       // covered, and if it is, it stops here having opened no session and sent no request.
       if (values.scheduled) {
+        // First, whether or not there is anything to do: the log was just opened for this
+        // run's output — by launchd at 0644, or on Linux by cron's shell at the login umask —
+        // and it names a child (the review's log-dir mode).
+        await schedule.secureLog();
         const due = schedule.isDue(config.schedule, await schedule.loadLastRun());
         if (!due) {
           stdout.write('  Already up to date for today; nothing to do.\n');
@@ -528,7 +587,7 @@ async function main(): Promise<number> {
       const client = new BrightwheelClient({
         session: session.session,
         userAgent: session.userAgent,
-        baseUrl,
+        baseUrl: api(),
         delayMs: config.delayMs,
       });
       if (values.child?.length) {
@@ -645,13 +704,22 @@ async function main(): Promise<number> {
   }
 }
 
+/**
+ * One word for a POSIX shell, for a command this tool prints for a person to paste: as it is
+ * when it holds nothing a shell reads specially, and otherwise in single quotes, inside which
+ * nothing is special but the closing quote, written as '\''.
+ */
+function shellArgument(value: string): string {
+  return /^[A-Za-z0-9._-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 main()
   .then((code) => process.exit(code))
   .catch((error: unknown) => {
     // A failure the run already printed is not printed a second time: the same thing said
     // twice, in two shapes, reads as two separate things having gone wrong.
     if (failureAnnounced) process.exit(1);
-    const message = error instanceof Error ? error.message : String(error);
-    stdout.write(`\n  ${scrub(message)}\n`);
+    // failureReason scrubs, and names what fetch keeps in `cause` (§4.6, F21).
+    stdout.write(`\n  ${failureReason(error)}\n`);
     process.exit(1);
   });

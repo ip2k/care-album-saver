@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { homedir } from 'node:os';
 import { isAbsolute, sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -16,6 +17,7 @@ import { archiveBusy, auditArchive, checkChildren, findDuplicates, removeDuplica
 import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
 import { PAGE } from './page.js';
+import { escapeMarkup } from './cookie-help.js';
 import { acceptableUserAgent } from '../api/identity.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from '../environment.js';
 import { updateStatus, updateSteps } from '../updates.js';
@@ -30,17 +32,21 @@ import { productionSource, repositoryRoot, type InstallKind, type VersionInfo } 
  *  1. Bound to 127.0.0.1, never 0.0.0.0. On 0.0.0.0 the UI would be reachable by anyone on
  *     the same cafe or hotel wifi.
  *
- *  2. The Host header is checked against an allowlist. Without this, a hostile website can
- *     point a domain it controls at 127.0.0.1 (DNS rebinding) and then read this UI's
- *     responses from the victim's browser, because to the browser it is same-origin.
+ *  2. The Host header is checked against an allowlist, port included. Without this, a hostile
+ *     website can point a domain it controls at 127.0.0.1 (DNS rebinding) and then read this
+ *     UI's responses from the victim's browser, because to the browser it is same-origin.
  *
- *  3. Cross-site requests are rejected via Sec-Fetch-Site and Origin. A page the parent is
- *     merely visiting can otherwise POST to http://127.0.0.1:PORT in the background.
+ *  3. Cross-site requests are rejected via Sec-Fetch-Site and Origin, whose port must be this
+ *     server's too: a page the parent is merely visiting can otherwise POST to
+ *     http://127.0.0.1:PORT in the background, and another program's page on another port of
+ *     this computer is another site (security review web-10).
  *
  *  4. Every request carries a token generated once per launch and printed by the CLI —
  *     never passed to `open`/`xdg-open`/`start`, because a command line is readable by
  *     every account on the machine, and never set as a cookie. Other local accounts and
- *     other processes on a shared computer cannot reach the UI without it.
+ *     other processes on a shared computer cannot reach the UI without it. It travels in
+ *     the x-setup-token header, and in the address only where a header cannot be sent: see
+ *     `providedToken`.
  *
  * Several of the routes below make a process start on the parent's machine, which is a
  * step up from reading and writing this tool's own files:
@@ -63,24 +69,52 @@ import { productionSource, repositoryRoot, type InstallKind, type VersionInfo } 
 
 const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
-function hostAllowed(header: string | undefined): boolean {
+/**
+ * Whether a Host header, or the host of an Origin, names this server: one of the two loopback
+ * names AND this server's own port. The port used to be dropped before the comparison, so a
+ * page served by any other program on this computer — a development server on localhost:3000,
+ * say — passed as this one (security review web-10). No port means 80, as it does in a URL.
+ */
+export function hostAllowed(header: string | undefined, port: number): boolean {
   if (!header) return false;
-  const host = header.replace(/:\d+$/, '');
-  return ALLOWED_HOSTS.has(host);
+  const m = /^([^:]+)(?::(\d+))?$/.exec(header);
+  return Boolean(m && ALLOWED_HOSTS.has(m[1]!) && Number(m[2] ?? 80) === port);
 }
 
-function crossSite(req: IncomingMessage): boolean {
+function crossSite(req: IncomingMessage, port: number): boolean {
   const fetchSite = req.headers['sec-fetch-site'];
   if (typeof fetchSite === 'string' && fetchSite !== 'same-origin' && fetchSite !== 'none') return true;
   const origin = req.headers.origin;
   if (typeof origin === 'string') {
     try {
-      if (!hostAllowed(new URL(origin).host)) return true;
+      const from = new URL(origin);
+      // This server speaks http only, so an https origin on the same name and port is another one.
+      if (from.protocol !== 'http:' || !hostAllowed(from.host, port)) return true;
     } catch {
       return true;
     }
   }
   return false;
+}
+
+/**
+ * The setup token a request carries, from where it may carry it (docs/DECISIONS.md Q10;
+ * security review web-7 and page-8).
+ *
+ * The x-setup-token header whenever there is one, which is every request the page makes with
+ * fetch. The address only where a header cannot be sent: the page itself, opened from the link
+ * the terminal printed, and /photo, which an <img> or a <video> asks for, and only for a GET
+ * of exactly those two paths. Never anywhere else, /api/* included, where a token in the
+ * address would be one more copy of it in history and logs for nothing: such a request is
+ * refused as if it carried no token at all.
+ */
+function providedToken(req: IncomingMessage, url: URL): string {
+  const header = req.headers['x-setup-token'];
+  if (typeof header === 'string') return header;
+  // An allowlist, not a blocklist of /api/: a route added later, outside /api/, must not start
+  // taking the token from the address without anyone deciding it should.
+  const addressAllowed = req.method === 'GET' && (url.pathname === '/' || url.pathname === '/photo');
+  return addressAllowed ? (url.searchParams.get('token') ?? '') : '';
 }
 
 /**
@@ -237,9 +271,6 @@ function contentSecurityPolicy(nonce?: string): string {
   ].join('; ');
 }
 
-const escapeHtml = (text: string): string =>
-  text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-
 export interface WebUiHandle {
   url: string;
   port: number;
@@ -254,9 +285,16 @@ export interface WebUiHandle {
   close: () => Promise<void>;
 }
 
+/**
+ * A run's progress as the page receives it. `reason: 'session'` marks the one failure only a
+ * new session can cure, so the page goes back to step 1 on a field rather than by looking for
+ * English words in a scrubbed message (security review, the page verifier's needsSetup note).
+ */
+type PageProgress = SyncProgress & { reason?: 'session' };
+
 export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandle> {
   const token = randomBytes(24).toString('base64url');
-  let progress: SyncProgress = { phase: 'starting', message: 'Ready', saved: 0, skipped: 0, failed: 0 };
+  let progress: PageProgress = { phase: 'starting', message: 'Ready', saved: 0, skipped: 0, failed: 0 };
   let running = false;
   let lastResult: unknown = null;
   // The run in progress, if any: its abort handle and the promise that settles when sync
@@ -459,6 +497,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     'The archive is being checked or tidied up on the Maintenance page right now. Nothing was started. ' +
     'Wait for that to finish, then try again.';
 
+  // The port this server listens on, set once listen() has bound it, before any request can
+  // arrive. Read from here rather than from server.address(), which is null once close() has
+  // begun, while a request already on an open connection can still reach the handler.
+  let port = 0;
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Nothing here may ever be cached: the pages list children's names and photos.
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -468,21 +511,29 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     // No script may run in anything but the page, which sets its own below.
     res.setHeader('Content-Security-Policy', contentSecurityPolicy());
 
-    if (!hostAllowed(req.headers.host)) {
-      res.writeHead(403, { 'content-type': 'text/plain' });
-      res.end('Blocked: unexpected Host header. This page is only reachable from this computer.');
-      return;
-    }
-    if (crossSite(req)) {
-      res.writeHead(403, { 'content-type': 'text/plain' }).end('Blocked: cross-site request.');
-      return;
-    }
+    // The gate, in its own try: this handler is async, so anything it throws outside a try is
+    // an unhandled rejection, which ends the process.
+    let url: URL;
+    try {
+      if (!hostAllowed(req.headers.host, port)) {
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        res.end('Blocked: unexpected Host header. This page is only reachable from this computer.');
+        return;
+      }
+      if (crossSite(req, port)) {
+        res.writeHead(403, { 'content-type': 'text/plain' }).end('Blocked: cross-site request.');
+        return;
+      }
 
-    const url = new URL(req.url ?? '/', `http://127.0.0.1`);
-    const provided = url.searchParams.get('token') ?? (req.headers['x-setup-token'] as string) ?? '';
-    if (!tokenMatches(provided, token)) {
-      res.writeHead(403, { 'content-type': 'text/html' });
-      res.end('<h1>Wrong or missing setup link</h1><p>Use the exact link printed in your terminal.</p>');
+      url = new URL(req.url ?? '/', `http://127.0.0.1`);
+      if (!tokenMatches(providedToken(req, url), token)) {
+        res.writeHead(403, { 'content-type': 'text/html' });
+        res.end('<h1>Wrong or missing setup link</h1><p>Use the exact link printed in your terminal.</p>');
+        return;
+      }
+    } catch {
+      if (!res.headersSent) res.writeHead(400, { 'content-type': 'text/plain' });
+      res.end('Bad request.');
       return;
     }
 
@@ -499,7 +550,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         const nonce = randomBytes(18).toString('base64');
         res.setHeader('Content-Security-Policy', contentSecurityPolicy(nonce));
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        const banner = options.banner ? `<div class="demo-ribbon" role="note">${escapeHtml(options.banner)}</div>` : '';
+        const banner = options.banner ? `<div class="demo-ribbon" role="note">${escapeMarkup(options.banner)}</div>` : '';
         // Function replacers, so that nothing spliced in is read as a replacement pattern: a
         // "$&" or "$'" in the banner used to copy parts of the page into it.
         res.end(
@@ -569,11 +620,12 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
        * re-checks that the resolved file is still under the archive root anyway, for the
        * case of a manifest edited by hand.
        *
-       * It is a GET carrying the token in the query string, which the /api/* routes avoid.
-       * That is deliberate and it is the one exception: an <img> tag cannot send a header,
-       * and the alternative to this exception is a dashboard with no pictures on it. The
-       * request is same-origin, the page's own address already carries the token, and the
-       * fetch-metadata and Host checks above apply to it exactly as they do to everything.
+       * It is a GET that may carry the token in its address, which no /api/* route accepts
+       * (see `providedToken`). That is deliberate: an <img> or a <video> cannot send a
+       * header, and without this there would be no pictures on the dashboard and nothing in
+       * the viewer. The page's own address carries the token already, the request is
+       * same-origin, and the fetch-metadata and Host checks above apply to it exactly as they
+       * do to everything else. A request that does send the header is judged by the header.
        */
       if (req.method === 'GET' && url.pathname === '/photo') {
         const found = await photoAt(await loadConfig(), url.searchParams.get('i'));
@@ -581,12 +633,16 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
           return;
         }
-        const headers = {
+        const headers: Record<string, string> = {
           'content-type': found.type,
           // A child's photograph must not sit in a browser cache after the tool is closed.
           'cache-control': 'no-store, no-cache, must-revalidate, private',
           'accept-ranges': 'bytes',
         };
+        // A file whose type the tool does not know is offered for saving, never shown. With
+        // nosniff and the CSP it could not run as a page anyway; `attachment` says so to every
+        // browser (security review page-9, its server half).
+        if (found.type === 'application/octet-stream') headers['content-disposition'] = 'attachment';
         // A part of the file, when the browser asks for one. The photo viewer plays videos
         // in the page, and a <video> asks for byte ranges to seek — Safari will not play one
         // at all from a server that cannot answer them. One range only; anything else gets
@@ -952,6 +1008,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
                 saved: progress.saved,
                 skipped: progress.skipped,
                 failed: progress.failed,
+                ...(sessionRefused ? { reason: 'session' as const } : {}),
               };
               await schedule
                 .recordRun({ at: new Date().toISOString(), ok: false, saved: 0, failed: 0, message: progress.message, trigger: 'manual' })
@@ -1182,8 +1239,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
   });
 
   await new Promise<void>((resolve) => server.listen(options.port ?? 0, '127.0.0.1', resolve));
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
+  port = (server.address() as AddressInfo).port;
 
   const stop = async (): Promise<void> => {
     if (!current) return;

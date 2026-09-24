@@ -129,6 +129,47 @@ function secretsIn(text) {
   );
 }
 
+/**
+ * One pnpm, named exactly, everywhere it is installed (security review sc-6, 2026-09-24).
+ *
+ * CI asked for `version: 12` while the lockfile was written by 12.5.1, and the Docker build
+ * stage ran whatever pnpm corepack found to be the latest on the registry that day. The pin is
+ * the same exact version in every pnpm/action-setup step and in the Dockerfile's corepack line.
+ *
+ * If package.json ever carries a `packageManager` field (which under pnpm 12 also needs a
+ * packageManagerDependencies entry in the lockfile), that field becomes the one place: the
+ * action refuses a `version` input beside it, and corepack reads it for itself.
+ */
+test('pnpm is one exact version in every workflow and in the Dockerfile (sc-6)', () => {
+  const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const dockerfile = readFileSync(join(ROOT, 'Dockerfile'), 'utf8');
+  const dockerPin = /^RUN corepack enable && corepack install -g pnpm@(\S+)\s*$/m.exec(dockerfile)?.[1];
+  const setups = workflows.flatMap(({ name, text }) =>
+    Object.values(jobsOf(text)).flatMap(stepsOf).filter((s) => /uses: pnpm\/action-setup@/.test(s)).map((step) => ({ name, step })),
+  );
+  assert.ok(setups.length >= 4, `found ${setups.length} pnpm/action-setup steps`);
+  const versions = setups.map(({ step }) => /^\s+version:\s*['"]?([^'"\s]+)['"]?\s*$/m.exec(step)?.[1] ?? null);
+
+  if (manifest.packageManager) {
+    assert.match(manifest.packageManager, /^pnpm@\d+\.\d+\.\d+(\+sha\d+\.[0-9a-f]+)?$/, 'an exact pnpm version');
+    setups.forEach(({ name }, i) => assert.equal(versions[i], null, `${name}: pnpm/action-setup errors on a version input beside packageManager`));
+    assert.equal(dockerPin, undefined, 'corepack takes the version from package.json');
+    return;
+  }
+  setups.forEach(({ name }, i) => assert.match(versions[i] ?? '', /^\d+\.\d+\.\d+$/, `${name}: an exact pnpm version, not a range`));
+  assert.equal(new Set(versions).size, 1, `every workflow asks for the same pnpm: ${versions.join(', ')}`);
+  assert.equal(dockerPin, versions[0], 'and the Docker build stage uses that one too');
+});
+
+test('every pnpm install in a workflow is frozen to the lockfile', () => {
+  for (const { name, text } of workflows) {
+    for (const [line] of text.matchAll(/^.*\bpnpm (?:install|i)\b.*$/gm)) {
+      assert.match(line, /--frozen-lockfile/, `${name}: ${line.trim()}`);
+    }
+  }
+});
+
 test('the screenshots job can read, upload one artifact, and nothing else', () => {
   const jobs = jobsOf(workflows.find((w) => w.name === 'ci.yml').text);
   const job = jobs.screenshots;

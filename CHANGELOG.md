@@ -5,6 +5,54 @@ Everything that changes for the people who use Care Album Saver, newest first. T
 request's release notes (or, before the repository had a remote, its merge commit's), so the
 two always say the same thing.
 
+## [Unreleased]
+
+### Security
+
+- **Photos are only ever fetched from the internet.** A photo's address must be a secure
+  (https) one that is not on your own computer or home network, and so must every place it
+  redirects to. `verify` follows the same rule.
+- **Your session goes only where it should.** `--base-url` now accepts only a secure address,
+  or one on your own computer, and the setup page takes its link's password from a header
+  rather than from the address wherever it can.
+- **What the tool saves is private to your account on a Mac or Linux:** every photo, sidecar
+  and README it saves from now on, and its settings folder, which is made private the next time
+  the tool saves into it if it was more open. A folder you do not own is left as it is, and so
+  is your home folder, even if the settings folder is a link to it.
+- **A folder that only looks ordinary is judged by where it really is:** a link to somewhere
+  else, followed by `..`, is refused if that is a temporary or system folder.
+- **Nothing left in your photos folder can stop the daily run for good.** A "folder in use" mark
+  with a date in the future, or one nobody can read, is set aside after a minute's check; one
+  left by another computer is set aside after a day.
+
+### Changed
+
+- **A few folder names change, once, to work on every computer:** a child whose name ends like
+  a Mac app (`Robin.app`) gets `Robin-app`; a name Windows reserves (`Con.`) gets a leading `_`;
+  a name that contained an invisible control character loses it. Photos already saved are not
+  downloaded again.
+- **A damaged entry in the list of saved photos stops the run with what to do** (check the
+  archive, or `care-album-saver check --repair`) instead of failing with an error.
+- **The daily log says why a run failed** (the network was down, the address did not resolve),
+  not only "fetch failed".
+- The printed command for including a child is `--child=<id>`, which works for every id.
+- The tool is on npm: `npm install -g care-album-saver`.
+
+### Fixed
+
+- **Turning the daily run on or off works on a Linux computer whose scheduler has changed**,
+  including when the old one is no longer installed.
+- **Your own crontab lines are never taken with the tool's**, and the tool's lines are cleaned
+  up even if you deleted only part of its block.
+- **Signing in no longer undoes a change to the daily run made at the same time.**
+- **The setup page no longer says it cannot reach the tool when the tool did answer**; after a
+  restart it tells you to open the new link.
+- **Closing the setup page while it was still answering no longer crashes it.**
+- A thumbnail that cannot be shown says "No preview here"; a photo with no readable date says
+  so.
+- A Photos problem is announced once, not every evening.
+- `deploy.js` says "Deployed, but not finished" when only moving the daily run failed.
+
 ## [0.1.1] - 2026-09-24
 
 ### Changed

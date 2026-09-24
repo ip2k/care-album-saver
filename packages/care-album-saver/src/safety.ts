@@ -1,5 +1,7 @@
+import { realpathSync } from 'node:fs';
 import { homedir as osHomedir, platform as osPlatform, tmpdir as osTmpdir } from 'node:os';
 import path from 'node:path';
+import { configDir, legacyConfigDir } from './paths.js';
 
 /**
  * Where it is safe to put a child's photographs.
@@ -61,6 +63,34 @@ export interface CheckOptions {
   homedir?: string;
   tmpdir?: string;
   env?: Record<string, string | undefined>;
+  /**
+   * The tool's own config folders, which no archive may be inside or hold. Test-only, like
+   * the options above; production call sites pass none and get configDir(), and the
+   * pre-rename folder when it is there, whenever the path is judged for the machine it is on.
+   */
+  configDirs?: string[];
+}
+
+/**
+ * Where a path really is: every symbolic link in it followed, as far down as it exists. The
+ * nearest folder on the way up that exists is resolved, and what is below it — which cannot
+ * be a link, since it does not exist yet — is put back on. Null when nothing on the way up
+ * can be resolved.
+ */
+function realSpelling(target: string, p: path.PlatformPath): string | null {
+  const below: string[] = [];
+  let probe = target;
+  for (;;) {
+    try {
+      const found = realpathSync.native(probe);
+      return below.length === 0 ? found : p.join(found, ...below.reverse());
+    } catch {
+      const parent = p.dirname(probe);
+      if (parent === probe) return null;
+      below.push(p.basename(probe));
+      probe = parent;
+    }
+  }
 }
 
 export function checkArchiveDir(input: string, options: CheckOptions = {}): PathVerdict {
@@ -68,6 +98,9 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
   const windows = platform === 'win32';
   // The path module for the platform being judged, not the one this process runs on.
   const p = windows ? path.win32 : path.posix;
+  // Only a path judged for the machine this runs on has a disk to look at: a Windows path
+  // judged on a Mac, for a test, is words.
+  const local = platform === osPlatform();
   const home = options.homedir ?? osHomedir();
   const env = options.env ?? process.env;
 
@@ -79,16 +112,40 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
     const b = canon(parent);
     return a === b || a.startsWith(b.endsWith(p.sep) ? b : b + p.sep);
   };
+  /**
+   * A place as typed, and — on this machine — where it really is, when that differs
+   * (security review fs-11). Every rule below is applied to both, and every place it names is
+   * spelled both ways too: a link in the home folder to /tmp is a temporary folder, and so is
+   * /private/var/folders on a Mac, which is where /var/folders really is.
+   */
+  const spellings = (s: string): string[] => {
+    const typed = p.resolve(s);
+    // Where it really is is found from the path as given, `..` and all, not from `typed`:
+    // resolve() removes `link/..` by its spelling, while the system follows the link first and
+    // then climbs out of where it leads, so `~/x/link-to-/usr/share/man/../Photos` is
+    // /usr/share/Photos, not ~/x/Photos (§4.6, F11).
+    const asGiven = p.isAbsolute(s) ? s : `${process.cwd()}${p.sep}${s}`;
+    const real = local ? realSpelling(asGiven, p) : null;
+    return real !== null && canon(real) !== canon(typed) ? [typed, real] : [typed];
+  };
+  const within = (where: string[], place: string): boolean => {
+    const places = spellings(place);
+    return where.some((w) => places.some((q) => isInside(w, q)));
+  };
 
   const raw = (input ?? '').trim();
   // Only a bare `~` or a `~/` prefix means the home folder. `~sam` means another user's
   // home on POSIX, which is nothing this tool should guess at.
-  const expanded = raw === '~' || /^~[/\\]/.test(raw) ? p.join(home, raw.slice(2)) : raw;
+  const tilde = raw === '~' || /^~[/\\]/.test(raw);
+  const expanded = tilde ? p.join(home, raw.slice(2)) : raw;
   const resolved = p.resolve(expanded);
+  // The same place with nothing removed by spelling, for where it really is: see spellings.
+  const asTyped = tilde ? `${home}${p.sep}${raw.slice(2)}` : raw;
 
   if (!raw) {
     return { ok: false, error: 'Please choose a folder to save the photos in.', resolved };
   }
+  const where = spellings(asTyped);
 
   // Where Windows keeps the operating system. `SystemRoot` is the authoritative answer;
   // the literal is for a process started with a scrubbed environment.
@@ -100,9 +157,9 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
     ? []
     : windows
       ? [options.tmpdir ?? osTmpdir(), p.join(systemRoot, 'Temp'), ...(env.LOCALAPPDATA ? [p.join(env.LOCALAPPDATA, 'Temp')] : [])]
-      : [options.tmpdir ?? osTmpdir(), '/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp', '/var/folders'];
+      : [options.tmpdir ?? osTmpdir(), '/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp', '/var/folders', '/private/var/folders'];
   for (const t of temps) {
-    if (isInside(resolved, t)) {
+    if (within(where, t)) {
       return {
         ok: false,
         error:
@@ -123,24 +180,47 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
       ]
     : ['/System', '/usr', '/bin', '/sbin', '/etc', '/private/etc', '/Library/Caches'];
   for (const f of forbidden) {
-    if (isInside(resolved, f)) {
+    if (within(where, f)) {
       return { ok: false, error: 'That folder belongs to your operating system. Please choose somewhere in your home folder.', resolved };
     }
   }
   // The root of a drive: `/`, `C:\`, or a bare network share. `parse().root` is the whole
   // path exactly when there is nothing below the root.
-  if (p.parse(resolved).root === resolved || canon(resolved) === canon(home)) {
+  const homes = spellings(home);
+  if (where.some((w) => p.parse(w).root === w || homes.some((h) => canon(w) === canon(h)))) {
     return { ok: false, error: 'Please choose a folder of its own, not your whole home folder or drive.', resolved };
   }
 
-  // 3 — cloud-synced folders. Allowed, but never by accident.
-  const slashed = resolved.split(p.sep).join('/');
-  for (const [pattern, name] of SYNC_MARKERS) {
-    if (pattern.test(slashed)) {
+  // 2b — the tool's own config folder (security review fs-11), where the saved sign-in is:
+  // neither inside it nor holding it — its parent, say, `~/Library/Application Support`. An
+  // archive holding it would have the folder check list the session file as a photo the
+  // list is missing, and the repair write it into the list, from where the page would serve it.
+  const own = options.configDirs ?? (local ? [configDir(), legacyConfigDir()].filter((d): d is string => d !== null) : []);
+  for (const dir of own) {
+    const dirs = spellings(dir);
+    if (within(where, dir) || dirs.some((d) => where.some((w) => isInside(d, w)))) {
+      return {
+        ok: false,
+        error:
+          'That folder is, or holds, the one where Care Album Saver keeps its settings and your saved sign-in, ' +
+          `and your photos must be kept apart from those. Please choose a folder of its own, such as ${p.join(home, 'Care Album Photos')}.`,
+        resolved,
+      };
+    }
+  }
+
+  // 3 — cloud-synced folders. Allowed, but never by accident; and a link from a plain
+  // folder into one is a cloud-synced folder too. The spelling as typed is read first, as
+  // it names the service the parent knows it by: ~/Dropbox is a link into
+  // ~/Library/CloudStorage on a Mac, and "Dropbox" says more than "a cloud storage service".
+  for (const spelling of where) {
+    const slashed = spelling.split(p.sep).join('/');
+    const marker = SYNC_MARKERS.find(([pattern]) => pattern.test(slashed));
+    if (marker) {
       return {
         ok: true,
         warning:
-          `This folder looks like it is inside ${name}. If it is, a copy of every photo ` +
+          `This folder looks like it is inside ${marker[1]}. If it is, a copy of every photo ` +
           `will be uploaded there. That is fine if you meant it — just be aware it is no ` +
           `longer only on this computer.`,
         resolved,

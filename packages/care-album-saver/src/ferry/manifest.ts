@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { writeAtomically } from './atomic.js';
 import { transferIdentity } from './url.js';
@@ -63,23 +64,151 @@ interface ManifestData {
 const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
+ * The text of the list file, read only when it is an ordinary file (§4.6, F13).
+ *
+ * A named pipe put at its name held a plain read open for ever: in a run, which had taken the
+ * lock and whose timer went on refreshing it, so every later run was skipped as well; in each
+ * look from the setup page, which tied up a thread. Opened without blocking, which opening a
+ * pipe does not do, and checked once open, so nothing swapped in after a look is read either.
+ * A link is followed, as it always was: only what it leads to must be a file.
+ */
+export async function readListText(file: string): Promise<string> {
+  const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error('it is not an ordinary file');
+    return await handle.readFile('utf8');
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+const SHA256 = /^[0-9a-f]{64}$/i;
+
+/**
+ * Whether an entry of the list is one this tool can use: THE rule, for every reader of
+ * archive.json (security review fs-8, web-9).
+ *
+ * An object, whose `path` is a non-empty string without a NUL, whose `sha256` is a SHA-256 in
+ * hex or empty, and whose `downloadedAt` is a time. Every entry this tool has ever written is
+ * one. The list sits in the photos folder, where anything else that can write the folder —
+ * a sync peer, a hand edit, a future bug — can put something else, and before this rule an
+ * entry such as `null` or `{"path": 5}` threw a raw TypeError out of the run, the gallery,
+ * the Photos count and every maintenance action alike.
+ *
+ * `Manifest.open` refuses a list holding such an entry (see there, for why refusing rather
+ * than skipping); the gallery and the Photos count pass over one; maintenance counts them,
+ * reports them, and lets the parent's repair set them aside.
+ */
+export function usableRecord(value: unknown): value is ManifestRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const r = value as Partial<Record<keyof ManifestRecord, unknown>>;
+  return (
+    typeof r.path === 'string' &&
+    r.path !== '' &&
+    !r.path.includes('\u0000') &&
+    typeof r.sha256 === 'string' &&
+    (r.sha256 === '' || SHA256.test(r.sha256)) &&
+    typeof r.downloadedAt === 'string' &&
+    Number.isFinite(Date.parse(r.downloadedAt))
+  );
+}
+
+/** The list as it is on disk: its fields, its usable entries, and every entry as found. */
+export interface ManifestFile {
+  /** Every field of the file, `files` included, untouched. */
+  data: Record<string, unknown>;
+  /** The entries `usableRecord` accepts, in the file's order. */
+  records: ManifestRecord[];
+  /** Every entry, usable or not, in the file's order: what a writer carries through. */
+  entries: unknown[];
+  /** How many entries `usableRecord` refused, and the position (from 1) of the first. */
+  unusable: number;
+  firstUnusable: number | null;
+}
+
+/**
  * A manifest exists but cannot be used, so the run refuses to go on.
  *
  * The message is written for the person holding the archive, not for a developer: it names
  * the file, says nothing has been changed, and gives the one safe way forward. Rebuilding
  * from scratch is a real option — it costs a second copy of every photo — so it is offered,
  * but only after moving the existing file somewhere safe, never by overwriting it here.
+ * `advice` replaces that way forward when there is a better one, as there is for a list that
+ * is whole but holds entries this tool cannot use.
  */
 export class ManifestUnusableError extends Error {
-  constructor(public readonly path: string, reason: string) {
+  constructor(public readonly path: string, reason: string, advice?: string) {
     super(
       `The list of what has already been saved (${path}) cannot be used: ${reason}. ` +
-        'Nothing has been changed and nothing has been downloaded. Move that file somewhere safe ' +
-        'and run again to rebuild the archive — which will download every photo a second time — ' +
-        'or ask for help before running again.',
+        'Nothing has been changed and nothing has been downloaded. ' +
+        (advice ??
+          'Move that file somewhere safe and run again to rebuild the archive — which will download every photo a ' +
+            'second time — or ask for help before running again.'),
     );
     this.name = 'ManifestUnusableError';
   }
+}
+
+/**
+ * Read an archive's list, or null when it has none: the one judgement of which lists are
+ * unusable as a whole (unreadable, not JSON, no list of files, a format this build does not
+ * know), each refused with ManifestUnusableError. Entries are sorted, not judged: whether an
+ * unusable entry is a refusal is the caller's decision (see `Manifest.open` and maintenance).
+ */
+export async function readManifestFile(root: string): Promise<ManifestFile | null> {
+  const file = join(root, MANIFEST_FILENAME);
+
+  let raw: string;
+  try {
+    raw = await readListText(file);
+  } catch (error) {
+    // Only "it is not there" is an ordinary first run. A permission error or a directory
+    // in its place means a manifest may well exist and simply cannot be read.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new ManifestUnusableError(file, why(error));
+  }
+
+  let data: ManifestData;
+  try {
+    data = JSON.parse(raw) as ManifestData;
+  } catch (error) {
+    throw new ManifestUnusableError(file, `it is not readable as JSON (${why(error)})`);
+  }
+  if (typeof data !== 'object' || data === null || !Array.isArray(data.files)) {
+    throw new ManifestUnusableError(file, 'it does not contain a list of saved files');
+  }
+  if (typeof data.schema !== 'number' || !Number.isFinite(data.schema)) {
+    throw new ManifestUnusableError(file, 'it does not say which format it was written in');
+  }
+  if (data.schema > MANIFEST_SCHEMA) {
+    throw new ManifestUnusableError(
+      file,
+      `it was written by a newer version of this tool (format ${data.schema}; this one understands ${MANIFEST_SCHEMA}). ` +
+        'Updating the tool should be enough',
+    );
+  }
+  if (data.schema !== MANIFEST_SCHEMA) {
+    // No migration exists, and guessing at an older layout would mis-index the archive.
+    throw new ManifestUnusableError(
+      file,
+      `it was written in an older format (${data.schema}) that this version cannot read`,
+    );
+  }
+
+  const entries: unknown[] = data.files;
+  const records: ManifestRecord[] = [];
+  let firstUnusable: number | null = null;
+  for (const [i, entry] of entries.entries()) {
+    if (usableRecord(entry)) records.push(entry);
+    else firstUnusable ??= i + 1;
+  }
+  return {
+    data: data as unknown as Record<string, unknown>,
+    records,
+    entries,
+    unusable: entries.length - records.length,
+    firstUnusable,
+  };
 }
 
 /**
@@ -121,51 +250,35 @@ export class Manifest {
    * the whole archive as `-2` duplicates, overwrite the only copy of the file that said
    * what had already been saved, and throw away how far each child's feed had been walked
    * — and then do it all again on the next run.
+   *
+   * A list that is whole but holds an entry `usableRecord` refuses is refused too, rather
+   * than read without that entry (security review fs-8). Skipping it would be silent twice
+   * over: the run saves the list whole every 25 photos, so the entry would be gone from the
+   * file after the first save, and whatever post it stood for would be fetched again as a
+   * `-2` copy. The refusal names the way out that loses nothing — checking the folder against
+   * the list and fixing it, which sets those entries aside and lists again every file that is
+   * on disk, from the `.json` saved beside it — and is a failure the daily run records.
    */
   static async open(root: string, source: string): Promise<Manifest> {
     const m = new Manifest(root, source);
-    const file = join(root, MANIFEST_FILENAME);
-
-    let raw: string;
-    try {
-      raw = await readFile(file, 'utf8');
-    } catch (error) {
-      // Only "it is not there" is an ordinary first run. A permission error or a directory
-      // in its place means a manifest may well exist and simply cannot be read.
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return m;
-      throw new ManifestUnusableError(file, why(error));
-    }
-
-    let data: ManifestData;
-    try {
-      data = JSON.parse(raw) as ManifestData;
-    } catch (error) {
-      throw new ManifestUnusableError(file, `it is not readable as JSON (${why(error)})`);
-    }
-    if (typeof data !== 'object' || data === null || !Array.isArray(data.files)) {
-      throw new ManifestUnusableError(file, 'it does not contain a list of saved files');
-    }
-    if (typeof data.schema !== 'number' || !Number.isFinite(data.schema)) {
-      throw new ManifestUnusableError(file, 'it does not say which format it was written in');
-    }
-    if (data.schema > MANIFEST_SCHEMA) {
+    const found = await readManifestFile(root);
+    if (!found) return m;
+    if (found.unusable > 0) {
+      const n = found.unusable;
       throw new ManifestUnusableError(
-        file,
-        `it was written by a newer version of this tool (format ${data.schema}; this one understands ${MANIFEST_SCHEMA}). ` +
-          'Updating the tool should be enough',
-      );
-    }
-    if (data.schema !== MANIFEST_SCHEMA) {
-      // No migration exists, and guessing at an older layout would mis-index the archive.
-      throw new ManifestUnusableError(
-        file,
-        `it was written in an older format (${data.schema}) that this version cannot read`,
+        join(root, MANIFEST_FILENAME),
+        `${n === 1 ? 'one of its entries is' : `${n} of its entries are`} not in the form this tool writes ` +
+          `(the first is entry ${found.firstUnusable} of ${found.entries.length})`,
+        'Check the folder against the list and fix the list — on the setup page, under "Checking on the archive", or ' +
+          'with `care-album-saver check --repair` — which sets those entries aside and lists again every photo that is ' +
+          'on disk, without downloading anything. Then run again.',
       );
     }
 
-    for (const r of data.files) m.index(r);
-    if (data.state && typeof data.state === 'object' && !Array.isArray(data.state)) {
-      Object.assign(m.state, data.state);
+    for (const r of found.records) m.index(r);
+    const state = found.data.state;
+    if (state && typeof state === 'object' && !Array.isArray(state)) {
+      Object.assign(m.state, state);
     }
     return m;
   }

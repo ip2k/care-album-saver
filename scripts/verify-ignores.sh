@@ -154,10 +154,10 @@ must_ignore "$SOME/child.jpeg"                   "photo"
 must_ignore "$SOME/child.heic"                   "photo"
 must_ignore "$SOME/clip.mp4"                     "video"
 must_ignore "$SOME/clip.mov"                     "video"
-# The lock file, not a photo: *.jpg would catch a photo with the folder rule gone, and the
-# lock (pid, host name and start time, left behind by a crashed run) is caught by nothing else.
-must_ignore "Care Album Photos/.care-album-saver.lock"  "default archive folder"
-must_ignore "Brightwheel Photos/.care-album-saver.lock" "default archive folder, pre-rename"
+# A file of no kind the tool writes, not a photo: *.jpg would catch a photo with the folder
+# rule gone, and the run lock now has a rule of its own, so only the folder rule catches this.
+must_ignore "Care Album Photos/notes.txt"        "default archive folder"
+must_ignore "Brightwheel Photos/notes.txt"       "default archive folder, pre-rename"
 
 echo
 echo "Everything else an archive run writes must be ignored:"
@@ -171,6 +171,35 @@ must_ignore "$SOME/Robin-Maple/2026-W38/2026-09-18_1530_ab12cd34.mp4.json" "vide
 must_ignore "$SOME/Robin-Maple/2026-W38/README.md"                        "week README naming the child"
 must_ignore "$SOME/2026-W01/README.md"                                    "week README, week-only layout"
 must_ignore "$SOME/archive.json"                                          "manifest naming every child and note"
+# Outside a week folder and outside the default folders, so that only their own rules can
+# catch them: what a run leaves behind while it works, or after a crash (sc-9, docs-10).
+must_ignore "$SOME/kids/.care-album-saver.lock"                           "run lock: pid, computer name, time"
+must_ignore "$SOME/kids/2026-09-18_1530_ab12cd34.jpg.part"                "download not yet complete"
+must_ignore "$SOME/kids/2026-09-18_1530_ab12cd34.jpg_exiftool_tmp"        "ExifTool's copy of a photo"
+must_ignore "$SOME/kids/.archive.json.3f9a1c2b7d4e.tmp"                   "half-written archive.json"
+must_ignore "$SOME/kids/.config.json.3f9a1c2b7d4e.tmp"                    "half-written settings"
+
+echo
+echo "The tool's own state files must be ignored:"
+# They live in the config folder beside the session (the daily log in the log folder), and
+# name children, folders and photo fingerprints; copied here while debugging, they must be
+# refused like the session. The daily log is also caught by `*.log` in the build rules, so its
+# line proves the file is ignored, not which rule ignores it.
+must_ignore "photos.json"                                                 "what Photos was handed"
+must_ignore "photos.lock"                                                 "the Photos step's lock"
+must_ignore "$SOME/photos-handover-Xy12Ab/2026-09-18_1530_ab12cd34.mp4"   "a private copy for Photos"
+must_ignore "$SOME/photos-handover-Xy12Ab/notes.txt"                      "anything in a hand-over folder"
+must_ignore "fingerprints.json"                                           "every saved photo's fingerprint"
+must_ignore "last-run.json"                                               "how the last run went"
+must_ignore "update-check.json"                                           "the update check's answer"
+must_ignore "$SOME/logs/daily.log"                                        "the daily log, naming children"
+
+echo
+echo "The marks that tell production from development must never be committed:"
+# sc-11: deploy.js writes the first into the production clone and the second inside .git,
+# which git never commits; a file of either name in the tree is refused all the same.
+must_ignore ".care-album-saver-production"                                "production mark"
+must_ignore "care-album-saver-development"                                "development mark's name"
 
 echo
 echo "Documentation screenshots must still be committable:"

@@ -53,6 +53,11 @@ process.env.CARE_ALBUM_NO_UPDATE_CHECK = '1';
 // node_modules, which is gitignored and deleted on the way out.
 const photos = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-demo', import.meta.url));
 mkdirSync(photos, { recursive: true });
+// And the default photos folder is that one too, before the modules below are loaded: the
+// default settings name the default folder the moment config.js is imported, and anything
+// that falls back to it would otherwise save into the real ~/Care Album Photos. The config
+// folder alone was never enough (CLAUDE.md, "Two directories"; security review sc-10).
+process.env.CARE_ALBUM_DIR = photos;
 
 const dist = new URL('../packages/care-album-saver/dist/', import.meta.url);
 const { startMockBrightwheel, startWebUi, writeSecureFile, configPath, DEFAULT_CONFIG, PHOTOS_SCRIPT } = await import(

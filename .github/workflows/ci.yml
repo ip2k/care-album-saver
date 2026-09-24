@@ -2,9 +2,9 @@ name: ci
 
 # Runs on every push to main and on every pull request, including from forks — the same
 # trigger as security.yml, for the same reason: a change is shown working before it is
-# merged, not after a parent installs it. The matrix is the only place a Windows path or
-# a Node 20 gap is ever exercised; no developer machine on this project is Windows and
-# none runs Node 20.
+# merged, not after a parent installs it. The matrix is the one place a Windows path, and
+# the oldest Node the package supports (engines: >=22), are sure to be exercised: no
+# developer machine on this project is Windows, and none is held to the oldest Node.
 #
 # `pull_request` and never `pull_request_target`: a fork's run gets a read-only token and
 # no repository secrets, and that is what makes running a stranger's code here safe.
@@ -23,7 +23,7 @@ jobs:
     name: test (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     strategy:
-      # One red cell must not cancel the others: "fails only on Windows with Node 20" is
+      # One red cell must not cancel the others: "fails only on Windows with Node 22" is
       # the whole diagnosis, and fail-fast would hide it.
       fail-fast: false
       matrix:
@@ -36,13 +36,22 @@ jobs:
           persist-credentials: false
       # pnpm comes from its own action rather than `corepack enable`: Node 25 stopped
       # bundling corepack, so on the 26 cells that step would find nothing to enable.
+      #
+      # The exact version, the same in every workflow and in the Dockerfile
+      # (test/workflows.test.js keeps them equal; security review sc-6). Not from a
+      # `packageManager` field in package.json: pnpm 12 turns that field into a
+      # packageManagerDependencies entry in pnpm-lock.yaml, and --frozen-lockfile refuses to
+      # install until the lockfile carries one, so adding it is a lockfile change of its own.
       - uses: pnpm/action-setup@v6
         with:
-          version: 12
+          version: 12.5.1
           cache: true
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
+      # As a parent's clone installs (the README's `pnpm install`), so the matrix tests what
+      # they get, the optional ExifTool included; frozen, so a pull request cannot change a
+      # dependency without changing the lockfile where a reviewer sees it.
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
@@ -78,11 +87,12 @@ jobs:
           persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
-          version: 12
+          version: 12.5.1
           cache: true
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+      # The same install as the test job's.
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       # The only network use here is fetching Chromium. The script itself drives the

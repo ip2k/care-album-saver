@@ -101,9 +101,9 @@ test('/photo resolves both sides before comparing: no `..`, no symbolic link out
   await writeFile(join(outside, 'escape.jpg'), 'outside');
   await writeFile(join(archive, 'ok.jpg'), 'inside');
   const files = [
-    { path: '../escape.jpg', bytes: 7, sha256: 'x', downloadedAt: '2026-09-23T00:00:00Z' },
-    { path: 'link.jpg', bytes: 7, sha256: 'y', downloadedAt: '2026-09-23T00:00:00Z' },
-    { path: 'ok.jpg', bytes: 6, sha256: 'z', downloadedAt: '2026-09-23T00:00:00Z' },
+    { path: '../escape.jpg', bytes: 7, sha256: '1'.repeat(64), downloadedAt: '2026-09-23T00:00:00Z' },
+    { path: 'link.jpg', bytes: 7, sha256: '2'.repeat(64), downloadedAt: '2026-09-23T00:00:00Z' },
+    { path: 'ok.jpg', bytes: 6, sha256: '3'.repeat(64), downloadedAt: '2026-09-23T00:00:00Z' },
   ];
   await writeFile(join(archive, 'archive.json'), JSON.stringify({ files }));
   const config = { ...DEFAULT_CONFIG, archiveDir: archive };
@@ -118,8 +118,9 @@ test('/photo resolves both sides before comparing: no `..`, no symbolic link out
 test('the Photos-failure notice is one of the two the tool can show, and only fixed text reaches osascript', async () => {
   const calls = [];
   const env = { platform: 'darwin', home: await mkdtemp(join(tmpdir(), 'cas-notify-')), run: async (file, args) => { calls.push([file, args]); return { code: 0, stdout: '', stderr: '' }; } };
-  assert.equal(await schedule.notify(schedule.PHOTOS_NOTICE, env), true);
-  assert.equal(await schedule.notify(schedule.FAILED_NOTICE, env), true);
+  // Chosen by kind since processes-9: the words, and the AppleScript made from them, are the tool's own.
+  assert.equal(await schedule.notify('photos', env), true);
+  assert.equal(await schedule.notify('failed', env), true);
   assert.equal(await schedule.notify('Something with a child\'s name in it', env), false, 'an unknown message is not shown');
   assert.equal(calls.length, 2);
   for (const [file, args] of calls) {
@@ -206,8 +207,8 @@ test('/photo cannot take the server down: an empty file with a suffix range, and
   await writeFile(join(archive, 'empty.jpg'), '');
   await writeFile(join(archive, 'locked.jpg'), 'locked');
   await writeFile(join(archive, 'archive.json'), JSON.stringify({ schema: 2, source: 'brightwheel', updatedAt: '2026-09-23T00:00:00Z', files: [
-    { path: 'empty.jpg', bytes: 0, sha256: 'a', downloadedAt: '2026-09-23T00:00:00Z' },
-    { path: 'locked.jpg', bytes: 6, sha256: 'b', downloadedAt: '2026-09-23T00:00:00Z' },
+    { path: 'empty.jpg', bytes: 0, sha256: 'a'.repeat(64), downloadedAt: '2026-09-23T00:00:00Z' },
+    { path: 'locked.jpg', bytes: 6, sha256: 'b'.repeat(64), downloadedAt: '2026-09-23T00:00:00Z' },
   ] }));
   await writeSecureFile(configPath(), JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: archive }));
   const handle = await startWebUi({});

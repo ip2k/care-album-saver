@@ -118,8 +118,9 @@ that album, looked up by name.
 A few decisions in it are worth explaining:
 
 - **Photos gets private copies, and only of photos this tool saved.** It is never handed the
-  files in your photos folder. Each one is copied into a folder only your account can open
-  (on a Mac's own disk the copy is a clone and takes no extra space), the copy's fingerprint
+  files in your photos folder. Each one is copied into a folder that, of the ordinary accounts
+  on the Mac, only yours can open; an administrator can open anything. On a Mac's own disk the
+  copy is a clone and takes no extra space. The copy's fingerprint
   (SHA-256) is checked against the record this tool keeps of every photo it saved, and only a
   copy that matches goes to Photos; the copies are deleted once Photos has them. That record,
   `fingerprints.json`, lives beside your settings rather than in the photos folder, so nothing

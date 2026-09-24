@@ -167,11 +167,11 @@ test('how it was installed, from where its files are', async () => {
 });
 
 test('the steps to update, for every way of installing', () => {
-  const where = { root: '~/care-album-saver', source: '~/Developer/brightwheel-archive' };
+  const where = { root: '~/care-album-saver', source: '~/code/care-album-saver' };
   const git = updateSteps('git', where);
   assert.deepEqual(git.commands, ['cd ~/care-album-saver', 'git pull', 'pnpm install', 'pnpm build']);
   const prod = updateSteps('production', where);
-  assert.deepEqual(prod.commands, ['cd ~/Developer/brightwheel-archive', 'git switch main', 'git pull', 'node scripts/deploy.js']);
+  assert.deepEqual(prod.commands, ['cd ~/code/care-album-saver', 'git switch main', 'git pull', 'node scripts/deploy.js']);
   assert.deepEqual(updateSteps('docker', where).commands, ['git pull', 'docker build -t care-album-saver .']);
   assert.deepEqual(updateSteps('download', where).commands, ['cd ~/care-album-saver', 'pnpm install', 'pnpm build']);
   assert.deepEqual(updateSteps('npm-global').commands, ['npm install -g care-album-saver@latest']);

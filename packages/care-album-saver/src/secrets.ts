@@ -1,4 +1,5 @@
 import { inspect } from 'node:util';
+import { SIGNATURE_PARAMS } from './ferry/url.js';
 
 /**
  * A string that must never be printed.
@@ -81,12 +82,26 @@ export class Secret {
  * This is defence in depth, not the primary control — the primary control is `Secret`.
  * It exists because third-party code (and our own mistakes) can put a raw cookie into an
  * error message before it reaches us.
+ *
+ * The signed-URL parameters are not listed here: they are `SIGNATURE_PARAMS`, the list
+ * ferry/url.ts strips to tell one file from another. This file used to keep seven names of
+ * its own while that one grew to twenty-two, so an `X-Amz-Signature` or `X-Goog-Credential`
+ * in an error went out whole (security review outbound-8). Longest first, so a name is never
+ * cut short by another that begins it; `=` must follow either way.
  */
+const SIGNED_URL_PARAMETER = new RegExp(
+  `([?&](?:${[...SIGNATURE_PARAMS]
+    .sort((a, b) => b.length - a.length)
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'))
+    .join('|')})=)[^&\\s"']+`,
+  'gi',
+);
+
 const SCRUB_PATTERNS: [RegExp, string][] = [
   [/_brightwheel_v2=[^;\s"']+/gi, '_brightwheel_v2=[redacted]'],
   [/(set-cookie|cookie)\s*:\s*[^\n]+/gi, '$1: [redacted]'],
   [/(authorization)\s*:\s*[^\n]+/gi, '$1: [redacted]'],
-  [/([?&](?:token|signature|sig|auth|expires|key-pair-id|policy)=)[^&\s"']+/gi, '$1[redacted]'],
+  [SIGNED_URL_PARAMETER, '$1[redacted]'],
   [/\b\d{6}\b(?=\s*(?:is\s+)?(?:your\s+)?(?:2fa|code|verification))/gi, '[redacted-2fa-code]'],
 ];
 

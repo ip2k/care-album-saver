@@ -241,13 +241,14 @@ test('the setup page blocks DNS-rebinding and cross-site requests', async () => 
     assert.equal(legit.status, 200);
 
     // A page the parent is merely visiting must not be able to drive the UI.
-    const csrf = await fetch(`http://127.0.0.1:${ui.port}/api/state?token=${ui.token}`, {
-      headers: { Origin: 'https://evil.example.com' },
+    const csrf = await fetch(`http://127.0.0.1:${ui.port}/api/state`, {
+      headers: { Origin: 'https://evil.example.com', 'x-setup-token': ui.token },
     });
     assert.equal(csrf.status, 403);
 
-    // The legitimate same-origin request still works.
-    const ok = await fetch(`http://127.0.0.1:${ui.port}/api/state?token=${ui.token}`);
+    // The legitimate same-origin request still works (with the token in the header, which
+    // is the only place /api/* takes it from).
+    const ok = await fetch(`http://127.0.0.1:${ui.port}/api/state`, { headers: { 'x-setup-token': ui.token } });
     assert.equal(ok.status, 200);
   } finally {
     await ui.close();
@@ -274,12 +275,12 @@ test('the setup page binds only to the loopback interface', async () => {
 test('the API never echoes a session back to the browser', async () => {
   const ui = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
   try {
-    await fetch(`http://127.0.0.1:${ui.port}/api/session?token=${ui.token}`, {
+    await fetch(`http://127.0.0.1:${ui.port}/api/session`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-setup-token': ui.token },
       body: JSON.stringify({ cookie: SESSION }),
     });
-    const state = await (await fetch(`http://127.0.0.1:${ui.port}/api/state?token=${ui.token}`)).text();
+    const state = await (await fetch(`http://127.0.0.1:${ui.port}/api/state`, { headers: { 'x-setup-token': ui.token } })).text();
     assert.ok(!state.includes(SESSION), 'the session value must never be sent to the browser');
     assert.equal(JSON.parse(state).hasSession, true);
   } finally {
@@ -518,9 +519,9 @@ test('the archive and every folder in it are created owner-only', { skip: posixO
 test('the web config endpoint refuses a temporary destination', async () => {
   const ui = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
   try {
-    const res = await fetch(`http://127.0.0.1:${ui.port}/api/config?token=${ui.token}`, {
+    const res = await fetch(`http://127.0.0.1:${ui.port}/api/config`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-setup-token': ui.token },
       body: JSON.stringify({ archiveDir: join(tmpdir(), 'pwned') }),
     });
     assert.equal(res.status, 400, 'must not accept a temp path');
@@ -529,7 +530,7 @@ test('the web config endpoint refuses a temporary destination', async () => {
     assert.match(body.error, /temporary folder/i);
 
     // And it must not have been written to disk.
-    const state = await (await fetch(`http://127.0.0.1:${ui.port}/api/state?token=${ui.token}`)).json();
+    const state = await (await fetch(`http://127.0.0.1:${ui.port}/api/state`, { headers: { 'x-setup-token': ui.token } })).json();
     assert.notEqual(state.config.archiveDir, join(tmpdir(), 'pwned'));
   } finally {
     await ui.close();

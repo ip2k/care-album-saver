@@ -1,3 +1,4 @@
+import { copyRootFrom } from './package-root.js';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,8 +23,8 @@ import { fileURLToPath } from 'node:url';
  */
 export type Environment = 'production' | 'development' | 'installed';
 
-/** This package's repository root: dist/ → the package → packages/ → the root. */
-const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+/** This copy of the tool: the repository's root in a clone, the package in an npm install. */
+const ROOT = copyRootFrom(fileURLToPath(new URL('./', import.meta.url)));
 export const PRODUCTION_MARKER = '.care-album-saver-production';
 /** Inside the repository's common git directory, never in the working tree. */
 export const DEVELOPMENT_MARKER = 'care-album-saver-development';

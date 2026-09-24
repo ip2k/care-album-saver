@@ -10,13 +10,11 @@
  *   node scripts/screenshots.js
  */
 import { chromium } from 'playwright';
-import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { mkdtempSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startMockBrightwheel } from '../packages/care-album-saver/dist/mock/server.js';
-import { startWebUi } from '../packages/care-album-saver/dist/web/server.js';
 
 const OUT = join(fileURLToPath(new URL('../docs/images', import.meta.url)));
 const SESSION = 'test-session-value';
@@ -31,12 +29,27 @@ const VIEWPORT = { width: 1600, height: 940 };
  * and must exist for the script to run at all, and it is deleted at the end.
  */
 const PHOTOS = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-screenshots', import.meta.url));
+
+// Every folder the tool would use, redirected before any of its modules is loaded — which is
+// why they are imported below, with import(), and not at the top of this file: a static
+// import is loaded before any line here runs, and config.js names the default photos folder
+// the moment it is loaded (security review sc-10; CLAUDE.md, "Two directories").
+//
+// The settings and the session, in a throwaway folder.
+const CONFIG_DIR = mkdtempSync(join(tmpdir(), 'bw-shots-'));
+process.env.CARE_ALBUM_CONFIG_DIR = CONFIG_DIR;
+// The default photos folder is this script's own scratch one, so that nothing which falls
+// back to the default can save into the real ~/Care Album Photos.
+process.env.CARE_ALBUM_DIR = PHOTOS;
 // The daily log names a child and the archive folder, and shot 4 shows its tail. Pointed at
 // a throwaway directory so a committed picture can only ever contain this script's own
 // synthetic run — never the real one sitting in ~/Library/Logs.
 process.env.CARE_ALBUM_LOG_DIR = mkdtempSync(join(tmpdir(), 'cas-shot-logs-'));
 // And it never drives the real Photos app: see scripts/test-env.js.
 process.env.CARE_ALBUM_NO_PHOTOS = '1';
+
+const { startMockBrightwheel } = await import('../packages/care-album-saver/dist/mock/server.js');
+const { startWebUi } = await import('../packages/care-album-saver/dist/web/server.js');
 
 /**
  * The path shown in the pictures. The real one contains the developer's username, which
@@ -318,12 +331,10 @@ async function shot(page, name, endAt) {
 }
 
 const main = async () => {
-  const configDir = await mkdtemp(join(tmpdir(), 'bw-shots-'));
-  process.env.CARE_ALBUM_CONFIG_DIR = configDir;
   await rm(PHOTOS, { recursive: true, force: true });
   await mkdir(PHOTOS, { recursive: true });
   // Stored before the UI starts, so there is never a moment when the default applies.
-  await writeFile(join(configDir, 'config.json'), JSON.stringify({ archiveDir: PHOTOS }));
+  await writeFile(join(CONFIG_DIR, 'config.json'), JSON.stringify({ archiveDir: PHOTOS }));
 
   const mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 14 });
   const ui = await startWebUi({ baseUrl: `${mock.url}/api/v1` });
