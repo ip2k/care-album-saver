@@ -5,6 +5,13 @@ Everything that changes for the people who use Care Album Saver, newest first. T
 request's release notes (or, before the repository had a remote, its merge commit's), so the
 two always say the same thing.
 
+## [0.1.1] - 2026-09-24
+
+### Changed
+
+- **Nothing in the tool.** 0.1.1 is 0.1.0 published again with corrected registry metadata;
+  0.1.0 is withdrawn from npm. If you installed 0.1.0 from npm, update to 0.1.1 the usual way.
+
 ## [0.1.0] - 2026-09-24
 
 ### Added
