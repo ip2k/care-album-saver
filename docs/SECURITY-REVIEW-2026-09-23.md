@@ -1,7 +1,7 @@
 # Security review before the first push — 2026-09-23
 
 Reviewer: Fable 5.1, in the same session that wrote the handoff (the brief this review was
-run from is in git history at e9b2f14, as `docs/SECURITY-REVIEW-HANDOFF.md`; its threat
+run from is in git history at d13f8ff, as `docs/SECURITY-REVIEW-HANDOFF.md`; its threat
 model, trust boundaries and assets now live in [SECURITY.md](../SECURITY.md)) — the self-review trap the
 adversarial-reviewer skill warns about. To compensate, the code was reviewed by sixteen agents
 that had not seen it written: seven lanes running the Saboteur / New Hire / Security Auditor

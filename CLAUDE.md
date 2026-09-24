@@ -79,7 +79,7 @@ stores, and this tool is deliberately local-only with no cloud component.
   the security workflow's gitleaks scan over the full history); the first two runs failed
   on the test script and on tests that assumed a Mac, both fixed the same night. The review's open WARNINGs are in the
   report with fixes; the ★ ones go in before a first release. The brief the review was run
-  from, `docs/SECURITY-REVIEW-HANDOFF.md`, is in git history at e9b2f14; its durable part (the
+  from, `docs/SECURITY-REVIEW-HANDOFF.md`, is in git history at d13f8ff; its durable part (the
   threat model, trust boundaries and assets) is now in SECURITY.md.
 - **Production and development are separate (2026-09-23).** Production is a clone on
   `main` at ~/Applications/care-album-saver, changed only by `node scripts/deploy.js`,

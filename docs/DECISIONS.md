@@ -16,7 +16,7 @@ with its own mock server, which carries the record shape the live service showed
 design — so that older commit messages and the [CHANGELOG](../CHANGELOG.md) still point at
 the right entry. Open questions are numbered Q1, Q2, …; when one is answered it moves up to
 the settled part and keeps its number. The review's own notes (a question-and-answer
-document and the work list that followed it) are in git history at e9b2f14, as
+document and the work list that followed it) are in git history at d13f8ff, as
 `docs/QUESTIONS-FOR-FABLE.md` and `docs/DIRECTIONS-FOR-OPUS.md`.
 
 **Contents**
