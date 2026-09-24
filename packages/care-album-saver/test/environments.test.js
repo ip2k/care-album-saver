@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { environment, PRODUCTION_MARKER } from '../dist/environment.js';
+import { DEVELOPMENT_MARKER, environment, gitCommonDir, PRODUCTION_MARKER } from '../dist/environment.js';
 
 /**
  * Production and development, kept apart. The daily run once pointed at the development
@@ -16,25 +16,44 @@ import { environment, PRODUCTION_MARKER } from '../dist/environment.js';
  * place in the code is checked by reading it, and the classification by folders made here.
  */
 
-test('a deployed clone is production, any other checkout is development, anything else is installed', async () => {
+test('production and development are marked; anything else, a parent\'s clone included, is installed', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cas-env-'));
   assert.equal(environment(root), 'installed');
   await mkdir(join(root, '.git'));
+  assert.equal(environment(root), 'installed', 'a clone made by following the README may set up the daily run');
+  await writeFile(join(root, '.git', DEVELOPMENT_MARKER), 'development\n');
   assert.equal(environment(root), 'development');
   await writeFile(join(root, PRODUCTION_MARKER), 'production\n');
-  assert.equal(environment(root), 'production', 'the marker wins over .git');
-
-  const worktree = await mkdtemp(join(tmpdir(), 'cas-env-wt-'));
-  await writeFile(join(worktree, '.git'), 'gitdir: /somewhere/else\n');
-  assert.equal(environment(worktree), 'development', 'a worktree, whose .git is a file, is development too');
+  assert.equal(environment(root), 'production', 'the production mark wins');
 });
 
-test('the checkout the suite runs in is development, or production once deploy.js has marked it', () => {
-  // The suite runs in both: here, and in the production clone, where deploy.js runs it before
-  // anything is switched over. Asserting "development" alone made every deploy after the
-  // first fail, because by then production carries its marker.
-  const marked = existsSync(join(fileURLToPath(new URL('../../../', import.meta.url)), PRODUCTION_MARKER));
-  assert.equal(environment(), marked ? 'production' : 'development');
+test('every worktree of the development checkout is development, through git\'s common folder', async () => {
+  const main = await mkdtemp(join(tmpdir(), 'cas-env-main-'));
+  const own = join(main, '.git', 'worktrees', 'review');
+  await mkdir(own, { recursive: true });
+  await writeFile(join(own, 'commondir'), '../..\n');
+  const worktree = await mkdtemp(join(tmpdir(), 'cas-env-wt-'));
+  await writeFile(join(worktree, '.git'), `gitdir: ${own}\n`);
+  assert.equal(gitCommonDir(worktree), join(main, '.git'));
+  assert.equal(environment(worktree), 'installed', 'a worktree of somebody\'s own clone is theirs');
+  await writeFile(join(main, '.git', DEVELOPMENT_MARKER), 'development\n');
+  assert.equal(environment(worktree), 'development', 'an agent building a branch in a worktree cannot reach the real scheduler');
+});
+
+test('deploy.js marks the checkout it deploys from, inside git\'s folder rather than the tree', async () => {
+  const deploy = await readFile(fileURLToPath(new URL('../../../scripts/deploy.js', import.meta.url)), 'utf8');
+  assert.match(deploy, /const DEVELOPMENT_MARKER = 'care-album-saver-development';/);
+  assert.equal(DEVELOPMENT_MARKER, 'care-album-saver-development', 'the script and the tool agree on the name');
+  assert.match(deploy, /--git-common-dir/);
+});
+
+test('the checkout the suite runs in is classified by its marks, and never by having a .git', () => {
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const common = gitCommonDir(root);
+  const expected = existsSync(join(root, PRODUCTION_MARKER)) ? 'production'
+    : common && existsSync(join(common, DEVELOPMENT_MARKER)) ? 'development'
+    : 'installed';
+  assert.equal(environment(), expected);
 });
 
 test('the daily run is refused from development before the scheduler can be reached', async () => {

@@ -21,9 +21,11 @@ file was started.
   can be scrubbed, in Safari too.
 - **Production and development are separate.** `node scripts/deploy.js` keeps a production
   copy on `main` (by default `~/Applications/care-album-saver`), builds and tests it there, and
-  moves the daily run onto it; `node scripts/production.js setup` opens its setup page. A
-  development checkout refuses to set up the daily run, says so across the top of its setup
-  page when it is using real settings, and the demo names the branch it is showing.
+  moves the daily run onto it; `node scripts/production.js setup` opens its setup page. The
+  checkout it deploys from, and every worktree of it, is marked as development: it refuses to set
+  up the daily run and says so across the top of its setup page when it is using real settings,
+  and the demo names the branch it is showing. Any other copy, including a clone made by
+  following this README, is an ordinary install and sets up the daily run as before.
 - **Also add them to Apple Photos** (Mac only, off unless you turn it on). New photos go into a
   Brightwheel folder in Photos with the same folders and weekly albums as on disk. With iCloud
   Photos on, Apple uploads them — the one way anything leaves your computer, which is why it is
