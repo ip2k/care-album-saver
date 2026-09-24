@@ -15,7 +15,8 @@
  *      and if any of that fails, puts production back on the commit it was on and rebuilds
  *      it, because the daily run runs production's dist/ and the build has already replaced
  *      it by the time the tests run;
- *   4. marks the clone as production (an untracked .care-album-saver-production file);
+ *   4. marks the clone as production (an untracked .care-album-saver-production file), and
+ *      this checkout as development (a file inside its .git, shared by its worktrees);
  *   5. and, when a daily run is set up, reinstalls it from production at the same time of
  *      day, so the scheduled job runs production's code and never a development build.
  *
@@ -35,6 +36,7 @@ const { values } = parseArgs({
 });
 const PROD = resolve(values.to ?? join(homedir(), 'Applications', 'care-album-saver'));
 const MARKER = '.care-album-saver-production';
+const DEVELOPMENT_MARKER = 'care-album-saver-development';
 const dry = values['dry-run'];
 
 const say = (line) => process.stdout.write(`  ${line}\n`);
@@ -116,8 +118,15 @@ if (!dry || existsSync(join(PROD, '.git'))) {
     fail(`${what}, so production was put back on ${before.slice(0, 7)} and rebuilt; the daily run is running what it ran before.\n  ${out}`);
   }
 
-  // 4. The mark the tool looks for.
-  if (!dry) writeFileSync(join(PROD, MARKER), `production, deployed ${new Date().toISOString()} at ${devMain}\n`);
+  // 4. The marks the tool looks for: this clone is production, and the checkout it was
+  // deployed from is development — marked inside git's own folder, which is never committed
+  // and which every worktree of the checkout shares. Nothing else marks a copy development,
+  // so a parent's clone of the repository is simply an installed copy.
+  if (!dry) {
+    writeFileSync(join(PROD, MARKER), `production, deployed ${new Date().toISOString()} at ${devMain}\n`);
+    const common = resolve(DEV, run('git', ['rev-parse', '--git-common-dir'], DEV, { quiet: true }));
+    writeFileSync(join(common, DEVELOPMENT_MARKER), `development: deploys to ${PROD}\n`);
+  }
 
   // 5. The daily run, reinstalled from production at the same time of day.
   const cli = join(PROD, 'packages', 'care-album-saver', 'dist', 'cli.js');
