@@ -3,6 +3,7 @@ import { mkdir, rename, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { mediaUrlRefusal } from './url.js';
 
 export interface RemoteValidators {
   /** HTTP ETag, if the server supplied one. */
@@ -65,10 +66,21 @@ export async function download(options: DownloadOptions): Promise<DownloadResult
   const { url, destination, headers = {} } = options;
   const partPath = `${destination}.part`;
 
+  // Parsed here, before fetch sees it: an address fetch cannot parse comes back as "Failed to
+  // parse URL from <the whole address>", signature and all, and that text went on into the
+  // run's warnings and the daily log before anything could redact it (security review
+  // outbound-8). Refused here, it is never quoted.
+  let address: URL;
+  try {
+    address = new URL(url);
+  } catch {
+    throw new DownloadError(`The address of this file could not be read (${redactUrl(url)}), so it was not fetched.`);
+  }
+
   await mkdir(dirname(destination), { recursive: true });
   await unlink(partPath).catch(() => {});
 
-  const response = await fetch(url, { headers: { 'Accept-Encoding': MEDIA_ACCEPT_ENCODING, ...headers }, redirect: 'follow' });
+  const response = await fetchFollowingSafeRedirects(address, { 'Accept-Encoding': MEDIA_ACCEPT_ENCODING, ...headers });
 
   if (!response.ok) {
     throw new DownloadError(`HTTP ${response.status} for ${redactUrl(url)}`, response.status);
@@ -94,6 +106,8 @@ export async function download(options: DownloadOptions): Promise<DownloadResult
 
   // `wx`: the name is predictable, and the unlink above is not a guarantee — something could
   // put a symlink there in between. Opening exclusively refuses it rather than following it.
+  // Its mode is the umask's; sync saves into a 0700 staging folder and makes each file
+  // owner-only as it moves it into the archive (saveStaged, security review fs-10).
   const out = createWriteStream(partPath, { flags: 'wx' });
   const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
 
@@ -123,6 +137,55 @@ export async function download(options: DownloadOptions): Promise<DownloadResult
 
   await rename(partPath, destination);
   return { path: destination, bytes: finalSize, validators };
+}
+
+/** The redirect statuses fetch would follow on its own. */
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+/** As many as fetch follows by default. */
+const MAX_REDIRECTS = 20;
+
+/**
+ * `fetch`, following redirects itself so that each one can be looked at first.
+ *
+ * The address a download starts from has been checked (`mediaUrlRefusal`, applied where the
+ * feed is parsed). A redirect used to be followed wherever it led, which would have made
+ * that check a formality: a CDN address answering 302 to `http://192.168.1.1/` sends the
+ * parent's computer there all the same. So a redirect that stays on the origin it came from
+ * is followed as before, and one that leaves it must pass the same test as a media address
+ * from the feed — https, and not this computer or the local network. The only headers are the
+ * ones every media request carries (never the session: see BrightwheelClient.mediaHeaders),
+ * so nothing is handed to the new origin that the old one was not given.
+ */
+async function fetchFollowingSafeRedirects(start: URL, headers: Record<string, string>): Promise<Response> {
+  let current = start;
+  for (let hops = 0; ; hops += 1) {
+    const response = await fetch(current, { headers, redirect: 'manual' });
+    if (!REDIRECTS.has(response.status)) return response;
+    await response.body?.cancel().catch(() => {});
+    const status = response.status;
+    const location = response.headers.get('location');
+    let next: URL;
+    try {
+      if (!location) throw new Error('no location');
+      next = new URL(location, current);
+    } catch {
+      throw new DownloadError(`HTTP ${status} for ${redactUrl(current.href)} led nowhere this tool could read.`, status);
+    }
+    if (hops >= MAX_REDIRECTS) {
+      throw new DownloadError(`${redactUrl(start.href)} redirected more than ${MAX_REDIRECTS} times, so it was not fetched.`, status);
+    }
+    if (next.origin !== current.origin) {
+      const refused = mediaUrlRefusal(next.href);
+      if (refused) {
+        throw new DownloadError(
+          `${redactUrl(current.href)} redirected to an address this tool does not fetch from, because ${refused} ` +
+            `(${redactUrl(next.href)}). Nothing was fetched from it; it will be tried again next time.`,
+          status,
+        );
+      }
+    }
+    current = next;
+  }
 }
 
 export class DownloadError extends Error {
