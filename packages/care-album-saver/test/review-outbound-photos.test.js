@@ -22,6 +22,7 @@ import {
   startMockBrightwheel,
   sync,
 } from '../dist/index.js';
+import { MAX_RETRY_AFTER_SECONDS, retryAfterSeconds } from '../dist/api/client.js';
 import { BodyTooLargeError, readBodyText } from '../dist/http-body.js';
 import { checkForUpdate } from '../dist/updates.js';
 import { closeMetadata } from '../dist/metadata.js';
@@ -31,6 +32,7 @@ import { closeMetadata } from '../dist/metadata.js';
  * (docs/SECURITY-REVIEW-2026-09-23.md §4.2), a section each:
  *
  *  - outbound-7: an answer's size was capped, if at all, only after all of it was read.
+ *  - outbound-2: a Retry-After was obeyed however long it asked for.
  */
 
 before(assertIsolatedConfigDir);
@@ -136,4 +138,99 @@ test('outbound-7: the update check reads no more than 1 MB of GitHub\'s answer, 
     fetch: async () => new Response('<html>rate limited</html>', { status: 200 }),
   });
   assert.match(garbled.error, /not a release this tool recognises/);
+});
+
+// ------------------------------------------------------------------ outbound-2
+
+test('outbound-2: Retry-After is read in both its forms, and nothing else is taken for one', () => {
+  const now = Date.parse('2026-09-23T12:00:00Z');
+  assert.equal(retryAfterSeconds('120', now), 120);
+  assert.equal(retryAfterSeconds(' 0 ', now), 0);
+  assert.equal(retryAfterSeconds('Wed, 23 Sep 2026 13:00:00 GMT', now), 3600);
+  assert.equal(retryAfterSeconds('Wed, 23 Sep 2026 11:00:00 GMT', now), 0, 'a date already past asks for no wait');
+  // `Number()` used to accept every one of these, "1e6" as eleven days.
+  for (const junk of [null, '', '1.5', '-3', '1e6', '0x10', 'soon']) {
+    assert.equal(retryAfterSeconds(junk, now), null, String(junk));
+  }
+  assert.equal(MAX_RETRY_AFTER_SECONDS, 5 * 60, 'a few minutes, not a day');
+});
+
+test('outbound-2: a Retry-After longer than a run waits ends it at once, says so, and asks nothing more', async () => {
+  const cases = [
+    ['86400', /wait 24 hours/],
+    [new Date(Date.now() + 3 * 3600 * 1000).toUTCString(), /wait 3 hours/],
+    // The review's example: the largest wait setTimeout can hold, 24.8 days.
+    ['2147483', /wait 25 days/],
+    [String(MAX_RETRY_AFTER_SECONDS + 1), /wait 6 minutes/],
+  ];
+  for (const [header, said] of cases) {
+    let calls = 0;
+    const client = new BrightwheelClient({
+      session: new Secret(SESSION),
+      delayMs: 0,
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response('slow down', { status: 429, headers: { 'retry-after': header } });
+      },
+    });
+    const started = Date.now();
+    await assert.rejects(client.me(), (error) => {
+      assert.equal(error.name, 'ApiShapeError', 'so sync ends the run rather than moving on to the next photo');
+      assert.match(error.message, said, header);
+      assert.match(error.message, /next run/);
+      return true;
+    });
+    assert.equal(calls, 1, `${header}: one request, and no retry into the wait it was asked to keep`);
+    assert.ok(Date.now() - started < 5000, 'without sitting any of it out');
+  }
+});
+
+test('outbound-2: a short Retry-After is still honoured, then the request goes through', async () => {
+  const at = [];
+  const client = new BrightwheelClient({
+    session: new Secret(SESSION),
+    delayMs: 0,
+    fetchImpl: async () => {
+      at.push(Date.now());
+      return at.length === 1
+        ? new Response('', { status: 503, headers: { 'retry-after': '1' } })
+        : json({ object_id: 'usr-1' });
+    },
+  });
+  assert.equal((await client.me()).id, 'usr-1');
+  assert.equal(at.length, 2);
+  assert.ok(at[1] - at[0] >= 1950, `the second second is the ordinary backoff (waited ${at[1] - at[0]} ms)`);
+});
+
+test('outbound-2: the run that is told to wait ends saying why, keeps what it saved, and the next one carries on', async () => {
+  const mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 4, maxPageSize: 2 });
+  const dir = await mkdtemp(join(tmpdir(), 'cas-retry-after-'));
+  try {
+    let refuse = true;
+    const client = new BrightwheelClient({
+      session: new Secret(SESSION),
+      baseUrl: `${mock.url}/api/v1`,
+      delayMs: 0,
+      // The second page of the feed is refused for an hour; everything else is the mock.
+      fetchImpl: async (url, init) =>
+        refuse && String(url).includes('/activities') && /[?&]page=1(&|$)/.test(String(url))
+          ? new Response('', { status: 429, headers: { 'retry-after': '3600' } })
+          : fetch(url, init),
+    });
+    const events = [];
+    await assert.rejects(sync(client, configFor(dir), (p) => events.push(p), { allowTemporaryDir: true }), /wait 60 minutes/);
+    const last = events.at(-1);
+    assert.equal(last.phase, 'error');
+    assert.equal(last.saved, 2, 'the first page was saved before the refusal');
+    assert.match(last.message, /next run/);
+
+    refuse = false;
+    const second = await sync(client, configFor(dir), () => {}, { allowTemporaryDir: true });
+    assert.equal(second.skipped, 2, 'what the first run saved is not fetched again');
+    assert.equal(second.saved, 2, 'and the rest of the feed is');
+    assert.equal(second.failed, 0);
+  } finally {
+    await mock.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

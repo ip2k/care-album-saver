@@ -35,6 +35,20 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MAX_RETRIES = 4;
 
 /**
+ * The longest `Retry-After` a run will sit through: five minutes (security review
+ * outbound-2).
+ *
+ * The header used to be obeyed as sent, so one 429 asking for a day parked the run for a
+ * day — holding the archive's run lock, and with the page showing a bar that had stopped
+ * moving. Five minutes is well past the minute or two a busy service asks for, and it keeps
+ * the whole of one request's retries (four waits at most) inside the half hour after which
+ * the run lock is taken for abandoned. A longer ask is not sat out: the run ends and says
+ * why, and the next one — the next day's, or the parent pressing the button later — carries
+ * on from where it stopped, exactly as after any other failure part-way.
+ */
+export const MAX_RETRY_AFTER_SECONDS = 5 * 60;
+
+/**
  * The most of one answer this client will read: 16 MB (security review outbound-7).
  *
  * A page of a hundred posts is JSON measured in kilobytes, a few hundred at most, so this
@@ -42,6 +56,29 @@ const MAX_RETRIES = 4;
  * a parent's computer hold in memory. See http-body.ts.
  */
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+/**
+ * How many seconds a `Retry-After` header asks for, or null when there is none it can read.
+ *
+ * Both forms the standard allows: a whole number of seconds, or a date — which is read only
+ * when it looks like one, since `Date.parse` makes a date out of nearly anything. A date in
+ * the past asks for no wait at all.
+ */
+export function retryAfterSeconds(header: string | null, now: number = Date.now()): number | null {
+  const text = header?.trim() ?? '';
+  if (/^\d+$/.test(text)) return Number(text);
+  if (!/[A-Za-z]/.test(text)) return null;
+  const at = Date.parse(text);
+  return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - now) / 1000));
+}
+
+/** "2 hours", "90 minutes": how long a wait was asked for, for the sentence that ends a run. */
+function describeWait(seconds: number): string {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+  if (seconds < 2 * 60 * 60) return plural(Math.ceil(seconds / 60), 'minute');
+  if (seconds < 2 * 24 * 60 * 60) return plural(Math.round(seconds / 3600), 'hour');
+  return plural(Math.round(seconds / 86_400), 'day');
+}
 
 /**
  * An answer that asking again within this run cannot improve, so the retry loop hands it
@@ -146,7 +183,8 @@ function readEnvelope(raw: unknown, page: number, pageSize: number, items: numbe
  * A thin, deliberately boring client for Brightwheel's internal API.
  *
  * Politeness policy: one request at a time, a small delay between them, and exponential
- * backoff that honours `Retry-After`. This tool runs unattended in the background on
+ * backoff that honours `Retry-After` — up to MAX_RETRY_AFTER_SECONDS, past which the run
+ * stops rather than wait. This tool runs unattended in the background on
  * someone's home machine against a service used by childcare centres. Being a heavy client
  * would risk the account of the person running it, so the defaults are conservative and
  * the concurrency is one.
@@ -206,9 +244,20 @@ export class BrightwheelClient {
         this.lastRequest = Date.now();
 
         if (response.status === 429 || response.status >= 500) {
-          const retryAfter = Number(response.headers.get('retry-after'));
-          if (Number.isFinite(retryAfter) && retryAfter > 0) await sleep(retryAfter * 1000);
+          const asked = retryAfterSeconds(response.headers.get('retry-after'));
+          // Nothing in a refusal is read, so let the connection go now rather than at the
+          // next garbage collection.
+          await response.body?.cancel().catch(() => {});
+          if (asked !== null && asked > MAX_RETRY_AFTER_SECONDS) {
+            throw new NotThisRunError(
+              `Brightwheel asked this tool to wait ${describeWait(asked)} before asking it anything else, ` +
+                `which is longer than a run waits, so this run stopped here rather than keep asking. ` +
+                `It will ask again at the next run.`,
+            );
+          }
           lastError = new ApiShapeError(`HTTP ${response.status} from ${context}`);
+          // No wait after the last attempt: there is no request left for it to be polite before.
+          if (asked && attempt < MAX_RETRIES) await sleep(asked * 1000);
           continue;
         }
 
