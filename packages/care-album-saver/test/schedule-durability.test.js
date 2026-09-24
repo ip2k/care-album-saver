@@ -236,7 +236,7 @@ test('an existing world-readable log is made owner-only the next time a line is 
   await writeFile(file, 'written by launchd\n', { mode: 0o644 });
   await chmod(file, 0o644);
   await chmod(dir, 0o755);
-  await schedule.appendLog('2026-09-23T19:00:00.000Z  START   scheduled run');
+  await schedule.appendLog('START   scheduled run');
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.equal((await stat(dir)).mode & 0o777, 0o700);
 });

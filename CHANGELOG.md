@@ -42,6 +42,11 @@ file was started.
 
 ### Changed
 
+- **Every line of the daily log says when it was written**, as ISO 8601 in your own time
+  zone with its offset from UTC (`2026-09-23T17:00:04-07:00`). Before, only the start and result
+  lines had a time, and it was in UTC, so the five o'clock run appeared as midnight the next
+  day. Blank lines are left out. On Linux with systemd the journal keeps its own times, so the
+  run's output there is left as it was.
 - **Once set up, the page opens on your photos**, with who it is connected as, when the daily
   run is, how the last run went and where the photos are, underneath. **Settings is a column of
   sections** — Account, Children, Save Locations, Schedule, Integrations, Maintenance — showing

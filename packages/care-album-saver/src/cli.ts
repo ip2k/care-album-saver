@@ -14,6 +14,7 @@ import { formatReport, verify } from './verify.js';
 import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from './maintenance.js';
 import * as schedule from './schedule.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from './environment.js';
+import { stampLines } from './log-lines.js';
 import { addToPhotos, photosStatus, photosSupported, PHOTOS_FOLDER } from './photos.js';
 import type { Config } from './config.js';
 
@@ -89,7 +90,7 @@ async function photosStep(config: Config, scheduled: boolean): Promise<void> {
   if (!scheduled) return;
   if (outcome.ok && outcome.added === 0) return;
   await schedule.appendLog(
-    `${new Date().toISOString()}  PHOTOS  ` +
+    `PHOTOS  ` +
       (outcome.ok ? `added ${outcome.added} to Photos` : `not added: ${scrub(outcome.error ?? 'no reason given')}`),
   );
   // Said once, when it starts failing: a permission that was never granted would otherwise
@@ -396,6 +397,13 @@ async function main(): Promise<number> {
     }
 
     case 'run': {
+      // A scheduled run's output is the daily log — launchd and cron write it straight into
+      // the file — so from here on every line it prints starts with when. Not under systemd,
+      // whose journal stamps each line itself; there a second stamp would only be noise.
+      if (values.scheduled && !process.env.JOURNAL_STREAM) {
+        stampLines(process.stdout);
+        stampLines(process.stderr);
+      }
       // A scheduled invocation may be a catch-up rather than the schedule itself: launchd
       // starts this at every login, cron at every boot, Task Scheduler whenever it notices
       // a start it missed. Each of those is how a run the machine was off for eventually
@@ -408,7 +416,7 @@ async function main(): Promise<number> {
           stdout.write('  Already up to date for today; nothing to do.\n');
           return 0;
         }
-        await schedule.appendLog(`${new Date().toISOString()}  START   scheduled run`);
+        await schedule.appendLog(`START   scheduled run`);
       }
       const session = await loadSession();
       if (!session) {
@@ -483,7 +491,7 @@ async function main(): Promise<number> {
         if (error instanceof Error && error.name === 'RunInProgressError') {
           stdout.write(`  ${error.message}\n`);
           if (values.scheduled) {
-            await schedule.appendLog(`${new Date().toISOString()}  SKIPPED another run was already saving photos`);
+            await schedule.appendLog(`SKIPPED another run was already saving photos`);
           }
           return 0;
         }
@@ -492,7 +500,7 @@ async function main(): Promise<number> {
         // — and an expired session looks exactly like an archive that is up to date.
         if (values.scheduled) {
           await schedule.appendLog(
-            `${new Date().toISOString()}  FAILED  ${scrub(error instanceof Error ? error.message : String(error))}`,
+            `FAILED  ${scrub(error instanceof Error ? error.message : String(error))}`,
           );
           await schedule.recordRun({
             at: new Date().toISOString(),
@@ -527,7 +535,7 @@ async function main(): Promise<number> {
       if (values.scheduled) {
         await schedule.recordRun(schedule.finishedRun(result, 'schedule'));
         await schedule.appendLog(
-          `${new Date().toISOString()}  ${result.failed === 0 && !result.stopped ? 'OK     ' : 'PARTIAL'}  ` +
+          `${result.failed === 0 && !result.stopped ? 'OK     ' : 'PARTIAL'}  ` +
             `${result.saved} saved, ${result.skipped} already had, ${result.failed} could not be fetched`,
         );
       }
