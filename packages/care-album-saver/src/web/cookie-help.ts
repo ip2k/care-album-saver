@@ -14,22 +14,24 @@
  *
  *  - **Inline SVG rather than images.** The page's Content-Security-Policy is
  *    `default-src 'none'; img-src 'self' data:`, so a picture in the page would have to be
- *    a `data:` URI, and seven screenshots as base64 is megabytes on a page that is 45 KB
- *    today. Drawn as SVG the whole set is a few kilobytes, stays sharp at any zoom,
- *    follows the page into dark mode and costs no second request.
+ *    a `data:` URI, and seven screenshots as base64 would be megabytes, many times the
+ *    whole page (about 185 KB in September 2026). Drawn as SVG the whole set is about
+ *    30 KB, stays sharp at any zoom, follows the page into dark mode and costs no second
+ *    request.
  *    scripts/cookie-help-images.js renders these same drawings to docs/images/cookie-*.png
  *    for docs/COOKIE.md, so the page and the document cannot drift apart.
  *
  *  - **Labels in a keyed legend, not in the margins, and the legend is real text.** The
  *    guide screenshots put each callout in the page's own ~290px margin
  *    (scripts/screenshots.js explains why). These figures are 640 units wide inside a
- *    ~660px card: there is no margin to write into, so a numbered marker sits beside each
- *    target and the sentence for it goes in a legend underneath. Same rule, different
- *    geometry — a label never covers what it describes. The legend is HTML rather than
- *    more SVG because a drawing scales with its container and text drawn inside one
- *    scales with it: in a narrow window the sentences came out at five pixels. As text it
- *    reflows, obeys the reader's own font size, can be selected and translated, and says
- *    the same thing in docs/COOKIE.md, where it is a numbered list under the picture.
+ *    card under 900px wide: there is no margin to write into, so a numbered marker sits
+ *    beside each target and the sentence for it goes in a legend underneath. Same rule,
+ *    different geometry — a label never covers what it describes. The legend is HTML
+ *    rather than more SVG because a drawing scales with its container and text drawn
+ *    inside one scales with it: in a narrow window the sentences came out at five pixels.
+ *    As text it reflows, obeys the reader's own font size, can be selected and
+ *    translated, and says the same thing in docs/COOKIE.md, where it is a numbered list
+ *    under the picture.
  */
 
 /**
@@ -156,7 +158,7 @@ const figure = (
     // Its own opaque background, so the drawing is self-contained: it keeps its palette
     // under forced colours, exactly as .num does, instead of flattening to two colours.
     + rect({ x: 0, y: 0, w: W, h: H, fill: 'var(--f-canvas)' })
-    + `<g class="ck-ui">${body}</g></svg>`,
+    + `${body}</svg>`,
 });
 
 // ------------------------------------------------------------------ the panel drawing
@@ -209,7 +211,7 @@ interface PanelOptions {
 
 /**
  * The developer tools panel with the cookie table in it: one tab strip, one sidebar, one
- * three-row table whose middle row is the one that matters.
+ * five-row table whose second row is the one that matters.
  */
 function panelFigure(
   meta: FigureMeta,
@@ -689,9 +691,9 @@ export const COOKIE_HELP_CSS = `${COOKIE_FIGURE_CSS}
  * The picture guide itself, dropped into step 1 between the written steps and the box.
  *
  * It is a button and a region rather than `<details>`, which would have been the obvious
- * control: both the page's own script and scripts/screenshots.js reach for
- * `document.querySelector('details')` meaning step 2's Advanced options, and a `<details>`
- * added here would silently become the one they find.
+ * control: scripts/screenshots.js reaches for `document.querySelector('details')` meaning
+ * step 2's Advanced options (the page's own script did too until 6527f06), and a
+ * `<details>` added here would silently become the one it finds.
  */
 export const COOKIE_HELP = `<div class="ck-help">
   <button type="button" class="ck-toggle" id="ck-toggle" aria-expanded="false" aria-controls="ck-panel">
