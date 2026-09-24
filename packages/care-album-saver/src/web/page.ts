@@ -544,6 +544,9 @@ export const PAGE = String.raw`<!doctype html>
   .msg.err { background: var(--danger-tint); color: var(--danger); border-color: var(--danger); }
   .msg.warn { background: var(--warn-tint); color: var(--warn-ink); border-color: var(--warn); }
   .msg b { font-weight: 650; }
+  /* The notice across the top when the tool cannot be read (refresh, poll): clear of the
+     header above it and of the first card below, which it otherwise sat hard against. */
+  #state-error .msg { margin: 0 0 var(--s4); }
   /* The quiet confirmation for a setting that saved itself. A full banner for every tick
      would shout; this is a footnote. */
   .saved { display: inline-block; margin-top: var(--s3); font-size: .875rem; color: var(--ok); font-weight: 550; }
@@ -1159,9 +1162,14 @@ $('howto').innerHTML = howToSteps().map((s) => '<li>' + s + '</li>').join('');
 ${COOKIE_HELP_SCRIPT}
 
 function setStep(card, numEl, srEl, state, srText) {
+  // The step's own number, kept the first time, so that a step which has to be done again
+  // — a session Brightwheel stopped accepting — shows its number rather than a tick.
+  if (!numEl.dataset.n) numEl.dataset.n = numEl.textContent;
   card.dataset.state = state;
-  if (state === 'complete') { numEl.textContent = '✓'; card.setAttribute('aria-current', 'false'); }
+  numEl.textContent = state === 'complete' ? '✓' : numEl.dataset.n;
+  if (state === 'complete') card.setAttribute('aria-current', 'false');
   else if (state === 'active') card.setAttribute('aria-current', 'step');
+  else card.removeAttribute('aria-current');
   srEl.textContent = srText;
 }
 
@@ -1359,8 +1367,9 @@ function lockSettings(locked) {
  * dashboard: they are here to see that it is still working.
  */
 function needsSetup(s) {
-  // No session at all: the first thing to do is the first step.
-  if (!s.hasSession) return true;
+  // No session at all: the first thing to do is the first step. Nor one Brightwheel has
+  // stopped accepting, found when the page asked who is on the account (loadChildren).
+  if (!s.hasSession || s.sessionRejected) return true;
   // A session that has stopped working, which the server reports as a run refused for it.
   const failed = s.progress && s.progress.phase === 'error' && /sign in|session|expired/i.test(s.progress.message || '');
   if (failed) return true;
@@ -1674,18 +1683,84 @@ $('viewer').addEventListener('close', async () => {
   if (thumb) thumb.focus();
 });
 
-async function refresh() {
-  const r = await api('/api/state');
-  const answer = await r.json();
-  // The one failure that stops the whole page: settings the tool refuses to guess at (see
-  // ConfigUnusableError). Said at the top of the page, in the server's words, instead of a
-  // page that half-paints and then does nothing.
-  if (!answer.config) {
-    const main = $('main');
-    if (!$('state-error')) main.insertAdjacentHTML('afterbegin', '<div id="state-error" role="alert"></div>');
-    say($('state-error'), 'err', answer.error || 'The tool could not read its own settings.');
+/* ------------------------------------------------------------------ keeping in touch
+
+   Everything on this page comes from the tool, over /api/state, and the tool is a program on
+   this computer that can be closed, restarted or busy. When it does not answer, the page says
+   so in words and asks again — after one second, then two, four and so on, never more than
+   half a minute apart — rather than freezing on whatever it last showed. A single refused
+   /api/state used to leave a run's page saying "running" for good (security review page-1). */
+
+const RETRY_FIRST_MS = 1000;
+const RETRY_LONGEST_MS = 30000;
+const nextWait = (ms) => Math.min(ms ? ms * 2 : RETRY_FIRST_MS, RETRY_LONGEST_MS);
+const inSeconds = (ms) => (Math.round(ms / 1000) === 1 ? 'a second' : Math.round(ms / 1000) + ' seconds');
+const KEEPS_ASKING = ' This page keeps asking, and carries on by itself once the tool answers.';
+
+/**
+ * /api/state, or why it could not be had, in words. Never throws. Its retry is false only for
+ * the one answer that asking again cannot change: a refused setup link, which is what a tool
+ * that has been started again says to a page opened from the link it printed last time.
+ */
+async function readState() {
+  let r;
+  try {
+    r = await api('/api/state');
+  } catch {
+    return { ok: false, retry: true, error: 'This page cannot reach the tool. It may have been closed, or the computer may be busy.' };
+  }
+  if (r.status === 403) {
+    return {
+      ok: false,
+      retry: false,
+      error: 'The tool no longer accepts this page’s link, which usually means it was started again. Open the new link it printed in the window you started it from.',
+    };
+  }
+  const d = await r.json().catch(() => null);
+  if (r.ok && d && d.config) return { ok: true, state: d };
+  return { ok: false, retry: true, error: (d && d.error) || 'The tool did not say how things stand (it answered ' + r.status + ').' };
+}
+
+/**
+ * The notice across the top of the page, or none. Rewritten only when its words change, so
+ * that asking again and again is not announced again and again.
+ */
+function stateNotice(text) {
+  let box = $('state-error');
+  if (!text) {
+    if (box) box.remove();
     return;
   }
+  if (!box) {
+    $('main').insertAdjacentHTML('afterbegin', '<div id="state-error" role="alert"></div>');
+    box = $('state-error');
+  }
+  if (box.dataset.text === text) return;
+  box.dataset.text = text;
+  say(box, 'err', text);
+}
+
+let refreshWait = 0;
+
+async function refresh() {
+  const got = await readState();
+  const answer = got.ok ? got.state : { error: got.error };
+  // The one failure that stops the whole page: no settings to paint from — settings the tool
+  // refuses to guess at (see ConfigUnusableError), or no answer at all. Said at the top of the
+  // page, in the server's words, instead of a page that half-paints and then does nothing; and
+  // asked again, so that settings put right by hand, or a tool that was only busy, bring the
+  // page back without a reload.
+  if (!answer.config) {
+    const text = answer.error || 'The tool could not read its own settings.';
+    stateNotice(got.retry ? text + KEEPS_ASKING : text);
+    if (got.retry) {
+      refreshWait = nextWait(refreshWait);
+      setTimeout(refresh, refreshWait);
+    }
+    return;
+  }
+  refreshWait = 0;
+  stateNotice(null);
   state = answer;
   const c = state.config;
   for (const k of ['tagChildName','tagNote','stripLocation','incremental','writeSidecar']) $(k).checked = c[k];
@@ -1696,11 +1771,15 @@ async function refresh() {
 
   if (state.hasSession) {
     sessionOk = true;
+    // Asked before anything says "Connected": this is where a session Brightwheel has stopped
+    // accepting is found out, and loadChildren sends the page back to step 1 when it is.
+    await loadChildren();
+  }
+  if (state.hasSession && !state.sessionRejected) {
     setStep($('card-connect'), $('num-1'), $('connect-state'), 'complete',
       'Step 1 of 4, complete. Connected' + (state.email ? ' as ' + state.email : '') + '.');
     say($('connect-msg'), 'ok', 'Connected', state.email && [' as ', bold(state.email)], '.');
     setStep($('card-run'), $('num-3'), $('run-state'), 'active', 'Step 3 of 4. Ready to start.');
-    await loadChildren();
   } else if (state.sessionProblem) {
     say($('connect-msg'), 'err', state.sessionProblem);
   }
@@ -1719,10 +1798,51 @@ async function refresh() {
   if (state.running) poll();
 }
 
+/**
+ * Back to step 1, because Brightwheel has stopped accepting the saved session. It is found
+ * out here, when the page asks who is on the account, and the page used to carry on saying
+ * "Connected" beside "Connect first to see your children": both untrue, and neither saying
+ * what to do (security review page-2). Now step 1 is the step to do, with the reason under
+ * it, and the dashboard gives way to the steps (needsSetup).
+ */
+function sessionRefused(sentence) {
+  sessionOk = false;
+  if (state) state.sessionRejected = true;
+  kids = [];
+  put($('kids'), h('li', { class: 'kids-empty' }, 'Connect again to see your children here.'));
+  describeSelection();
+  setStep($('card-connect'), $('num-1'), $('connect-state'), 'active',
+    'Step 1 of 4. Brightwheel no longer accepts the saved session, so connect again.');
+  setStep($('card-children'), $('num-2'), $('children-state'), '', 'Step 2 of 4. Waiting for step 1.');
+  setStep($('card-run'), $('num-3'), $('run-state'), '', 'Step 3 of 4. Waiting for step 1.');
+  say($('connect-msg'), 'err', sentence);
+  updateRunReady();
+  if (state) {
+    placeSetupFlow(!needsSetup(state));
+    paintFacts();
+  }
+}
+
 async function loadChildren() {
-  const r = await api('/api/children');
-  const d = await r.json();
-  if (!d.ok) return;
+  let d = null;
+  try {
+    d = await (await api('/api/children')).json();
+  } catch {
+    d = null;
+  }
+  if (d && d.sessionRejected) {
+    sessionRefused(d.error || 'Brightwheel no longer accepts the saved session. Sign in on Brightwheel’s website again, copy the value fresh, and paste it in the box above.');
+    return;
+  }
+  if (!d || !d.ok) {
+    // Anything else — Brightwheel out of reach, the tool gone — is said beside the names. The
+    // session is left alone, because nothing says it is at fault.
+    const st = $('kids-status');
+    st.classList.add('err');
+    st.textContent = (d && d.error) ||
+      'Could not ask Brightwheel who is on this account. Check the tool is still running in the window you started it from, then reload this page.';
+    return;
+  }
   kids = d.children;
   const included = new Set(d.included);
   // The element id is positional. The Brightwheel id travels in the dataset and the name is a
@@ -2217,9 +2337,41 @@ function paint(p, running, result) {
   }
 }
 
+/** Which poll is the current one: a newer start takes over from an older one rather than running beside it. */
+let polling = 0;
+/** How long the poll waited last time /api/state did not answer; 0 while it answers. */
+let pollWait = 0;
+
 async function poll() {
-  const r = await api('/api/state');
-  const s = await r.json();
+  const mine = ++polling;
+  const got = await readState();
+  if (mine !== polling) return;
+  if (!got.ok) {
+    // Nothing is known about the run until the tool answers, so the bar holds still rather
+    // than implying progress, and the progress line says why and when it will ask again.
+    // The card is marked as following a run, because in Settings the progress line is shown
+    // only then, and a refusal on the first poll after Start came before any answer said so.
+    // Indeterminate as well as still: left as it was, a bar that last showed a finished run
+    // stayed full, which says "done" about a run nobody can see.
+    $('card-run').toggleAttribute('data-running', true);
+    $('bar').dataset.stopped = 'true';
+    $('bar').dataset.indeterminate = 'true';
+    $('bar').removeAttribute('aria-valuenow');
+    $('bar-fill').style.width = '';
+    if (!got.retry) {
+      $('run-msg').textContent = got.error;
+      stateNotice(got.error);
+      return;
+    }
+    pollWait = nextWait(pollWait);
+    $('run-msg').textContent = got.error + ' Asking again in ' + inSeconds(pollWait) + '.';
+    stateNotice(got.error + KEEPS_ASKING);
+    setTimeout(poll, pollWait);
+    return;
+  }
+  pollWait = 0;
+  stateNotice(null);
+  const s = got.state;
   paint(s.progress, s.running, s.lastResult);
   if (s.running) setTimeout(poll, 700);
   else {
@@ -2349,10 +2501,12 @@ function paintSchedule() {
  */
 function paintFacts() {
   if (!state) return;
-  put($('dash-connected'), state.hasSession
-    ? ['Connected to Brightwheel', state.email && [' as ', bold(state.email)],
-      state.sessionSavedAt && ', since ' + fullWhen(state.sessionSavedAt), '.']
-    : 'Not connected to Brightwheel.');
+  put($('dash-connected'), state.sessionRejected
+    ? 'Brightwheel no longer accepts the saved session, so nothing new can be saved until you connect again.'
+    : state.hasSession
+      ? ['Connected to Brightwheel', state.email && [' as ', bold(state.email)],
+        state.sessionSavedAt && ', since ' + fullWhen(state.sessionSavedAt), '.']
+      : 'Not connected to Brightwheel.');
   const last = sched && sched.lastRun;
   // Whether it worked is said in words, not only in the presence of a number. Nothing at all
   // when there is nothing to say, so that the empty line is hidden (.dash-facts li:empty).

@@ -200,6 +200,14 @@ const PASTE_REFUSED =
   'Brightwheel\u2019s website again and copy it fresh. Otherwise check it came from the row named ' +
   '_brightwheel_v2, from its Value column, and that all of it was copied.';
 const RUN_REFUSED = 'Brightwheel no longer accepts the saved session, so nothing more could be fetched.';
+/**
+ * The same refusal met while reading who is on the account, which is the first thing the page
+ * asks on every load. It used to be a 500 the page ignored, so a parent saw "Connected" beside
+ * "Connect first to see your children" and nothing to do about either (security review page-2).
+ */
+const CHILDREN_REFUSED =
+  'Brightwheel no longer accepts the saved session, so the children on the account cannot be shown. ' +
+  'Sign in on Brightwheel\u2019s website again, copy the value fresh, and paste it in the box above.';
 
 /**
  * The Content-Security-Policy, for the page when there is a nonce and for everything else
@@ -749,10 +757,22 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
-        const me = await client.me();
-        // Always re-read here rather than serving the cache: this is the call the page
-        // makes on load, and a child added to the account since should appear.
-        children = await client.students(me.id);
+        try {
+          const me = await client.me();
+          // Always re-read here rather than serving the cache: this is the call the page
+          // makes on load, and a child added to the account since should appear.
+          children = await client.students(me.id);
+        } catch (error) {
+          // Brightwheel refusing the session is an answer about the session, not a fault in
+          // this tool: a 401 with a flag the page acts on by going back to step 1, and words
+          // for a browser rather than the command line's (security review page-2).
+          if (error instanceof Error && error.name === 'SessionExpiredError') {
+            children = null;
+            json(401, { ok: false, sessionRejected: true, error: CHILDREN_REFUSED });
+            return;
+          }
+          throw error;
+        }
         json(200, { ok: true, children, included: includedIds(await loadConfig(), children) });
         return;
       }
