@@ -59,17 +59,18 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 320 tests passing on 2026-09-23 (late evening, at b9bee3b), no network required (`pnpm test`).
-  The CI matrix in `.github/workflows/ci.yml` is written for Ubuntu, macOS and Windows
-  against Node 20, 22, 24 and 26 but **has never run** (and the review expects the Node 20
-  cells to fail: the only dependency needs Node ≥22). The remote exists — `origin` is
-  https://github.com/ip2k/care-album-saver, **public**, and still empty: nothing has been
-  pushed. **The push is blocked on two owner actions, both in docs/SECURITY-REVIEW-2026-09-23.md:**
-  a history rewrite (eight screenshot blobs in the four earliest commits carry the owner's
-  home path or a per-user temp hash — the rewrite is rehearsed there, with the exact
-  command) and the commit-identity decision (every commit carries a personal address).
-  The review's open WARNINGs are listed there with fixes; the ★ ones go in before a first
-  release. `docs/SECURITY-REVIEW-HANDOFF.md` is the brief that review was run from.
+- 320 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+  because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
+  of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
+  24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
+- **Pushed for the first time on 2026-09-23** to the public https://github.com/ip2k/care-album-saver,
+  at b94e7cd, after a history rewrite that dropped eight leaking screenshot blobs and set every
+  commit identity to the owner's GitHub noreply address (docs/SECURITY-REVIEW-2026-09-23.md
+  §1/§3). **The ~60 other local branches still point at the old history and carry those
+  blobs: never push them; cut new branches from the new `main`.** The security workflow
+  (gitleaks over the full history) passed on that push. The review's open WARNINGs are in the
+  report with fixes; the ★ ones go in before a first release. `docs/SECURITY-REVIEW-HANDOFF.md`
+  is the brief the review was run from.
 - **Production and development are separate (2026-09-23).** Production is a clone on
   `main` at ~/Applications/care-album-saver, changed only by `node scripts/deploy.js`,
   which builds and runs the whole suite there, puts production back on its previous commit
