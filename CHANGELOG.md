@@ -96,6 +96,11 @@ file was started.
   for a copy and delete the only one. A crontab the tool cannot read is no longer treated as
   empty and overwritten, and a `crontab` write that fails is reported instead of recorded as
   done.
+- Three more from the review. A photo the server could not open, or an empty file asked for
+  by range, could take the whole setup page down; now they are an ordinary error, and a
+  range request the viewer abandons no longer keeps a file open. The link to a new release
+  is checked on its parsed address, so it can only ever point at this project's releases. A
+  saved browser identity with a control character in it is not sent.
 - `docker build` failed: the Dockerfile still copied the `media-ferry` package, which was folded
   into this one on 23 September. A test now checks that everything the Dockerfile copies exists.
 - `scripts/deploy.js` could deploy only once: every later deploy failed a test that assumed the
