@@ -28,7 +28,14 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const { values } = parseArgs({
-  options: { port: { type: 'string', default: '4719' }, 'photos-deny': { type: 'boolean', default: false } },
+  options: {
+    port: { type: 'string', default: '4719' },
+    'photos-deny': { type: 'boolean', default: false },
+    // Show the update steps for a way of installing other than this checkout's: git, docker,
+    // download, npm-global, pnpm-global, yarn-global, bun-global, npm-local, npx, pnpm-dlx,
+    // yarn-dlx, bunx, production or unknown.
+    install: { type: 'string' },
+  },
 });
 
 // Before anything reads them: every module asks for these folders when it needs them, and
@@ -40,6 +47,8 @@ process.env.CARE_ALBUM_CONFIG_DIR = configDir;
 process.env.CARE_ALBUM_LOG_DIR = logDir;
 delete process.env.CARE_ALBUM_SESSION;
 delete process.env.BRIGHTWHEEL_SESSION;
+// GitHub is never asked from the demo: it gets the pretend release below instead.
+process.env.CARE_ALBUM_NO_UPDATE_CHECK = '1';
 // Temporary folders are refused as a destination by design, so the demo archive sits in
 // node_modules, which is gitignored and deleted on the way out.
 const photos = fileURLToPath(new URL('../node_modules/.cache/care-album-saver-demo', import.meta.url));
@@ -98,6 +107,25 @@ const ui = await startWebUi({
   port: Number(values.port),
   native: { spawn },
   schedule: { home: fakeHome, run, platform: 'darwin' },
+  // A pretend GitHub with one pretend release, newer than whatever this is, so that saying
+  // yes to "check for new versions" shows the whole thing: the pill, the notes, the steps.
+  updates: {
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          tag_name: 'v9.9.0',
+          html_url: 'https://github.com/ip2k/care-album-saver/releases/tag/v9.9.0',
+          published_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+          draft: false,
+          prerelease: false,
+          body:
+            '## What\u2019s new (a pretend release, for the demo)\n\n' +
+            '### Added\n- Something parents asked for.\n\n### Fixed\n- Something that went wrong once.\n',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    install: values.install,
+  },
   banner:
     `Demo of ${branch} — the children, photos, Photos app and daily run here are all pretend, and nothing on ` +
     `this computer is changed. To connect, paste ${SESSION} — never your real session.`,

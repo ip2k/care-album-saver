@@ -48,6 +48,10 @@ The one way to add a third place is a setting that is **off unless you turn it o
 the tool can also add new photos to the Photos app, and if you use iCloud Photos, Apple then
 uploads them to your iCloud account. [What that setting does, and how](docs/PHOTOS.md).
 
+The setup page can also ask GitHub, once a day, whether there is a newer version of this
+tool — only if you say yes when it asks. That request carries nothing about you, your account
+or your children. [What it sends](docs/UPDATING.md#finding-out-that-there-is-a-new-version).
+
 One honest clarification, because the word matters: the setup page *does* run a small web
 server, but it runs **on your own computer**, only while the program is open, and only your
 computer can reach it. It is not on the internet.
@@ -241,6 +245,14 @@ saved after you turn it on unless you ask for the earlier ones too.
 
 It works by running [one short AppleScript](packages/care-album-saver/applescript/add-to-photos.applescript)
 that you can read first. [docs/PHOTOS.md](docs/PHOTOS.md) explains the whole thing.
+
+### Keeping it up to date
+
+The setup page asks once whether to check for new versions. Say yes and it asks GitHub once a
+day, while the page is open, and shows a gold **New version** button when there is one, with
+the steps for the way you installed it — a clone, a download, Docker or a package manager. For
+a clone like the one above, updating is `git pull`, `pnpm install` and `pnpm build`.
+[docs/UPDATING.md](docs/UPDATING.md) has every way, and exactly what the check sends.
 
 ---
 

@@ -13,6 +13,13 @@ file was started.
 
 ### Added
 
+- **It can tell you when there is a new version.** The first time you see your archive, the page
+  asks once whether to check for new versions daily; say yes and it asks GitHub's releases,
+  once a day, while the page is open (never from the daily run), and shows a gold **New version**
+  button when there is one. The button opens what is new and the steps to update for the way
+  this copy was installed — a git clone, a downloaded ZIP, Docker, npm, pnpm, Yarn or Bun
+  (global or run once), or the maintainer's deploy script. Settings shows which version and
+  commit you are running, the switch, and **Check now**. [docs/UPDATING.md](docs/UPDATING.md).
 - **A photo viewer, and all of the last run on the dashboard.** The dashboard shows every photo
   and video the last run saved, twenty-four to a page, newest first. Clicking one opens it over
   the page rather than in a new tab: ← and →, or the arrows at the edges of the screen, step
