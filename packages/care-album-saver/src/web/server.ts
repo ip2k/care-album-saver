@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
-import { sep } from 'node:path';
+import { isAbsolute, sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BrightwheelClient } from '../api/client.js';
 import type { Student } from '../api/schema.js';
@@ -260,6 +260,17 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     delete patch.addToPhotosFrom;
     if (typeof patch.archiveDir === 'string') {
       patch.archiveDir = cleanPastedPath(patch.archiveDir);
+      // Full paths only, from the page. A relative one would be resolved against wherever the
+      // tool was started — a source checkout, for a parent who cloned it — which nobody at
+      // the page can see. The command line's --dir keeps its usual meaning, relative to the
+      // terminal it was typed in, so this is here and not in checkArchiveDir.
+      if (patch.archiveDir && !/^~(?:[/\\]|$)/.test(patch.archiveDir) && !isAbsolute(patch.archiveDir)) {
+        return {
+          ok: false,
+          error: 'Please give the full path to the folder, starting from the top of your drive, or starting with ~/ for your home folder.',
+          field: 'archiveDir',
+        };
+      }
       const verdict = checkArchiveDir(patch.archiveDir);
       if (!verdict.ok) return { ok: false, error: verdict.error ?? 'That folder cannot be used.', field: 'archiveDir' };
       patch.archiveDir = verdict.resolved;
@@ -346,6 +357,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           sessionSavedAt: session?.savedAt.toISOString() ?? null,
           email: session?.email ?? null,
           config,
+          // The folder as a parent reads it, from their home folder. See tildify.
+          archiveDirShown: tildify(config.archiveDir, homedir()),
           progress,
           running,
           lastResult,
@@ -425,6 +438,13 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         await saveSession(secret, check.email, userAgent);
         // A different account has different children.
         children = null;
+        // And a fresh session ends a run that failed for want of one. Left in place, the old
+        // "no longer accepts the saved session" line kept the page in setup — and on every
+        // reload — until a run happened to succeed.
+        if (!running) {
+          progress = { phase: 'starting', message: 'Ready', saved: 0, skipped: 0, failed: 0 };
+          lastResult = null;
+        }
         json(200, { ok: true, email: check.email, fingerprint: secret.fingerprint() });
         return;
       }
@@ -436,7 +456,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           json(400, { ok: false, error: saved.error, field: saved.field });
           return;
         }
-        json(200, { ok: true, config: saved.config, warning: saved.warning });
+        json(200, { ok: true, config: saved.config, warning: saved.warning, archiveDirShown: tildify(saved.config.archiveDir, homedir()) });
         return;
       }
 
@@ -491,7 +511,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           json(400, { ok: false, error: saved.error, field: saved.field });
           return;
         }
-        json(200, { ok: true, config: saved.config, warning: saved.warning });
+        json(200, { ok: true, config: saved.config, warning: saved.warning, archiveDirShown: tildify(saved.config.archiveDir, homedir()) });
         return;
       }
 
@@ -714,14 +734,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'GET' && url.pathname === '/api/schedule') {
         const config = await loadConfig();
-        const session = await loadSession();
         const state = await schedule.status(options.schedule);
         json(200, {
           ok: true,
           schedule: shown(state),
-          // "Already set up" is a session plus a schedule. Anything less is still setup,
-          // and the page must not open on a management view for a tool that has never run.
-          manage: Boolean(session) && state.installed,
           proposed: shown(await schedule.describe(state.time ?? config.schedule?.time ?? '19:00', options.schedule)),
         });
         return;
