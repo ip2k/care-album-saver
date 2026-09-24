@@ -16,7 +16,6 @@ export interface RemoteValidators {
 export interface DownloadResult {
   path: string;
   bytes: number;
-  resumed: boolean;
   validators: RemoteValidators;
 }
 
@@ -24,11 +23,6 @@ export interface DownloadOptions {
   url: string;
   destination: string;
   headers?: Record<string, string>;
-  /** Validators saved from a previous partial attempt, used to make resuming safe. */
-  previous?: RemoteValidators;
-  signal?: AbortSignal;
-  onProgress?: (received: number, total: number | null) => void;
-  fetchImpl?: typeof fetch;
 }
 
 function readValidators(h: Headers): RemoteValidators {
@@ -41,87 +35,48 @@ function readValidators(h: Headers): RemoteValidators {
 }
 
 /**
- * Download a file, resuming a previous partial transfer when it is provably safe.
+ * Download a file to `<destination>.part` and rename it into place only once it is complete,
+ * so a file under its real name is never a half-written one.
  *
- * The safety rule, inherited from Archive Ferry: never resume without a validator.
- * If we have bytes on disk but no ETag or Last-Modified from the original response, we
- * cannot prove the remote file is still the same one — resuming would splice two different
- * files together and produce a corrupt image that still looks like a valid download. In
- * that case we start over. A wasted transfer is cheap; a silently corrupted photo is not.
- *
- * `If-Range` makes this atomic on the server side: if the validator no longer matches,
- * the server ignores our Range and sends the whole file with 200, and we restart cleanly.
+ * A `.part` file left behind by an earlier, interrupted attempt is discarded rather than
+ * resumed: nothing on disk proves it came from the same remote file, and splicing two
+ * different files together would produce a corrupt image that still looks like a valid
+ * download. A wasted transfer is cheap; a silently corrupted photo is not.
  */
 export async function download(options: DownloadOptions): Promise<DownloadResult> {
-  const { url, destination, headers = {}, previous, signal, onProgress } = options;
-  const doFetch = options.fetchImpl ?? fetch;
+  const { url, destination, headers = {} } = options;
   const partPath = `${destination}.part`;
 
   await mkdir(dirname(destination), { recursive: true });
+  await unlink(partPath).catch(() => {});
 
-  let offset = 0;
-  const validator = previous?.etag || previous?.lastModified;
-  if (validator) {
-    try {
-      offset = (await stat(partPath)).size;
-    } catch {
-      offset = 0;
-    }
-  } else {
-    // No validator: any partial bytes are unverifiable. Discard them.
-    await unlink(partPath).catch(() => {});
-  }
+  const response = await fetch(url, { headers, redirect: 'follow' });
 
-  const requestHeaders: Record<string, string> = { ...headers };
-  if (offset > 0 && validator) {
-    requestHeaders['Range'] = `bytes=${offset}-`;
-    requestHeaders['If-Range'] = validator;
-  }
-
-  const response = await doFetch(url, { headers: requestHeaders, signal, redirect: 'follow' });
-
-  if (!response.ok && response.status !== 206) {
+  if (!response.ok) {
     throw new DownloadError(`HTTP ${response.status} for ${redactUrl(url)}`, response.status);
   }
   if (!response.body) {
     throw new DownloadError(`Empty response body for ${redactUrl(url)}`, response.status);
   }
 
-  // A 200 in reply to a Range request means the server declined to resume — start over.
-  let resumed = response.status === 206;
-  if (offset > 0 && !resumed) {
-    await unlink(partPath).catch(() => {});
-    offset = 0;
-  }
-
   const validators = readValidators(response.headers);
-  const total = validators.size !== null && validators.size !== undefined
-    ? validators.size + (resumed ? offset : 0)
-    : null;
+  const total = validators.size ?? null;
 
-  let received = offset;
-  const out = createWriteStream(partPath, resumed ? { flags: 'a' } : { flags: 'w' });
+  const out = createWriteStream(partPath);
   const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
-
-  if (onProgress) {
-    source.on('data', (chunk: Buffer) => {
-      received += chunk.length;
-      onProgress(received, total);
-    });
-  }
 
   await pipeline(source, out);
 
   const finalSize = (await stat(partPath)).size;
   if (total !== null && finalSize !== total) {
     throw new DownloadError(
-      `Truncated download: expected ${total} bytes, got ${finalSize}. The partial file was kept for retry.`,
+      `Truncated download: expected ${total} bytes, got ${finalSize}. It will be fetched again from the start next time.`,
       response.status,
     );
   }
 
   await rename(partPath, destination);
-  return { path: destination, bytes: finalSize, resumed, validators };
+  return { path: destination, bytes: finalSize, validators };
 }
 
 export class DownloadError extends Error {
@@ -136,7 +91,7 @@ export class DownloadError extends Error {
  * A signed CDN URL is a bearer credential for that file; it must not end up in a log the
  * user might paste into a bug report.
  */
-export function redactUrl(raw: string): string {
+function redactUrl(raw: string): string {
   try {
     const u = new URL(raw);
     if ([...u.searchParams.keys()].length > 0) {

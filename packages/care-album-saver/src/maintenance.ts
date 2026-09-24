@@ -110,7 +110,7 @@ export function humanBytes(bytes: number, platform?: NodeJS.Platform): string {
  * would be a second opinion that could disagree with the run's.
  */
 async function readManifestJson(archiveDir: string): Promise<{ data: Record<string, unknown>; records: ManifestRecord[] }> {
-  await Manifest.open(archiveDir, 'brightwheel', { fileMode: 0o600 });
+  await Manifest.open(archiveDir, 'brightwheel');
   const file = join(archiveDir, MANIFEST_FILENAME);
   let raw: string;
   try {
