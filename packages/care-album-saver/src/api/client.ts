@@ -19,9 +19,7 @@ export interface ClientOptions {
   baseUrl?: string;
   /** Milliseconds to wait between requests. Politeness, not rate-limit evasion. */
   delayMs?: number;
-  maxRetries?: number;
   fetchImpl?: typeof fetch;
-  onLog?: (message: string) => void;
   /**
    * The browser identity to send: the one the session was pasted from, when the setup page
    * saw it. Absent or null means a stock desktop Chrome. See api/identity.ts for why the
@@ -32,18 +30,26 @@ export interface ClientOptions {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** How many times a failed request is tried again. A rejected session never is. */
+const MAX_RETRIES = 4;
+
+/** Posts per listing request. Brightwheel may return fewer; it never returns more. */
+const DEFAULT_PAGE_SIZE = 100;
+
 /**
  * How far an incremental walk keeps going after the feed appears to be older than the
  * cut-off: this many pages in a row must be entirely older before it stops.
  *
  * One page is not enough, because the feed is ordered by *upload* time while the cut-off is
- * a *capture* time, and teachers back-date. A batch of photos taken last week and uploaded
- * this morning sits at the very top of the feed with capture times older than anything the
- * last run saw. Stopping at that first page would end the walk on the batch and never reach
- * the genuinely new posts underneath it — and because a walk that saw nothing new does not
- * move the cut-off either, no later run would reach them, while the tool reported that
- * everything was up to date. That is a photo lost for good, which is the one failure this
- * project cannot accept.
+ * a post's `event_date`, and on an account whose teachers back-date, `event_date` can be
+ * older than the feed order suggests. A batch posted this morning but dated last week would
+ * sit at the very top of the feed with dates older than anything the last run saw. Stopping
+ * at that first page would end the walk on the batch and never reach the genuinely new
+ * posts underneath it — and because a walk that saw nothing new does not move the cut-off
+ * either, no later run would reach them, while the tool reported that everything was up to
+ * date. That is a photo lost for good, which is the one failure this project cannot accept.
+ * On the one real account checked so far, `event_date` equals `created_at` on every post,
+ * so there the slack is insurance rather than a necessity.
  *
  * The trade is requests against photos. Each extra page is one more API request and one more
  * politeness delay on every nightly run; three pages is roughly 300 posts at the default
@@ -51,9 +57,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * second. A larger number buys tolerance for a bigger batch at the same linear cost; a
  * smaller one saves a request and silently loses photos.
  */
-/** Posts per listing request. Brightwheel may return fewer; it never returns more. */
-const DEFAULT_PAGE_SIZE = 100;
-
 export const PAGES_PAST_THE_CUT_OFF = 3;
 
 export interface ActivityListOptions {
@@ -130,18 +133,14 @@ function readEnvelope(raw: unknown, page: number, pageSize: number, items: numbe
 export class BrightwheelClient {
   private readonly baseUrl: string;
   private readonly delayMs: number;
-  private readonly maxRetries: number;
   private readonly doFetch: typeof fetch;
-  private readonly log: (m: string) => void;
   private readonly userAgent: string;
   private lastRequest = 0;
 
   constructor(private readonly options: ClientOptions) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.delayMs = options.delayMs ?? 400;
-    this.maxRetries = options.maxRetries ?? 4;
     this.doFetch = options.fetchImpl ?? fetch;
-    this.log = options.onLog ?? (() => {});
     this.userAgent = options.userAgent || browserUserAgent();
   }
 
@@ -176,10 +175,9 @@ export class BrightwheelClient {
     if (wait > 0) await sleep(wait);
 
     let lastError: unknown;
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) {
         const backoff = Math.min(30_000, 1000 * 2 ** (attempt - 1));
-        this.log(`Retrying ${context} in ${Math.round(backoff / 1000)}s (attempt ${attempt + 1})`);
         await sleep(backoff);
       }
       try {
@@ -189,7 +187,7 @@ export class BrightwheelClient {
         if (response.status === 429 || response.status >= 500) {
           const retryAfter = Number(response.headers.get('retry-after'));
           if (Number.isFinite(retryAfter) && retryAfter > 0) await sleep(retryAfter * 1000);
-          lastError = new ApiShapeError(`HTTP ${response.status} from ${context}`, context);
+          lastError = new ApiShapeError(`HTTP ${response.status} from ${context}`);
           continue;
         }
 
@@ -198,7 +196,7 @@ export class BrightwheelClient {
         try {
           return JSON.parse(body);
         } catch {
-          throw new ApiShapeError(`Could not parse JSON from ${context}`, context);
+          throw new ApiShapeError(`Could not parse JSON from ${context}`);
         }
       } catch (error) {
         // A session error is final — retrying cannot fix it, and hammering the endpoint
@@ -240,7 +238,8 @@ export class BrightwheelClient {
   async activitiesPage(studentId: string, page: number, opts: ActivityListOptions = {}): Promise<ActivityPage> {
     const pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
     // start_date / end_date are ISO-8601 UTC with milliseconds and a Z suffix, not a bare
-    // calendar date — confirmed across ChaseBro/brightwheel-takeout and ss44/Keepsake.
+    // calendar date — taken from ChaseBro/brightwheel-takeout and ss44/Keepsake; not yet
+    // checked against the live service, which nothing in this tool has sent them to.
     const iso = (d: Date) => d.toISOString().replace(/(\.\d{3})?Z$/, '.000Z');
 
     const query = new URLSearchParams({
@@ -257,10 +256,8 @@ export class BrightwheelClient {
     );
     const { items, undated } = parseActivities(raw, studentId);
     const check = validateExtraction(items, page, undated);
-    this.log(`Page ${page}: ${check.message}`);
-
     if (check.status === 'suspicious') {
-      throw new ApiShapeError(check.message, `activities page ${page}`);
+      throw new ApiShapeError(check.message);
     }
     return { page, items, ...readEnvelope(raw, page, pageSize, items.length) };
   }
@@ -288,7 +285,7 @@ export class BrightwheelClient {
 
       // Incremental runs stop once the feed is older than what we already have — but not
       // at the first such page. Only a page with media on it votes at all: a page of
-      // check-ins carries no capture times, so it leaves the tally where it was rather
+      // check-ins carries no photo dates, so it leaves the tally where it was rather
       // than resetting it and stretching the walk.
       const { items } = result;
       if (opts.stopBefore && items.length > 0) {
@@ -323,7 +320,6 @@ export class BrightwheelClient {
     }
   }
 
-  /** Cheap liveness check used by `login` and `doctor`. */
   /**
    * Whether Brightwheel accepts this session. `rejected` separates "Brightwheel said no" from
    * everything else that can go wrong on the way (no network, a changed API), because only
@@ -344,5 +340,3 @@ export class BrightwheelClient {
     }
   }
 }
-
-export type { MediaActivity, Student };
