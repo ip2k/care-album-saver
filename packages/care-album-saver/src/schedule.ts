@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync, realpathSync, statSync } from 'node:fs';
-import { appendFile, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { appendFile, chmod, mkdir, open, readFile, rm, writeFile, type FileHandle } from 'node:fs/promises';
 import { homedir, platform as osPlatform, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,7 +122,12 @@ export interface ScheduleEnvironment {
   pause?: (ms: number) => Promise<void>;
 }
 
-interface Resolved {
+/**
+ * A ScheduleEnvironment with every default filled in. Exported because cronLines and
+ * schtasksXml, which are exported for the tests, take one (security review processes-9: an
+ * exported function typed with an unexported interface cannot be called by name from outside).
+ */
+export interface Resolved {
   platform: NodeJS.Platform;
   home: string;
   run: CommandRunner;
@@ -225,51 +230,110 @@ export function durableNodePath(execPath: string): string {
   return execPath;
 }
 
+/** Which of the notices this tool sends. A notice is chosen by kind; its words are fixed below. */
+export type NoticeKind = 'failed' | 'photos';
+
+const NOTICE_TITLE = 'Care Album Saver';
+
+/**
+ * Every notice's words, and nothing else can be shown (security review processes-9).
+ *
+ * The words are fixed and name nobody: a notification is drawn by the operating system, may
+ * sit in a notification centre for days, and on a shared screen is read by whoever walks
+ * past. None carries the error, a child's name or a path.
+ *
+ *  - failed: a scheduled run did not work.
+ *  - photos: the photos were saved but Photos would not take them — nearly always a
+ *    permission macOS has not granted to the daily run. Shown when it starts failing, and
+ *    once per problem while the Photos record cannot say it already was (announceOnce).
+ */
+const NOTICE_TEXT: Readonly<Record<NoticeKind, string>> = {
+  failed: 'The daily photo run did not work. Open the setup assistant to see why.',
+  photos: 'Your new photos were saved, but could not be added to Photos. Open the setup assistant to see why.',
+};
+
+/**
+ * The AppleScript that shows each notice on a Mac, made once from the words above.
+ *
+ * This is source code: the argument array that carries it to osascript does not protect what
+ * is inside it, so it is only ever made from this table, never from a message handed in. It
+ * used to be a pair of literals repeated inside notify() and chosen by comparing the message
+ * with the exported text, so a change to one copy of the words quietly stopped the notice on
+ * a Mac, and a third notice showed nothing anywhere. Words that could end the AppleScript
+ * string refuse here, when the module loads, rather than at seven in the evening.
+ */
+const NOTICE_APPLESCRIPT = Object.fromEntries(
+  Object.entries(NOTICE_TEXT).map(([kind, text]) => {
+    if (/["\\\u0000-\u001f]/.test(text)) throw new Error(`The ${kind} notice's words cannot be put in AppleScript as they are.`);
+    return [kind, `display notification "${text}" with title "${NOTICE_TITLE}"`];
+  }),
+) as Readonly<Record<NoticeKind, string>>;
+
 /**
  * Tell the person something happened, using whatever the desktop already has.
  *
  * A scheduled run fails while nobody is watching, and `last-run.json` only answers the
  * question once somebody thinks to ask it. This is the nudge that makes them ask.
  *
- * The text is fixed and names nobody: a notification is drawn by the operating system,
- * may sit in a notification centre for days, and on a shared screen is read by whoever
- * walks past. It never carries the error, a child's name or a path. Launched with an
- * argument array like everything else here, and a failure to notify is never a failure of
- * the run — if the desktop has no notifier, the run's own record is still written.
+ * Launched with an argument array like everything else here, and a failure to notify is
+ * never a failure of the run — if the desktop has no notifier, the run's own record is still
+ * written. A kind this tool does not have is not shown at all.
  */
-export async function notify(message: string, env: ScheduleEnvironment = {}): Promise<boolean> {
+export async function notify(kind: NoticeKind, env: ScheduleEnvironment = {}): Promise<boolean> {
   // Under test, never the real notifier: see scripts/test-env.js.
   if (!env.run && process.env.CARE_ALBUM_NO_NOTIFY) return false;
+  if (typeof kind !== 'string' || !Object.hasOwn(NOTICE_TEXT, kind)) return false;
   const e = resolveEnv(env);
-  const title = 'Care Album Saver';
   try {
-    if (e.platform === 'darwin') {
-      // Each message is a literal here, never interpolated from an error: this is
-      // AppleScript source, and the argument array does not protect its contents. A message
-      // this function does not know is not shown at all.
-      const script = message === FAILED_NOTICE
-        ? `display notification "The daily photo run did not work. Open the setup assistant to see why." with title "${title}"`
-        : message === PHOTOS_NOTICE
-          ? `display notification "Your new photos were saved, but could not be added to Photos. Open the setup assistant to see why." with title "${title}"`
-          : null;
-      if (!script) return false;
-      return (await e.run(OSASCRIPT, ['-e', script])).code === 0;
-    }
+    if (e.platform === 'darwin') return (await e.run(OSASCRIPT, ['-e', NOTICE_APPLESCRIPT[kind]])).code === 0;
     if (e.platform === 'win32') return false;
-    return (await e.run('notify-send', [title, message])).code === 0;
+    return (await e.run('notify-send', [NOTICE_TITLE, NOTICE_TEXT[kind]])).code === 0;
   } catch {
     return false;
   }
 }
 
-/** One of the two notices this tool sends. Fixed text, so nothing about a family can reach it. */
-export const FAILED_NOTICE = 'The daily photo run did not work. Open the setup assistant to see why.';
+/** What the daily run last told the desktop about, by kind: see announceOnce. */
+const noticesPath = (): string => join(configDir(), 'notices.json');
+
+async function loadNotices(): Promise<Partial<Record<NoticeKind, string>>> {
+  // Only a memory of what was said: a damaged one means saying it again, which is harmless.
+  const stored = await readJsonFile<unknown>(noticesPath()).catch(() => null);
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+  const said: Partial<Record<NoticeKind, string>> = {};
+  for (const kind of Object.keys(NOTICE_TEXT) as NoticeKind[]) {
+    const problem = (stored as Record<string, unknown>)[kind];
+    if (typeof problem === 'string') said[kind] = problem;
+  }
+  return said;
+}
 
 /**
- * The photos were saved but Photos would not take them — nearly always a permission macOS
- * has not granted to the daily run. Shown once, when it starts failing, not every evening.
+ * Show a notice once for each problem, rather than every evening the problem lasts (security
+ * review §4.4).
+ *
+ * The Photos notice is normally said once because the Photos record remembers that the last
+ * attempt failed. While that record is itself damaged it remembers nothing, and the notice
+ * came back every evening for as long as the file stayed broken. So for that case the problem
+ * is written down here, in the config directory, and a notice is shown only for a problem
+ * different from the one last shown. Written down even when the desktop has no notifier:
+ * trying again tomorrow would find none again.
  */
-export const PHOTOS_NOTICE = 'Your new photos were saved, but could not be added to Photos. Open the setup assistant to see why.';
+export async function announceOnce(kind: NoticeKind, problem: string, env: ScheduleEnvironment = {}): Promise<boolean> {
+  const said = await loadNotices();
+  if (said[kind] === problem) return false;
+  const shown = await notify(kind, env);
+  await writeSecureFile(noticesPath(), JSON.stringify({ ...said, [kind]: problem }, null, 2)).catch(() => {});
+  return shown;
+}
+
+/** The problem announceOnce last showed is over, so the next one of any kind is said again. */
+export async function forgetNotice(kind: NoticeKind): Promise<void> {
+  const said = await loadNotices();
+  if (said[kind] === undefined) return;
+  delete said[kind];
+  await writeSecureFile(noticesPath(), JSON.stringify(said, null, 2)).catch(() => {});
+}
 
 export interface TimeOfDay {
   hour: number;
@@ -462,20 +526,65 @@ function logDir(env: Resolved): string {
 export const logFile = (env: ScheduleEnvironment = {}): string => join(logDir(resolveEnv(env)), 'daily.log');
 
 /**
+ * The most of the log that is read for the page: its last 256 KiB. Two hundred lines of the
+ * tool's own are a few tens of KiB; this leaves room for long ones.
+ */
+const LOG_TAIL_BYTES = 256 * 1024;
+
+/**
  * The tail of that log, for the page to show. Scrubbed, like everything else a page sees.
  *
- * Bounded by lines rather than by bytes so that one enormous line cannot be used to make
- * this read a whole disk into memory, and the file is opened read-only and closed.
+ * Only the end of the file is read (security review processes-9). This used to say it was
+ * bounded by lines so that nothing could make it read a whole disk into memory, while it read
+ * the whole file and then counted lines — so a log that had grown for years, or one enormous
+ * line, was read entire on every refresh of the page, and one over 2 GiB could not be read at
+ * all. Now the file is opened, its size asked, and the last LOG_TAIL_BYTES read; a first line
+ * cut part-way by that is dropped, with any half a character at its front.
  */
 export async function readLog(lines = 200, env: ScheduleEnvironment = {}): Promise<{ path: string; text: string }> {
   const path = logFile(env);
+  let handle: FileHandle | undefined;
   try {
-    const text = await readFile(path, 'utf8');
+    handle = await open(path, 'r');
+    const { size } = await handle.stat();
+    const length = Math.min(size, LOG_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    let filled = 0;
+    while (filled < length) {
+      const { bytesRead } = await handle.read(buffer, filled, length - filled, size - length + filled);
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    let text = buffer.subarray(0, filled).toString('utf8');
+    if (length < size) {
+      const cut = text.indexOf('\n');
+      text = cut === -1 ? '' : text.slice(cut + 1);
+    }
     const tail = text.split(/\r?\n/).filter(Boolean).slice(-lines).join('\n');
     return { path, text: scrub(tail) };
   } catch {
     return { path, text: '' };
+  } finally {
+    await handle?.close().catch(() => {});
   }
+}
+
+/**
+ * Put the log and its folder back to owner-only, if they are there. Never creates either, and
+ * never throws.
+ *
+ * These lines name a child and the folder their photographs are in, so the log gets the
+ * session file's treatment rather than a world-readable default — and neither of the log's
+ * other writers gives it that. launchd opens StandardOutPath at 0644 before this tool runs,
+ * and on Linux cron's shell creates the file with `>>` at the login umask, also before Node
+ * starts. So this runs at install, at every scheduled run before anything else (including the
+ * run that finds it has nothing to do), and after every line appendLog writes.
+ */
+export async function secureLog(env: ScheduleEnvironment = {}): Promise<void> {
+  const e = resolveEnv(env);
+  if (e.platform === 'win32') return;
+  await chmod(logDir(e), 0o700).catch(() => {});
+  await chmod(logFile(env), 0o600).catch(() => {});
 }
 
 /**
@@ -486,15 +595,9 @@ export async function appendLog(line: string, env: ScheduleEnvironment = {}): Pr
   const e = resolveEnv(env);
   try {
     await mkdir(logDir(e), { recursive: true, mode: 0o700 });
-    // Owner-only: these lines name a child and the folder their photographs are in, so the
-    // log gets the session file's treatment rather than a world-readable default.
     await appendFile(logFile(env), `${logTimestamp()}  ${scrub(line)}\n`, { encoding: 'utf8', mode: 0o600 });
-    // The create mode above only applies to a file this call creates. launchd creates the
-    // same file first, from the job's own output, at 0644 — so it is put right every time.
-    if (e.platform !== 'win32') {
-      await chmod(logFile(env), 0o600);
-      await chmod(logDir(e), 0o700);
-    }
+    // The create modes above only apply to what this call creates.
+    await secureLog(env);
   } catch {
     /* A missing log is not worth failing a run over. */
   }
@@ -810,6 +913,15 @@ function cronCommand(env: Resolved): string {
  * path is also an argument on a command line, so it is quoted for the C runtime that splits
  * it (windowsArg), and a path in which Task Scheduler would expand a `%NAME%` never gets
  * this far (assertSchedulable).
+ *
+ * The Node path in `<Command>` is deliberately not quoted, and that is right even for the
+ * default C:\Program Files\nodejs\node.exe (checked for the review's "schtasks Command" note,
+ * 2026-09-24). `<Command>` is not a command line: the task schema declares it a `pathType`,
+ * and Microsoft's reference for IExecAction::Path, the property that element holds, describes
+ * it as the path to an executable file, validated as a path when the task is registered.
+ * Nothing splits it on spaces; the command line is `<Arguments>`, which is why only the
+ * arguments go through windowsArg. No documentation asks for quotes in `<Command>`, so none
+ * are added: quotes there would be characters of the path.
  */
 export function schtasksXml(env: Resolved, time: TimeOfDay): string {
   // Task Scheduler wants a start boundary; the date is only an anchor for a daily
@@ -913,9 +1025,41 @@ export interface OwnershipOptions {
   replaceProduction?: boolean;
 }
 
-/** The folder a copy's `cli.js` belongs to: dist → the package → packages → the repository. */
+/** This tool's package name, in its own package.json and in the repository's. */
+const PACKAGE_NAME = 'care-album-saver';
+
+/** The nearest folder at or above `from` holding a package.json, and the name in it. */
+function nearestManifest(from: string): { dir: string; name: unknown } | null {
+  for (let dir = resolve(from); ; dir = dirname(dir)) {
+    const manifest = join(dir, 'package.json');
+    if (existsSync(manifest)) {
+      try {
+        return { dir, name: (JSON.parse(readFileSync(manifest, 'utf8')) as { name?: unknown } | null)?.name };
+      } catch {
+        return { dir, name: undefined };
+      }
+    }
+    if (dirname(dir) === dir) return null;
+  }
+}
+
+/**
+ * The folder a copy of the tool is, which is where deploy.js puts the production marker.
+ *
+ * Found by walking up from `cli.js` to this package — the nearest package.json, which must be
+ * named care-album-saver — and then to the next package.json above that: the repository's own,
+ * of the same name, in a clone; anything else (an npm install inside someone's project, say)
+ * means the package is the copy. It was three folders up from `cli.js`, counted (security
+ * review processes-9), which holds only while the build writes `cli.js` exactly one folder
+ * below the package: a build that moved it would have had every copy judged by a marker in
+ * the wrong folder, and production taken for a stray copy. A `cli.js` that is not in this
+ * package at all is a copy of its own folder, and never production.
+ */
 function copyRoot(cliPath: string): string {
-  return resolve(dirname(cliPath), '..', '..', '..');
+  const pkg = nearestManifest(dirname(cliPath));
+  if (!pkg || pkg.name !== PACKAGE_NAME) return dirname(resolve(cliPath));
+  const above = dirname(pkg.dir) === pkg.dir ? null : nearestManifest(dirname(pkg.dir));
+  return above?.name === PACKAGE_NAME ? above.dir : pkg.dir;
 }
 
 function isProductionCopy(cliPath: string): boolean {
@@ -935,14 +1079,26 @@ function samePath(a: string, b: string): boolean {
 
 /**
  * Refuse to change a daily run that runs another copy, unless told to. A copy that no longer
- * exists owns nothing — its job cannot run — and a record from before copies were written
- * down names no owner, so neither stops anything. The production copy may take it from any
- * copy that is not production: that is what deploying does. From another production copy —
- * the folder production was before a `deploy.js --to` — only deploy.js, which says --replace.
+ * exists owns nothing — its job cannot run. The production copy may take it from any copy
+ * that is not production: that is what deploying does. From another production copy — the
+ * folder production was before a `deploy.js --to` — only deploy.js, which says --replace.
+ *
+ * A record written before records named their copy has no `cliPath`, and used to count as
+ * owned by nobody (security review §4.4, from missed-web): any copy could take over a daily
+ * run that production set up before the upgrade, and an older copy still in use goes on
+ * writing records like that. The job itself still says which copy it runs, so for such a
+ * record the owner is read from there: see installedCliPath.
  */
-function assertMayChange(record: ScheduleRecord | null, e: Resolved, options: OwnershipOptions, action: 'install' | 'remove'): void {
-  // The settings file can be edited by hand; anything but a path names no owner.
-  const owner = typeof record?.cliPath === 'string' && record.cliPath !== '' ? record.cliPath : null;
+async function assertMayChange(
+  record: ScheduleRecord | null,
+  e: Resolved,
+  options: OwnershipOptions,
+  action: 'install' | 'remove',
+): Promise<void> {
+  // The settings file can be edited by hand: anything but a path there names no owner, and
+  // the job is asked instead, as for a record from before owners were written down.
+  const recorded =typeof record?.cliPath === 'string' && record.cliPath !== '' ? record.cliPath : null;
+  const owner = recorded ?? (record && isMechanism(record.mechanism) ? await installedCliPath(e, record.mechanism) : null);
   if (!owner || samePath(owner, e.cliPath) || !existsSync(owner)) return;
   const production = isProductionCopy(owner);
   if (!production && isProductionCopy(e.cliPath)) return;
@@ -951,6 +1107,182 @@ function assertMayChange(record: ScheduleRecord | null, e: Resolved, options: Ow
   const folder = resolve(dirname(owner), '..');
   const shown = e.platform !== 'win32' && folder.startsWith(e.home + sep) ? `~${folder.slice(e.home.length)}` : folder;
   throw new ScheduleOwnedElsewhereError(owner, production, shown);
+}
+
+const MECHANISMS: readonly ScheduleMechanism[] = ['launchd', 'systemd', 'cron', 'schtasks'];
+const isMechanism = (value: unknown): value is ScheduleMechanism => MECHANISMS.includes(value as ScheduleMechanism);
+
+/**
+ * The `cli.js` the installed daily run starts, read back from the job itself, or null when
+ * the job cannot be read or is not one this tool wrote (security review §4.4).
+ *
+ * Every version of this tool has written its own `cli.js` as the job's second word, after
+ * Node — in the plist's ProgramArguments, the unit's ExecStart=, the crontab line after our
+ * marker, and first in the task's Arguments — so that word is the owner, spelled as each
+ * scheduler reads it. Only asked for a record that does not name its owner. Reading never
+ * changes anything, and anything unexpected is no owner, which is how such a record was
+ * treated before.
+ */
+async function installedCliPath(e: Resolved, mechanism: ScheduleMechanism): Promise<string | null> {
+  try {
+    switch (mechanism) {
+      case 'launchd': {
+        const plist = await readFile(plistPath(e), 'utf8');
+        const args = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(plist)?.[1] ?? '';
+        const words = [...args.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => unxml(m[1] ?? ''));
+        return words[1] || null;
+      }
+      case 'systemd': {
+        const unit = await readFile(servicePath(e), 'utf8');
+        const line = /^ExecStart=(.*)$/m.exec(unit)?.[1];
+        return (line && systemdWords(line)[1]) || null;
+      }
+      case 'cron': {
+        const listed = await e.run('crontab', ['-l']);
+        if (listed.code !== 0) return null;
+        const lines = listed.stdout.split(/\r?\n/).map((line) => line.trim());
+        const job = lines[lines.indexOf(CRON_MARKER) + 1];
+        if (!lines.includes(CRON_MARKER) || !job || !OUR_CRON_LINE.test(job)) return null;
+        return shellWords(job.replace(/^(?:@reboot|\S+ \S+ \S+ \S+ \S+)\s+/, ''))[1] || null;
+      }
+      case 'schtasks': {
+        const queried = await e.run('schtasks', ['/Query', '/TN', SCHTASKS_NAME, '/XML']);
+        if (queried.code !== 0) return null;
+        const args = /<Arguments>([\s\S]*?)<\/Arguments>/.exec(queried.stdout)?.[1];
+        return (args && windowsArgs(unxml(args))[0]) || null;
+      }
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** XML text back to what was written: the five named entities and numeric ones. */
+function unxml(value: string): string {
+  const named: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+  return value.replace(/&(?:#x([0-9a-f]+)|#(\d+)|(amp|lt|gt|quot|apos));/gi, (whole, hex: string, dec: string, name: string) =>
+    hex ? String.fromCodePoint(parseInt(hex, 16)) : dec ? String.fromCodePoint(Number(dec)) : named[name.toLowerCase()] ?? whole,
+  );
+}
+
+/**
+ * The words of an ExecStart= line, as systemd reads them: quoted words with C escapes, `%%`
+ * for a percent sign and `$$` for a dollar sign (see systemdWord). Only the arguments are
+ * wanted here, where both doublings apply.
+ */
+function systemdWords(line: string): string[] {
+  const words: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    while (i < line.length && /\s/.test(line[i] as string)) i += 1;
+    if (i >= line.length) break;
+    const quote = line[i] === '"' || line[i] === "'" ? line[i] : null;
+    if (quote) i += 1;
+    let word = '';
+    while (i < line.length && (quote ? line[i] !== quote : !/\s/.test(line[i] as string))) {
+      if (line[i] === '\\' && i + 1 < line.length) {
+        word += line[i + 1];
+        i += 2;
+      } else {
+        word += line[i];
+        i += 1;
+      }
+    }
+    if (quote) i += 1;
+    words.push(word.replace(/%%/g, '%').replace(/\$\$/g, '$'));
+  }
+  return words;
+}
+
+/**
+ * The words /bin/sh would make of a crontab command, for the spellings this tool has written:
+ * single quotes (cronWord), double quotes (every version before it), and the `%` that cronWord
+ * makes outside the quotes with printf.
+ */
+function shellWords(command: string): string[] {
+  const PERCENT = `"$(printf '\\045')"`;
+  const words: string[] = [];
+  let word: string | null = null;
+  let i = 0;
+  while (i < command.length) {
+    const ch = command[i] as string;
+    if (command.startsWith(PERCENT, i)) {
+      word = `${word ?? ''}%`;
+      i += PERCENT.length;
+    } else if (/\s/.test(ch)) {
+      if (word !== null) words.push(word);
+      word = null;
+      i += 1;
+    } else if (ch === "'") {
+      const end = command.indexOf("'", i + 1);
+      if (end === -1) return words;
+      word = `${word ?? ''}${command.slice(i + 1, end)}`;
+      i = end + 1;
+    } else if (ch === '"') {
+      let part = '';
+      for (i += 1; i < command.length && command[i] !== '"'; i += 1) {
+        if (command[i] === '\\' && /["\\$`]/.test(command[i + 1] ?? '')) i += 1;
+        part += command[i];
+      }
+      word = `${word ?? ''}${part}`;
+      i += 1;
+    } else if (ch === '\\') {
+      word = `${word ?? ''}${command[i + 1] ?? ''}`;
+      i += 2;
+    } else {
+      word = `${word ?? ''}${ch}`;
+      i += 1;
+    }
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
+
+/**
+ * A Windows command line split the way the C runtime splits it (the rules windowsArg writes
+ * for): backslashes are letters except in a run that reaches a `"`, where each pair is one
+ * backslash and an odd one out makes the quote a letter.
+ */
+function windowsArgs(line: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let started = false;
+  let quoted = false;
+  for (let i = 0; i < line.length; ) {
+    const ch = line[i];
+    if (ch === '\\') {
+      let run = 0;
+      while (line[i] === '\\') {
+        run += 1;
+        i += 1;
+      }
+      if (line[i] === '"') {
+        current += '\\'.repeat(Math.floor(run / 2));
+        if (run % 2 === 1) {
+          current += '"';
+          i += 1;
+        }
+      } else {
+        current += '\\'.repeat(run);
+      }
+      started = true;
+    } else if (ch === '"') {
+      quoted = !quoted;
+      started = true;
+      i += 1;
+    } else if ((ch === ' ' || ch === '\t') && !quoted) {
+      if (started) args.push(current);
+      current = '';
+      started = false;
+      i += 1;
+    } else {
+      current += ch;
+      started = true;
+      i += 1;
+    }
+  }
+  if (started) args.push(current);
+  return args;
 }
 
 /**
@@ -979,11 +1311,33 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
     throw new Error(`"${timeInput}" is not a time of day. Give it as HH:MM on a 24-hour clock, for example 19:00.`);
   }
   const e = resolveEnv(env);
-  const previous = (await loadConfig()).schedule;
-  assertMayChange(previous, e, options, 'install');
+  let previous = (await loadConfig()).schedule;
+  await assertMayChange(previous, e, options, 'install');
   const mechanism = await chooseMechanism(env);
   assertSchedulable(e, mechanism);
-  await mkdir(logDir(e), { recursive: true });
+  // Owner-only from the start, as appendLog keeps it: created by the process umask, the folder
+  // was world-readable until the first line was written, and on Linux cron's shell creates the
+  // log inside it before Node runs (security review, log-dir mode).
+  await mkdir(logDir(e), { recursive: true, mode: 0o700 });
+  await secureLog(env);
+
+  // The daily run was set up with another of this machine's schedulers than the one it gets
+  // now — a Linux machine that has gained systemd since. The old job is taken away first, and
+  // its answer read as remove() reads it, or both would go on running (the review's
+  // "scheduler changed"). A refusal stops here with the old job and its record as they were.
+  if (previous && isMechanism(previous.mechanism) && previous.mechanism !== mechanism) {
+    try {
+      await removeJob(e, previous.mechanism);
+    } catch (error) {
+      throw new Error(
+        `The daily run is set up with ${previous.mechanism}, and this computer now uses ${mechanism}; it has to be ` +
+          `taken off ${previous.mechanism} first, and that did not work. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    // Gone, so the settings say so before anything else can fail.
+    await saveConfig({ ...(await loadConfig()), schedule: null });
+    previous = null;
+  }
 
   /** After a refusal that took this mechanism's previous job down with it: see above. */
   const forgetReplaced = async (): Promise<void> => {
@@ -1160,11 +1514,33 @@ export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOp
   }
   // Turning off another copy's daily run is allowed — it is the safe direction — except a
   // production copy's, which a stray copy must not be able to silence.
-  assertMayChange(config?.schedule ?? null, e, options, 'remove');
+  await assertMayChange(config?.schedule ?? null, e, options, 'remove');
   // Whatever installed it is what has to remove it — a machine that has since gained
   // systemd must still be able to clear the crontab line left by the version that had not.
   const mechanism = config?.schedule?.mechanism ?? (await chooseMechanism(env));
+  await removeJob(e, mechanism);
 
+  if (!config) {
+    return {
+      installed: false,
+      mechanism: null,
+      time: null,
+      nextRun: null,
+      lastRun: await loadLastRun(),
+      registered: null,
+      location: null,
+      summary: 'The daily run is off. Your settings still cannot be read, and have been left as they are.',
+    };
+  }
+  await saveConfig({ ...(await loadConfig()), schedule: null });
+  return status(env);
+}
+
+/**
+ * Take one scheduler's daily run away, reading its answer: see remove(). Throws, having
+ * changed nothing, when the scheduler refuses; a job that is not there is already gone.
+ */
+async function removeJob(e: Resolved, mechanism: ScheduleMechanism): Promise<void> {
   switch (mechanism) {
     case 'launchd': {
       const unloaded = await unloadLaunchd(e, `gui/${e.uid}/${LAUNCHD_LABEL}`);
@@ -1213,21 +1589,6 @@ export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOp
       break;
     }
   }
-
-  if (!config) {
-    return {
-      installed: false,
-      mechanism: null,
-      time: null,
-      nextRun: null,
-      lastRun: await loadLastRun(),
-      registered: null,
-      location: null,
-      summary: 'The daily run is off. Your settings still cannot be read, and have been left as they are.',
-    };
-  }
-  await saveConfig({ ...(await loadConfig()), schedule: null });
-  return status(env);
 }
 
 /**
@@ -1377,6 +1738,13 @@ function said(result: CommandResult, program: string): string {
 }
 
 /**
+ * A line of the block this tool wrote: the daily line or the @reboot one, running
+ * `run --scheduled` into the log. Every version has written exactly that shape, whatever its
+ * quoting, and a line a person wrote for themselves has no reason to.
+ */
+const OUR_CRON_LINE = /^(?:@reboot|\S+ \S+ \S+ \S+ \S+)\s.*\srun --scheduled >> .* 2>&1$/;
+
+/**
  * A crontab with our block taken out.
  *
  * The block runs from CRON_MARKER to CRON_END. Trailing blank lines go too, so that
@@ -1391,15 +1759,22 @@ function stripCronBlock(crontab: string): string[] {
       kept.push(lines[i] ?? '');
       continue;
     }
-    // A block whose CRON_END was deleted by hand loses only the marker and the line after
-    // it. Reading on to the end of the file instead could take the person's own lines with
-    // it, and those are the one thing removing must never touch.
     let end = -1;
     for (let j = i + 1; j < lines.length; j += 1) {
       if (lines[j]?.trim() === CRON_END) { end = j; break; }
       if (lines[j]?.trim() === CRON_MARKER) break;
     }
-    i = end === -1 ? i + 1 : end;
+    if (end !== -1) {
+      i = end;
+      continue;
+    }
+    // A block whose CRON_END was deleted by hand loses the marker and the lines after it that
+    // are this tool's own, and nothing else (security review processes-3). This used to take
+    // the marker and one line, from when the block held one: with the daily line and the
+    // @reboot line it left the @reboot line behind, to run beside the block written next.
+    // Reading on to the end of the file instead could take the person's own lines with it,
+    // and those are the one thing removing must never touch.
+    while (i + 1 < lines.length && OUR_CRON_LINE.test(lines[i + 1]?.trim() ?? '')) i += 1;
   }
   while (kept.length > 0 && kept[kept.length - 1]?.trim() === '') kept.pop();
   return kept;

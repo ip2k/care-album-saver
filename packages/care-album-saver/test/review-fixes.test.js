@@ -118,8 +118,9 @@ test('/photo resolves both sides before comparing: no `..`, no symbolic link out
 test('the Photos-failure notice is one of the two the tool can show, and only fixed text reaches osascript', async () => {
   const calls = [];
   const env = { platform: 'darwin', home: await mkdtemp(join(tmpdir(), 'cas-notify-')), run: async (file, args) => { calls.push([file, args]); return { code: 0, stdout: '', stderr: '' }; } };
-  assert.equal(await schedule.notify(schedule.PHOTOS_NOTICE, env), true);
-  assert.equal(await schedule.notify(schedule.FAILED_NOTICE, env), true);
+  // Chosen by kind since processes-9: the words, and the AppleScript made from them, are the tool's own.
+  assert.equal(await schedule.notify('photos', env), true);
+  assert.equal(await schedule.notify('failed', env), true);
   assert.equal(await schedule.notify('Something with a child\'s name in it', env), false, 'an unknown message is not shown');
   assert.equal(calls.length, 2);
   for (const [file, args] of calls) {

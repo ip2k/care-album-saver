@@ -4,6 +4,7 @@ import { assertJsonResponse } from './api/schema.js';
 import { browserUserAgent } from './api/identity.js';
 import { scrub } from './secrets.js';
 import type { Secret } from './secrets.js';
+import { checkBaseUrl, refuseLiveApiUnderTest } from './config.js';
 
 /**
  * A bounded, read-only check of the live Brightwheel API that reveals SHAPE, never CONTENT.
@@ -104,6 +105,12 @@ export async function verify(
   session: Secret,
   options: { baseUrl?: string; fetchImpl?: typeof fetch; deep?: boolean; userAgent?: string | null } = {},
 ): Promise<VerifyReport> {
+  // This command composes its own requests, so it makes the command line's two refusals
+  // itself: no session in the clear to anywhere but this computer (security review
+  // outbound-13), and none to the real Brightwheel from a test (docs-14). A caller that hands
+  // in its own fetch reaches no network through this, so the second does not apply to it.
+  if (options.baseUrl !== undefined) checkBaseUrl(options.baseUrl);
+  if (!options.fetchImpl) refuseLiveApiUnderTest(options.baseUrl);
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   // Every request this command makes carries the same browser identity a run does, the
   // media ones included. Left to itself, fetch would announce `node` on each of them.
