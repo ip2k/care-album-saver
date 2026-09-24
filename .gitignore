@@ -100,7 +100,8 @@ archive.json
 *.tmp
 
 # ── The tool's own state ─────────────────────────────────────────────────────
-# These live in the config folder, beside session.json and config.json, and are never
+# These live in the config folder, beside session.json and config.json — all but the daily
+# log, which is in the log folder (~/Library/Logs/care-album-saver on a Mac) — and are never
 # written into the project tree. They name children, folders and photo fingerprints, so a
 # copy dropped here while debugging is kept out the same way as the session (security
 # review sc-9, docs-10): what Photos was handed and the private copies it was handed, the

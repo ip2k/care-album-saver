@@ -36,8 +36,9 @@ pnpm build
 node packages/care-album-saver/dist/cli.js setup
 ```
 
-The tool is not on npm yet, so those five lines build it from a clone; you need
-[pnpm](https://pnpm.io/installation) and Node 22 or newer. Every day after that, only the
+Those five lines build it from a clone; you need [pnpm](https://pnpm.io/installation) and
+Node 22 or newer. It is also on npm: `npm install -g care-album-saver`, then
+`care-album-saver setup`, needs only Node. Every day after that, only the
 last line. Then it prints a link like
 `http://127.0.0.1:52341/?token=...`.
 

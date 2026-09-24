@@ -87,7 +87,8 @@
 **/*_exiftool_tmp
 **/*.tmp
 
-# The tool's own state, which lives beside the session in the config folder.
+# The tool's own state, which lives beside the session in the config folder; the daily log
+# is in the log folder. (`*.log` is not mirrored here, so daily.log needs its own rule.)
 **/photos.json
 **/photos.lock
 **/photos-handover-*

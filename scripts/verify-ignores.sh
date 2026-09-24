@@ -181,8 +181,10 @@ must_ignore "$SOME/kids/.config.json.3f9a1c2b7d4e.tmp"                    "half-
 
 echo
 echo "The tool's own state files must be ignored:"
-# They live in the config folder, beside the session, and name children, folders and photo
-# fingerprints; copied here while debugging, they must be refused like the session.
+# They live in the config folder beside the session (the daily log in the log folder), and
+# name children, folders and photo fingerprints; copied here while debugging, they must be
+# refused like the session. The daily log is also caught by `*.log` in the build rules, so its
+# line proves the file is ignored, not which rule ignores it.
 must_ignore "photos.json"                                                 "what Photos was handed"
 must_ignore "photos.lock"                                                 "the Photos step's lock"
 must_ignore "$SOME/photos-handover-Xy12Ab/2026-09-18_1530_ab12cd34.mp4"   "a private copy for Photos"

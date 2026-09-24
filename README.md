@@ -172,8 +172,9 @@ Honesty matters more here than reassurance, so:
   nothing can be changed inside the photo, so any coordinates it arrived with are still
   there. The run says so rather than leaving you to assume otherwise.
 - **On Windows, the files are not owner-only.** On a Mac or Linux this tool writes the
-  session file so that only your account can open it, and creates the photo folders the
-  same way. Windows has no equivalent file setting: the session and the photos inherit the
+  session file so that only your account can open it, and creates the photo folders, and
+  every photo, sidecar and README it saves in them, the same way (files saved by earlier
+  versions keep the permissions they had). Windows has no equivalent file setting: the session and the photos inherit the
   permissions of the folder they are in. For `%APPDATA%` that already keeps other standard
   accounts on the PC out, but it is weaker than what a Mac or Linux gets, and it is not
   something this tool can fix.
@@ -223,7 +224,10 @@ your child's data, ask the school.
 
 The setup assistant walks you through everything. **[Full illustrated guide →](docs/GUIDE.md)**
 
-**This is not on npm yet**, so it is built from a clone. That is five commands, once:
+**From npm:** `npm install -g care-album-saver`, then `care-album-saver setup`. Updating is
+described in [docs/UPDATING.md](docs/UPDATING.md).
+
+**From a clone**, five commands, once:
 
 ```sh
 git clone https://github.com/ip2k/care-album-saver.git
@@ -484,7 +488,7 @@ tool is built. None of it is needed to save your photos.
 | `check --repair` | The same, and then fix the list, without downloading anything. |
 | `duplicates` | Find photos saved twice, and show them. Deletes nothing. |
 | `duplicates --remove` | The same, and then offer to delete the extra copies. It lists them and asks you to type `yes` before deleting any. |
-| `doctor` | Check everything is working. To find out whether your session still works it sends Brightwheel one request with it, the same one a run starts with (`GET /users/me`). It never prints your session, only a short fingerprint of it — but it does print your folder paths, which contain your computer's user name. |
+| `doctor` | Check everything is working. To find out whether your session still works it sends Brightwheel one request with it, the same one a run starts with (`GET /users/me`), asked again a few times only if Brightwheel says it is busy, as a run's requests are. It never prints your session, only a short fingerprint of it — but it does print your folder paths, which contain your computer's user name. |
 | `verify` | Check that Brightwheel's API still has the shape this tool expects. Read-only: it saves no photos, and prints no names, notes or ids. |
 | `verify --deep` | The same, and also read three photos to check whether they carry a capture time or a location, then delete them. |
 | `where` | Show where your files and settings are kept. |
@@ -498,7 +502,7 @@ tool is built. None of it is needed to save your photos.
 | `--at <HH:MM>` | `19:00` | Time of day for the daily run, on the 24-hour clock. Used with `schedule on`. |
 | `--replace` | off | Let `schedule on` or `schedule off` change a daily run that another copy of the tool set up. |
 | `--port <n>` | chosen for you | Port for the setup assistant |
-| `--base-url <url>` | Brightwheel's own | Point at a different API. Used by the tests. |
+| `--base-url <url>` | Brightwheel's own | Point at a different API, which your session is then sent to: an https address, or http only to this computer. Used by the tests. |
 
 On Windows the default folder is `%USERPROFILE%\Care Album Photos`. If you set this tool up while it
 was called `brightwheel-archive`, it keeps using the folder and the settings you already
@@ -542,7 +546,8 @@ a Mac or Windows maps bind mounts itself, so the flag does no harm there.
 print the exact folder to mount as `/config`.
 
 There is also a `CARE_ALBUM_SESSION` environment variable, which the tool reads instead of
-the session file when it is set. **Mount the file rather than use it.** An environment
+the session file when it is set. It takes the value alone, `_brightwheel_v2=…`, or a whole
+`Cookie:` header, as the paste box on the setup page does. **Mount the file rather than use it.** An environment
 variable is visible in process listings, lands in shell history, and is copied into crash
 dumps; a mounted file is none of those things.
 

@@ -1,3 +1,4 @@
+import { StringDecoder } from 'node:string_decoder';
 /**
  * Every line of the daily log starts with when it was written, in ISO 8601.
  *
@@ -38,16 +39,20 @@ type Write = NodeJS.WritableStream['write'];
 export function stampLines(stream: NodeJS.WritableStream, now: () => Date = () => new Date()): () => void {
   const original = stream.write;
   let atLineStart = true;
+  // One decoder for the stream, not a decode per write: a character whose bytes arrive in two
+  // writes, as a pipe may split them, stays one character rather than two U+FFFDs
+  // (security review processes-7).
+  const decoder = new StringDecoder('utf8');
+  // Whitespace that began a line, held until the rest of the line shows whether it is blank.
+  let held = '';
 
   const stamped = function (this: NodeJS.WritableStream, chunk: unknown, encoding?: unknown, callback?: unknown): boolean {
     if (typeof encoding === 'function') {
       callback = encoding;
       encoding = undefined;
     }
-    const text =
-      typeof chunk === 'string'
-        ? chunk
-        : Buffer.from(chunk as Uint8Array).toString(typeof encoding === 'string' ? (encoding as BufferEncoding) : 'utf8');
+    const text = held + (typeof chunk === 'string' ? chunk : decoder.write(Buffer.from(chunk as Uint8Array)));
+    held = '';
 
     let out = '';
     const lines = text.split('\n');
@@ -56,7 +61,12 @@ export function stampLines(stream: NodeJS.WritableStream, now: () => Date = () =
       if (atLineStart) {
         // A whole line with nothing on it: dropped, newline and all.
         if (line.trim() === '' && complete) return;
-        if (line === '') return;
+        // Nothing but whitespace so far, and the line not finished: whether it is blank is
+        // decided when the rest of it arrives, not now.
+        if (line.trim() === '') {
+          held = line;
+          return;
+        }
         out += `${logTimestamp(now())}  `;
       }
       out += line;
