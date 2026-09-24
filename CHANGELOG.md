@@ -44,6 +44,14 @@ file was started.
 
 ### Fixed
 
+- **Two runs can no longer save into the archive at the same time.** Turning the daily run on
+  starts one straight away, and pressing "Save new photos" in the same minute used to start a
+  second beside it; the two overwrote each other's list, and the next run fetched photos again
+  as "-2" copies. Now the second one says another run is already saving, and stops without
+  changing anything.
+- **A run you start counts as the day's run.** Runs started from the page or the command line
+  were never recorded, so the daily run's missed-run catch-up always thought today had been
+  missed and started a full run of its own.
 - **Sizes match your file manager.** The dashboard divided by 1,048,576 and called it MB, while
   the folder check divided by 1,000,000, so one archive read 218 MB on one screen and 231 MB on
   the next. Both now measure the whole folder and write it as this computer's own file manager
