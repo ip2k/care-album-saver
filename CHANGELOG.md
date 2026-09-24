@@ -31,6 +31,10 @@ file was started.
 
 ### Changed
 
+- **Once set up, the page opens on your photos**, with who it is connected as, when the daily
+  run is, how the last run went and where the photos are, underneath. **Settings is a column of
+  sections** — Account, Children, Save Locations, Schedule, Integrations, Maintenance — showing
+  one at a time, with nothing folded away, and every section fits one screen.
 - **Colours are Rosé Pine**: Dawn when your computer is in light mode, the main Rosé Pine
   palette in dark mode. A few colours are nudged darker where the palette's own would be too
   faint to read comfortably as text.
@@ -44,6 +48,10 @@ file was started.
 
 ### Fixed
 
+- A folder typed into the page must be a full path (or start with `~/`). A relative one was
+  quietly put inside the tool's own folder. The command line's `--dir` still means relative to
+  where you typed it.
+- Reconnecting after the session had run out no longer leaves the page stuck on the setup steps.
 - **Two runs can no longer save into the archive at the same time.** Turning the daily run on
   starts one straight away, and pressing "Save new photos" in the same minute used to start a
   second beside it; the two overwrote each other's list, and the next run fetched photos again
