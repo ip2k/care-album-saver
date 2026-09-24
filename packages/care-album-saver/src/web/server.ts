@@ -11,7 +11,7 @@ import { sync, type SyncProgress } from '../sync.js';
 import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
 import { photoAt, summarise } from '../gallery.js';
-import { createReadStream } from 'node:fs';
+import { open, type FileHandle } from 'node:fs/promises';
 import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
 import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
@@ -92,6 +92,10 @@ function crossSite(req: IncomingMessage): boolean {
 export function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | 'unsatisfiable' {
   const m = /^bytes=(\d*)-(\d*)$/.exec((header ?? '').trim());
   if (!m || (m[1] === '' && m[2] === '')) return null;
+  // Nothing in an empty file can be asked for: a suffix range on it used to produce
+  // {start: 0, end: -1}, which the read stream rejected after the headers were sent, and the
+  // unhandled error took the whole process with it (security review, 2026-09-23).
+  if (size === 0) return 'unsatisfiable';
   if (m[1] === '') {
     // The last N bytes.
     const suffix = Number(m[2]);
@@ -520,17 +524,35 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           res.writeHead(416, { ...headers, 'content-range': `bytes */${found.bytes}` }).end();
           return;
         }
+        // The stream's errors are handled and the stream is destroyed when the browser goes
+        // away: an unhandled 'error' on a read stream (a file that stats but cannot be opened)
+        // is fatal to the process, and a range request the viewer abandons would otherwise
+        // keep its file handle open for the life of the server.
+        // Opened before any header is written, so a file that cannot be opened is a 500 rather
+        // than a 200 with nothing in it.
+        let handle: FileHandle;
+        try {
+          handle = await open(found.path, 'r');
+        } catch {
+          res.writeHead(500, { 'content-type': 'text/plain' }).end('That photo could not be read.');
+          return;
+        }
+        const stream = handle.createReadStream(range ? { start: range.start, end: range.end } : {});
+        stream.on('error', () => {
+          if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' });
+          res.end();
+        });
+        res.on('close', () => stream.destroy());
         if (range) {
           res.writeHead(206, {
             ...headers,
             'content-length': String(range.end - range.start + 1),
             'content-range': `bytes ${range.start}-${range.end}/${found.bytes}`,
           });
-          createReadStream(found.path, { start: range.start, end: range.end }).pipe(res);
-          return;
+        } else {
+          res.writeHead(200, { ...headers, 'content-length': String(found.bytes) });
         }
-        res.writeHead(200, { ...headers, 'content-length': String(found.bytes) });
-        createReadStream(found.path).pipe(res);
+        stream.pipe(res);
         return;
       }
 

@@ -196,3 +196,56 @@ test('a crontab that cannot be read is not treated as empty, and a write that fa
   const refusing = { platform: 'linux', home, run: runner({ ...noSystemd, 'crontab -l': { code: 0, stdout: 'their own line\n' }, 'crontab -': { code: 1, stderr: 'not allowed' } }) };
   await assert.rejects(() => schedule.remove(refusing), /could not be removed from your crontab, so nothing was changed/);
 });
+
+test('/photo cannot take the server down: an empty file with a suffix range, and a file that cannot be opened', async (t) => {
+  await freshConfigDir();
+  const { parseRange } = await import('../dist/web/server.js');
+  assert.equal(parseRange('bytes=-5', 0), 'unsatisfiable');
+  assert.equal(parseRange('bytes=0-', 0), 'unsatisfiable');
+  const archive = await mkdtemp(join(tmpdir(), 'cas-photo-crash-'));
+  await writeFile(join(archive, 'empty.jpg'), '');
+  await writeFile(join(archive, 'locked.jpg'), 'locked');
+  await writeFile(join(archive, 'archive.json'), JSON.stringify({ schema: 2, source: 'brightwheel', updatedAt: '2026-09-23T00:00:00Z', files: [
+    { path: 'empty.jpg', bytes: 0, sha256: 'a', downloadedAt: '2026-09-23T00:00:00Z' },
+    { path: 'locked.jpg', bytes: 6, sha256: 'b', downloadedAt: '2026-09-23T00:00:00Z' },
+  ] }));
+  await writeSecureFile(configPath(), JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: archive }));
+  const handle = await startWebUi({});
+  const get = (path, headers = {}) => fetch(`http://127.0.0.1:${handle.port}${path}`, { headers: { 'x-setup-token': handle.token, ...headers } });
+  try {
+    const suffix = await get('/photo?i=0', { range: 'bytes=-5' });
+    assert.equal(suffix.status, 416, 'nothing in an empty file can be asked for');
+    assert.equal((await get('/api/state')).status, 200, 'and the server is still there');
+    if (process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0) {
+      const { chmod } = await import('node:fs/promises');
+      await chmod(join(archive, 'locked.jpg'), 0o000);
+      const locked = await get('/photo?i=1');
+      assert.ok(locked.status === 500 || locked.status === 404, `a file that cannot be opened is an error, got ${locked.status}`);
+      await locked.arrayBuffer();
+      assert.equal((await get('/api/state')).status, 200, 'and the server is still there');
+      await chmod(join(archive, 'locked.jpg'), 0o600);
+    } else {
+      t.diagnostic('unreadable-file case skipped: needs a non-root POSIX account');
+    }
+  } finally {
+    await handle.close();
+  }
+});
+
+test('a release link is judged on its parsed address, so `..` cannot walk it off this repository', async () => {
+  const { parseRelease } = await import('../dist/updates.js');
+  const base = { tag_name: 'v9.9.9', draft: false, prerelease: false, body: '' };
+  assert.equal(parseRelease({ ...base, html_url: 'https://github.com/ip2k/care-album-saver/releases/../../evil/releases/tag/v9.9.9' }), null);
+  assert.equal(parseRelease({ ...base, html_url: 'https://user:pw@github.com/ip2k/care-album-saver/releases/tag/v9.9.9' }), null);
+  assert.equal(parseRelease({ ...base, html_url: 'https://github.com/ip2k/care-album-saver/releases/tag/v9.9.9?x=1' }), null);
+  assert.equal(parseRelease({ ...base, html_url: 'https://github.com/ip2k/care-album-saver/releases/tag/v9.9.9' })?.version, '9.9.9');
+});
+
+test('a stored User-Agent with a control character or non-ASCII in it is not sent', async () => {
+  const { acceptableUserAgent } = await import('../dist/api/identity.js');
+  const good = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.2 Safari/605.1.15';
+  assert.equal(acceptableUserAgent(good), good);
+  assert.equal(acceptableUserAgent('Mozilla/5.0 (X\r\nCookie: injected) Safari/1'), null);
+  assert.equal(acceptableUserAgent('Mozilla/5.0 (X\u0000) Safari/1'), null);
+  assert.equal(acceptableUserAgent('Mozilla/5.0 (Macintosh; caf\u00e9) Safari/1'), null);
+});
