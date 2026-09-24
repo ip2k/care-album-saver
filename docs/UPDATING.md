@@ -72,10 +72,10 @@ docker build -t care-album-saver .
 The next `docker run` uses the new image. Your session and photos are in the folders you
 mount into the container, so nothing else changes.
 
-### You installed it from npm (once it is published there)
+### You installed it from npm
 
-Care Album Saver is not on npm yet. When it is, a global install is updated with the same
-package manager that installed it:
+Every release on GitHub is also published to npm, as `care-album-saver`.
+A global install is updated with the same package manager that installed it:
 
 ```sh
 npm install -g care-album-saver@latest     # npm
