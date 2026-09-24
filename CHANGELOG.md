@@ -44,6 +44,9 @@ file was started.
 
 ### Fixed
 
+- **When Brightwheel refuses a pasted value, the page says so in words that fit a browser**,
+  and where the right value comes from — instead of a terminal command to run and a guess that
+  the session had expired, which a value from the wrong row, or pasted into the demo, is not.
 - **Button and text-box text was stuck at 13px**, whatever size the page asked for: an
   invalid rule made the browser ignore it and fall back to its own default. It is now the
   intended size, and a test stops the mistake coming back.
