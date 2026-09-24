@@ -163,23 +163,31 @@ file was started.
 - **A damaged settings file no longer starts your archive over.** If `config.json` is ever
   damaged (by a full disk or a hand edit), the tool now stops and says which file and why,
   instead of quietly falling back to a fresh setup, which meant a new default folder and every
-  child's whole feed downloaded again. The daily run records the refusal and shows the "did not
-  work" notice. A damaged saved session now says it is damaged rather than "not connected"
-  (connecting again fixes it). A damaged record of what went into Photos stops the Photos step,
-  rather than adding every photo again, and to iCloud with them.
+  child's whole feed downloaded again. The same goes for a settings file that has gone missing
+  while the daily run is still set up. The daily run records the refusal and shows the "did
+  not work" notice. The setup page, `where`, `doctor` and `schedule off` still work while the
+  settings are damaged, so you can see what is wrong and turn the daily run off. A damaged
+  saved session now says it is damaged rather than "not connected" (connecting again fixes
+  it). A damaged record of what went into Photos is shown beside the Photos switch and stops
+  the Photos step, rather than adding every photo again, and to iCloud with them. A settings
+  file saved by Notepad (with a byte-order mark) still loads.
 - **The daily run stays with the copy that set it up.** Every copy of the tool on a computer
   shares one daily run. A second copy, such as an unpacked download you only looked at or a copy
   run once with npx, can no longer quietly point the daily run at itself. The setup page asks
   first ("Move the daily run to this copy?"). From the command line it takes
   `schedule on --replace`.
 - **Saved files only get photo and video extensions.** A file is saved as `.jpg`, `.jpeg`,
-  `.png`, `.heic`, `.heif`, `.webp`, `.gif`, `.mp4`, `.mov` or `.m4v`, never as whatever the
-  download link ended in, so nothing in your archive folder can end up named like a program or
-  a web page.
-- **Files the tool rewrites can't be redirected.** The archive list, your settings, your
-  session, each week's README and each photo's `.json` file are written through a temporary
-  file with an unpredictable name that is never opened through a symbolic link. Before, someone
-  who could write to your archive folder could plant a link and make the next run overwrite a
-  different file.
-- **Downloads sent compressed no longer fail as "truncated".** The tool now asks for photos
-  uncompressed, and no longer misreads the size when a server compresses them anyway.
+  `.png`, `.gif`, `.webp`, `.heic`, `.heif`, `.avif`, `.tif`, `.tiff`, `.bmp`, `.mp4`, `.mov`,
+  `.m4v`, `.3gp`, `.webm` or `.avi`, never as whatever the download link ended in, so nothing
+  in your archive folder can end up named like a program or a web page.
+- **Nothing the tool writes can be redirected out of your archive.** Each photo is now saved in
+  a private folder and moved into place when it is finished, with its `.json` and `.xmp` files.
+  The archive list, your settings and session, and each week's README are written through a
+  temporary file with an unpredictable name that is never opened through a symbolic link. A
+  child's or a week's folder that turns out to be a link to somewhere else is refused. Before,
+  someone who could write to your archive folder could plant a link and make the next run
+  write a photo, or a file naming your child, somewhere else, or overwrite a different file.
+- **Downloads are checked for arriving whole, always.** The tool asks for photos uncompressed,
+  and one sent compressed anyway is not saved (it is tried again next time), because a
+  compressed download cannot be checked for having arrived whole. A connection that drops
+  part-way now says so in words.

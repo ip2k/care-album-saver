@@ -139,6 +139,33 @@ Web server, page, outbound, supply chain and docs (all verified):
 
 fs-7 (stale-lock takeover race; fix by `rename` before `rm`), fs-8 (`Manifest.open` does not validate records: `files:[null]` throws a raw TypeError through sync, `/api/gallery` and maintenance — web-9 the same), fs-9 (`CON.x` passes the Windows reserved-name check), fs-10 (every file except `archive.json` is written at umask default), fs-11 (`checkArchiveDir` is lexical and accepts the tool's own config folder), fs-12 (a NUL in a note makes ExifTool refuse the whole write, so that photo also loses its dates), processes-3/6/7/8/9/10, web-7/8/10/11/12/13 (Host and Origin checks ignore the port; `?i=` accepts `0x1`; `String.replace` `$`-patterns in the banner splice; `xml()` does not escape `'`), page-6…12, outbound-8…13 (`--base-url` sends the session to any origin the owner names, including `http://`), sc-5…13 (no `packageManager` field; the image ships `src/` and all test files; deploy.js runs fetched `main` as the owner; Node 20 in the CI matrix while the only dependency needs ≥22 — those cells will fail on the first run), docs-6…15 (the handoff and CLAUDE.md status lines are already stale in places; 60 local branches, 14 of them `worktree-wf_*`), and one for the owner: the Mac's folder layout (`~/Developer/…`, `~/Applications/…`) appears in the handoff, CHANGELOG, CLAUDE.md, `scripts/deploy.js` and a test fixture — a layout, not an identity, but a deliberate yes or no before the push. Outbound's verifier added: a media URL is any non-empty string, so the API can point `download()` at any URL reachable from the parent's machine (fix: require the CDN's scheme and host); the sign-in heuristic runs on any non-JSON body before the status is considered (a captive portal reads as "signed out"); `CARE_ALBUM_SESSION` in `name=value` form goes out doubled.
 
+
+### 4.4 An adversarial pass over the ★ fixes (same night)
+
+Six reviewers, one per ★ item and one for portability, each tried to break the fix on
+`fix/2026-09-23@review-star-items` with real inputs (verdict CONCERNS in every lane: no
+CRITICAL, 11 WARNING). All WARNINGs were fixed on the same branch before it was merged;
+`test/review-star-items.test.js` holds a test for each.
+
+| found | what | fix |
+|---|---|---|
+| fs-2 | ExifTool's own `<photo>_exiftool_tmp` and the `.xmp` sidecar are predictable names, and ExifTool writes through a *dangling* link: reproduced, the tagged photo or a sidecar naming the child landed outside the archive (pre-existing) | every item is staged in a `mkdtemp` folder (0700, dot-named) inside its week folder and renamed into place (`saveStaged` in `sync.ts`) |
+| fs-2 | a week or child folder that is itself a symlink is written through: `writeAtomically` guards the last component only (pre-existing) | `realFolderUnder` in `contain.ts`, checked before and after `mkdir`; the folder's items fail with a message |
+| fs-2 (notes) | replaced files lost their mode; no fsync; `.part`/`_exiftool_tmp` litter adopted by the repair; Windows rename meets scanner locks | existing mode kept; `handle.sync()`; the audit skips them and hidden folders; EPERM/EACCES/EBUSY retried on win32 |
+| fs-4 | regression: a per-kind list named a JPEG on a video post `.mp4` and TIFF/AVIF `.jpg`, so ExifTool refused to tag them | one list of inert media extensions for both kinds |
+| fs-5 | following the refusal's advice (move the file aside) made the next daily run a first run again | a scheduled run with no `config.json` refuses and records it |
+| fs-5 | regression: a damaged Photos record hid the Photos card ("needs a Mac") | `photosStatus` reports `problem` instead of throwing; the page shows it beside the switch |
+| fs-5 | a UTF-8 BOM (Notepad) bricked every command; a session of the wrong shape was still "not signed in"; a scheduled run with no session recorded nothing | BOM stripped; `SessionUnusableError` for any unusable session; recorded |
+| fs-5 (notes) | wrong-typed `includeStudents` meant every child; `setup`/`where`/`doctor`/`schedule off` refused on damaged settings; an invalid `savedAt` took `/api/state` down; errno codes shown raw; a duplicate unstamped log line; deploy.js crashed | the three harmful fields are type-checked; those commands run and report it; all guarded or put in words |
+| missed-web | any copy carrying the production marker bypassed every ownership check — including a Finder duplicate of production | the marker's first line is the production folder's real path (`isProductionRoot`); production may not take the job from another production folder without `--replace`, which deploy.js passes |
+| outbound-3 (notes) | a compressed stream cut short inside a complete response decodes silently to a shorter file; bare `identity` is wget's header | a compressed body is refused (retried next run); the header is a browser's media value, `identity;q=1, *;q=0` |
+
+Still open from this pass, each a NOTE: a child's name ending in `.app` makes macOS show the
+child's folder as an application (fs-4); ownership lives only in `config.json`, so a copy from
+before this fix writes records without an owner (missed-web); `login` writes back the whole
+settings object it loaded at start, racing a schedule change (pre-existing); while the Photos
+record is damaged, the Photos notice repeats every evening rather than once.
+
 ## 5. What was verified, and what was not
 
 Verified: `pnpm clean && pnpm build && pnpm test` on `main` after the fixes: **320 tests, 320

@@ -59,14 +59,20 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 335 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+- 345 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
   because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
   of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
   24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
 - **Pushed for the first time on 2026-09-23** to the public https://github.com/ip2k/care-album-saver,
   at b94e7cd, after a history rewrite that dropped eight leaking screenshot blobs and set every
   commit identity to the owner's GitHub noreply address (docs/SECURITY-REVIEW-2026-09-23.md
-  §1/§3). The ~60 local branches that pointed at the old history were deleted and the
+  §1/§3). **Rewritten and force-pushed once more the same night, at the owner's instruction**
+  (main d13f8ff): eight commits made after the first rewrite had picked up the global git
+  identity, and two review documents described the owner's personal address. Every commit now
+  reads `ip2k <401146+ip2k@users.noreply.github.com>` (this checkout sets that as its local
+  identity, so a changed global one cannot leak in again), and no file in any commit names a
+  personal address or mail provider. Commit as that identity; never name the owner's mail
+  provider or personal address anywhere in the repository. The ~60 local branches that pointed at the old history were deleted and the
   object database garbage-collected the same night: none of the eight blobs remains
   anywhere locally, and `main` is the only branch. CI is green on every
   cell since 90bcdff (Ubuntu, macOS and Windows × Node 22/24/26, the screenshots job, and
