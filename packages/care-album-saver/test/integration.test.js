@@ -100,7 +100,7 @@ test('client reads the account and the children', async () => {
   const kids = await client().students(me.id);
   assert.equal(kids.length, 2);
   assert.equal(kids[0].fullName, 'Robin Maple');
-  assert.equal(kids[0].schoolName, 'Sunnybrook Early Learning');
+  assert.equal(kids[0].schoolName, 'Example Care Provider');
 });
 
 test('an expired session is detected even when the server answers 200', async () => {

@@ -285,7 +285,7 @@ test('an .xmp sidecar that cannot be written is reported as such, and the photo 
         author: 'Ms. Alvarez',
         kind: 'image',
       },
-      student: { id: ROBIN, firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook' },
+      student: { id: ROBIN, firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Example Care Provider' },
       tagChildName: true,
       tagNote: true,
       stripLocation: true,
