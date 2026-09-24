@@ -1,34 +1,23 @@
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { transferIdentity } from './url.js';
-import type { RemoteValidators } from './download.js';
 
-export const MANIFEST_SCHEMA = 2;
+const MANIFEST_SCHEMA = 2;
 export const MANIFEST_FILENAME = 'archive.json';
 
 /**
- * Default POSIX permissions for the manifest file: owner only.
+ * POSIX permissions for the manifest file: owner only.
  *
  * The manifest is not a list of filenames. Every record carries whatever `provenance` the
  * adapter chose to write, and for an archive of personal media that is people — who is in
  * the file, who posted it, what they said about it. A file describing people should not be
  * readable by every account on a shared computer merely because 0644 is what `writeFile`
- * does by default, so the cautious mode is the default here and a caller that wants the
- * manifest shared passes its own.
+ * does by default, so the cautious mode is the only one this module writes.
  *
  * Windows has no POSIX modes; there the file inherits the ACL of the folder it sits in,
  * and `save` skips the mode entirely rather than pretending otherwise.
  */
-export const MANIFEST_FILE_MODE = 0o600;
-
-export interface ManifestOptions {
-  /**
-   * Permissions for the manifest file on POSIX systems. Defaults to
-   * {@link MANIFEST_FILE_MODE}, which is owner-only; pass e.g. `0o644` for an archive that
-   * is meant to be read by other accounts. Ignored on Windows.
-   */
-  fileMode?: number;
-}
+const MANIFEST_FILE_MODE = 0o600;
 
 export interface ManifestRecord {
   /**
@@ -48,11 +37,11 @@ export interface ManifestRecord {
   lastModified?: string | null;
   /** When this tool downloaded it (ISO 8601). Not the capture time. */
   downloadedAt: string;
-  /** Free-form provenance from the adapter: capture time, child, note, etc. */
+  /** Free-form provenance from the adapter: posted time, child, note, etc. */
   provenance?: Record<string, unknown>;
 }
 
-export interface ManifestData {
+interface ManifestData {
   schema: number;
   source: string;
   updatedAt: string;
@@ -99,15 +88,17 @@ export class ManifestUnusableError extends Error {
  * everything — and because CDN URLs are signed and change every time, naive URL
  * comparison cannot substitute for it.
  *
- * Lookups are by three independent keys, in order of trustworthiness:
+ * `has` looks a record up by two keys, in order of trustworthiness:
  *   1. sourceId   - the service's own media id. Authoritative when present.
  *   2. transferId - the URL with signature parameters stripped.
- *   3. sha256     - content identity, which also catches the same photo posted twice.
+ *
+ * `sha256` is not a key for finding duplicates. It is an integrity checksum of the file as
+ * saved, taken after the tags are embedded, so it describes the bytes on disk rather than
+ * the photo as the service holds it.
  */
 export class Manifest {
   private bySourceId = new Map<string, ManifestRecord>();
   private byTransferId = new Map<string, ManifestRecord>();
-  private byHash = new Map<string, ManifestRecord>();
   private byPath = new Map<string, ManifestRecord>();
   private records: ManifestRecord[] = [];
   /** Adapter-owned state, persisted with the records. See `ManifestData.state`. */
@@ -116,7 +107,6 @@ export class Manifest {
   private constructor(
     private readonly root: string,
     private readonly source: string,
-    private readonly fileMode: number,
   ) {}
 
   /**
@@ -131,8 +121,8 @@ export class Manifest {
    * what had already been saved, and throw away how far each child's feed had been walked
    * — and then do it all again on the next run.
    */
-  static async open(root: string, source: string, options: ManifestOptions = {}): Promise<Manifest> {
-    const m = new Manifest(root, source, options.fileMode ?? MANIFEST_FILE_MODE);
+  static async open(root: string, source: string): Promise<Manifest> {
+    const m = new Manifest(root, source);
     const file = join(root, MANIFEST_FILENAME);
 
     let raw: string;
@@ -184,29 +174,10 @@ export class Manifest {
     // stripped form would mean this index silently never matched, and every run would
     // re-download anything whose Brightwheel id had changed.
     if (r.transferId) r.transferId = transferIdentity(r.transferId);
-    // Likewise the path: a manifest written on Windows before paths were normalised holds
-    // backslashes, and a reader on any platform should see the one documented form.
-    r.path = posixPath(r.path);
     this.records.push(r);
     if (r.sourceId) this.bySourceId.set(r.sourceId, r);
     if (r.transferId) this.byTransferId.set(r.transferId, r);
-    this.byHash.set(r.sha256, r);
     this.byPath.set(r.path, r);
-  }
-
-  /** Look up an already-downloaded file by service media id. */
-  findBySourceId(id: string): ManifestRecord | undefined {
-    return this.bySourceId.get(id);
-  }
-
-  /** Look up by URL, ignoring signature/expiry parameters. */
-  findByUrl(url: string): ManifestRecord | undefined {
-    return this.byTransferId.get(transferIdentity(url));
-  }
-
-  /** Look up by content hash — catches the identical photo posted twice. */
-  findByHash(sha256: string): ManifestRecord | undefined {
-    return this.byHash.get(sha256);
   }
 
   /** Look up by archive-relative path, written with either kind of slash. */
@@ -221,25 +192,14 @@ export class Manifest {
     return false;
   }
 
-  add(record: Omit<ManifestRecord, 'downloadedAt'> & { downloadedAt?: string }): ManifestRecord {
+  add(record: Omit<ManifestRecord, 'downloadedAt'>): ManifestRecord {
     const full: ManifestRecord = {
       ...record,
       path: posixPath(record.path),
-      downloadedAt: record.downloadedAt ?? new Date().toISOString(),
+      downloadedAt: new Date().toISOString(),
     };
-    const existing = full.sourceId ? this.bySourceId.get(full.sourceId) : undefined;
-    if (existing) {
-      this.byPath.delete(existing.path);
-      Object.assign(existing, full);
-      this.byPath.set(existing.path, existing);
-      return existing;
-    }
     this.index(full);
     return full;
-  }
-
-  get all(): readonly ManifestRecord[] {
-    return this.records;
   }
 
   get size(): number {
@@ -262,20 +222,21 @@ export class Manifest {
       source: this.source,
       updatedAt: new Date().toISOString(),
       notes:
-        'downloadedAt is when this tool fetched the file. Capture time lives in ' +
-        'provenance.postedAt and in the file EXIF/XMP metadata. etag and lastModified ' +
-        'are verbatim HTTP response headers; null means the server did not supply one. ' +
-        'Local filesystem timestamps are never used as validators.',
+        'downloadedAt is when this tool fetched the file. provenance.postedAt is when the ' +
+        'photo was posted to Brightwheel; the photographs carry no capture time of their ' +
+        'own, so that is also the date written into the file EXIF/XMP metadata. etag and ' +
+        'lastModified are verbatim HTTP response headers; null means the server did not ' +
+        'supply one. Local filesystem timestamps are never used as validators.',
       state: this.state,
       files: this.records,
     };
     const target = join(this.root, MANIFEST_FILENAME);
     const temp = `${target}.tmp`;
-    await writeFile(temp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: this.fileMode });
+    await writeFile(temp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: MANIFEST_FILE_MODE });
     if (process.platform !== 'win32') {
       // Re-assert: the create mode is filtered by the process umask, and a temp file left
       // behind by a crashed run is truncated by the write above but keeps its old mode.
-      await chmod(temp, this.fileMode);
+      await chmod(temp, MANIFEST_FILE_MODE);
     }
     await rename(temp, target);
   }
@@ -285,5 +246,3 @@ export class Manifest {
 function posixPath(path: string): string {
   return path.replaceAll('\\', '/');
 }
-
-export type { RemoteValidators };

@@ -134,8 +134,8 @@ async function ffprobe(file) {
 test('the mock serves a genuine JPEG and a genuine MP4, deterministically', async () => {
   const jpg = await fetch(`${mock.url}/media/act-111-0000.jpg?signature=x&expires=1`);
   assert.equal(jpg.headers.get('content-type'), 'image/jpeg');
-  assert.match(jpg.headers.get('etag'), /^"[0-9a-f]{16}"$/, 'download resume relies on a stable etag');
-  assert.ok(jpg.headers.get('last-modified'), 'download resume relies on Last-Modified');
+  assert.match(jpg.headers.get('etag'), /^"[0-9a-f]{16}"$/, 'archive.json records the etag verbatim');
+  assert.ok(jpg.headers.get('last-modified'), 'archive.json records Last-Modified verbatim');
   const jpgBytes = Buffer.from(await jpg.arrayBuffer());
   assert.equal(Number(jpg.headers.get('content-length')), jpgBytes.length);
   assert.deepEqual([...jpgBytes.subarray(0, 3)], [0xff, 0xd8, 0xff]);
