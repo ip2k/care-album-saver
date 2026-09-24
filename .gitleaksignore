@@ -1,0 +1,12 @@
+# Findings in history that are the tests' own invented values, not credentials. Found by the
+# first full-history scan (2026-09-24, security.yml run by hand; see sc-4 in
+# docs/SECURITY-REVIEW-2026-09-23.md). Each line is one commit's one line — never a path or
+# a pattern — so the same value committed anywhere else is still reported. The values in
+# today's files are listed in .gitleaks.toml's allowlist instead.
+#
+# gitleaks-rules.test.js at bd899eb: a CloudFront-shaped URL on media.example.invalid,
+# Signature=NotARe…, Key-Pair-Id=APKAEXAMPLE, to prove the signed-media-url rule fires.
+bd899ebc18bfc23a0ce683a0d9b976b37c295d42:packages/care-album-saver/test/gitleaks-rules.test.js:signed-media-url:53
+# fix-privacy.test.js at 75df1c8 (before the rename): a URL on media.example.net with
+# signature=abcdef…&expires=99, from a stand-in API.
+75df1c85520d8fa26529ede8fc25d98da8cd3379:packages/brightwheel-archive/test/fix-privacy.test.js:signed-media-url:264
