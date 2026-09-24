@@ -18,6 +18,9 @@
  * at zero.
  */
 
+import { createHash } from 'node:crypto';
+import { transferIdentity } from '../ferry/url.js';
+
 export class ApiShapeError extends Error {
   constructor(message: string) {
     super(message);
@@ -55,15 +58,13 @@ export function assertJsonResponse(response: Response, body: string, context: st
   }
 }
 
-function req(obj: Record<string, unknown>, key: string, context: string): unknown {
-  if (!(key in obj) || obj[key] === null || obj[key] === undefined) {
-    throw new ApiShapeError(
-      `Brightwheel's response for ${context} is missing the "${key}" field. ` +
-        `The API may have changed; please open an issue with the output of ` +
-        `\`care-album-saver doctor\`.`,
-    );
-  }
-  return obj[key];
+/** The refusal for a field that is not there, worded for whoever has to fix it. */
+function missing(key: string, context: string): ApiShapeError {
+  return new ApiShapeError(
+    `Brightwheel's response for ${context} is missing the "${key}" field. ` +
+      `The API may have changed; please open an issue with the output of ` +
+      `\`care-album-saver doctor\`.`,
+  );
 }
 
 function asObject(value: unknown, context: string): Record<string, unknown> {
@@ -82,6 +83,40 @@ function asArray(value: unknown, context: string): unknown[] {
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
 
+/**
+ * The first of these that can serve as an id, exactly as it has always been written down —
+ * `String()` of it — or null when none can.
+ *
+ * An id is a key: the manifest de-duplicates on a post's, the cut-off is kept per child's.
+ * `String()` of anything at all used to be accepted, so an empty `object_id` gave every post
+ * the id "" and the first one saved stood for all of them — the rest were skipped as already
+ * had (security review outbound-4). `{}` and `true` did the same through "[object Object]"
+ * and "true". So only a string with something in it, or a finite number, is an id; and an
+ * unusable `object_id` no longer hides a good `id` beside it. Every id that was usable before
+ * comes out character for character as it did, so no existing archive fetches anything again.
+ */
+function usableId(...candidates: unknown[]): string | null {
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return null;
+}
+
+/**
+ * An id for a post that carries none, made from what it is a post OF: its media's address
+ * with the signature taken off (`transferIdentity`), hashed.
+ *
+ * Stable where it matters: the signature changes on every listing and the address under it
+ * does not, so the same photo gets the same id on every run, and a page listed again for a
+ * fresh signature finds it under the same id. Two posts of one file are one photo, which is
+ * the answer the manifest's second key gives too; two posts of different files are two. The
+ * prefix keeps these apart from Brightwheel's own ids, which are never shaped like this.
+ */
+function idFromMedia(url: string): string {
+  return `media-${createHash('sha256').update(transferIdentity(url)).digest('hex').slice(0, 32)}`;
+}
+
 export interface Student {
   id: string;
   firstName: string;
@@ -91,7 +126,10 @@ export interface Student {
 }
 
 export interface MediaActivity {
-  /** Brightwheel's own id for this post. The primary deduplication key. */
+  /**
+   * Brightwheel's own id for this post — or, for a post that carries none it can use, one
+   * made from its media (`idFromMedia`). The primary deduplication key.
+   */
   id: string;
   studentId: string | null;
   /**
@@ -115,13 +153,14 @@ export function parseMe(raw: unknown): { id: string; email: string | null } {
   const user = 'object' in o ? asObject(o.object, 'users/me.object') : o;
   // Brightwheel names its primary keys `object_id` throughout, not `id`. Confirmed against
   // sanitized fixtures in stephenyeargin/hubot-brightwheel and roloenusa/brightwheel_downloader.
-  const id = user.object_id ?? user.id;
-  if (id === null || id === undefined) {
+  // An empty one is as good as none: it would ask for the children of `/guardians//`.
+  const id = usableId(user.object_id, user.id);
+  if (id === null) {
     throw new ApiShapeError(
       'Brightwheel did not return an account id (expected "object_id"). The API may have changed.',
     );
   }
-  return { id: String(id), email: str(user.email) };
+  return { id, email: str(user.email) };
 }
 
 /** `GET /api/v1/guardians/{id}/students` */
@@ -135,8 +174,13 @@ export function parseStudents(raw: unknown): Student[] {
     const first = str(s.first_name) ?? '';
     const last = str(s.last_name) ?? '';
     const school = s.school ? asObject(s.school, `students[${i}].school`) : null;
+    // A child's id keys their cut-off and their place in the selection of children, so two
+    // children with an empty one would share both. There is nothing to derive one from, so
+    // an unusable id is refused as a missing one always was.
+    const id = usableId(s.object_id, s.id);
+    if (id === null) throw missing('id', `students[${i}]`);
     return {
-      id: String(s.object_id ?? req(s, 'id', `students[${i}]`)),
+      id,
       firstName: first,
       lastName: last,
       fullName: [first, last].filter(Boolean).join(' ') || `Student ${i + 1}`,
@@ -256,7 +300,9 @@ export function parseActivities(raw: unknown, studentId: string): ParsedActiviti
     }
 
     out.push({
-      id: String(a.object_id ?? req(a, 'id', `activities[${i}]`)),
+      // Derived rather than refused when there is no id: one post Brightwheel sent without
+      // one must not stop the page, and with it every older photo, on every run.
+      id: usableId(a.object_id, a.id) ?? idFromMedia(media),
       studentId,
       postedAt,
       note: str(a.note) ?? str(a.description) ?? null,

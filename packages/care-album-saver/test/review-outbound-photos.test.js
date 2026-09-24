@@ -33,6 +33,7 @@ import { closeMetadata } from '../dist/metadata.js';
  *
  *  - outbound-7: an answer's size was capped, if at all, only after all of it was read.
  *  - outbound-2: a Retry-After was obeyed however long it asked for.
+ *  - outbound-4: an empty post id collapsed every post into the first one.
  */
 
 before(assertIsolatedConfigDir);
@@ -229,6 +230,89 @@ test('outbound-2: the run that is told to wait ends saying why, keeps what it sa
     assert.equal(second.skipped, 2, 'what the first run saved is not fetched again');
     assert.equal(second.saved, 2, 'and the rest of the feed is');
     assert.equal(second.failed, 0);
+  } finally {
+    await mock.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ------------------------------------------------------------------ outbound-4
+
+/** One photo post, as the feed carries it, with whatever id fields `over` gives. */
+const post = (url, over = {}) => ({ action_type: 'ac_photo', event_date: '2026-09-18T15:30:00Z', media: { image_url: url }, ...over });
+const idsOf = (activities) => parseActivities({ activities }, 'stu-1').items.map((i) => i.id);
+
+test('outbound-4: posts with an empty or unusable id are not all taken for the first one', () => {
+  const ids = idsOf([
+    post('https://cdn.example/p/a.jpg?Expires=1&Signature=x', { object_id: '' }),
+    post('https://cdn.example/p/b.jpg?Expires=1&Signature=y', { object_id: '' }),
+    post('https://cdn.example/p/c.jpg', { object_id: '   ' }),
+    post('https://cdn.example/p/d.jpg', { object_id: {} }),
+    post('https://cdn.example/p/e.jpg', { object_id: true }),
+    post('https://cdn.example/p/f.jpg', { object_id: Number.NaN }),
+    post('https://cdn.example/p/g.jpg'),
+  ]);
+  assert.equal(ids.length, 7, 'none refused: one bad post must not stop the page');
+  assert.equal(new Set(ids).size, 7, 'and every one its own');
+  for (const id of ids) assert.match(id, /^media-[0-9a-f]{32}$/);
+});
+
+test('outbound-4: an id made from the media is the same on every listing, whatever the signature says', () => {
+  const [first] = idsOf([post('https://cdn.example/p/a.jpg?Expires=1&Signature=x&Key-Pair-Id=k', { object_id: '' })]);
+  const [again] = idsOf([post('https://cdn.example/p/a.jpg?Expires=2&Signature=z&Key-Pair-Id=k', { object_id: '' })]);
+  const [other] = idsOf([post('https://cdn.example/p/b.jpg?Expires=1&Signature=x&Key-Pair-Id=k', { object_id: '' })]);
+  assert.equal(first, again, 'a fresh signature is the same photo');
+  assert.notEqual(first, other, 'a different file is a different photo');
+});
+
+test('outbound-4: every id that worked before comes out exactly as before, so no archive fetches anything again', () => {
+  const url = 'https://cdn.example/p/a.jpg';
+  const cases = [
+    [{ object_id: 'act-1' }, 'act-1'],
+    [{ object_id: '3f2a9c1e-0b1d-4c6a-9e2f-7a1b2c3d4e5f' }, '3f2a9c1e-0b1d-4c6a-9e2f-7a1b2c3d4e5f'],
+    [{ object_id: 12345 }, '12345'],
+    [{ object_id: 0 }, '0'],
+    [{ object_id: ' padded ' }, ' padded '],
+    [{ id: 'x-9' }, 'x-9'],
+    [{ object_id: 'act-1', id: 'x-9' }, 'act-1'],
+    // Newly readable: a good `id` beside an empty `object_id`, which used to be "".
+    [{ object_id: '', id: 'x-9' }, 'x-9'],
+  ];
+  for (const [fields, expected] of cases) assert.deepEqual(idsOf([post(url, fields)]), [expected], JSON.stringify(fields));
+});
+
+test('outbound-4: a child or an account with an unusable id is still refused, as a missing one was', () => {
+  assert.throws(() => parseStudents({ students: [{ object_id: '', first_name: 'Robin' }] }), ApiShapeError);
+  assert.throws(() => parseStudents({ students: [{ object_id: {}, first_name: 'Robin' }] }), ApiShapeError);
+  assert.throws(() => parseMe({ object_id: '' }), ApiShapeError);
+  assert.equal(parseStudents({ students: [{ object_id: 'stu-1' }] })[0].id, 'stu-1');
+  assert.equal(parseStudents({ students: [{ id: 7 }] })[0].id, '7');
+  assert.equal(parseMe({ object_id: 42 }).id, '42');
+});
+
+test('outbound-4: a feed whose posts all carry an empty id is saved whole, and the next run fetches none of it again', async () => {
+  const mock = await startMockBrightwheel({ validSession: SESSION, activitiesPerStudent: 4 });
+  const dir = await mkdtemp(join(tmpdir(), 'cas-empty-ids-'));
+  try {
+    const client = new BrightwheelClient({
+      session: new Secret(SESSION),
+      baseUrl: `${mock.url}/api/v1`,
+      delayMs: 0,
+      // The mock's feed with every post's id emptied, as the review found would collapse it.
+      fetchImpl: async (url, init) => {
+        const response = await fetch(url, init);
+        if (!String(url).includes('/activities')) return response;
+        const body = await response.json();
+        for (const activity of body.activities) activity.object_id = '';
+        return json(body, response.status);
+      },
+    });
+    const first = await sync(client, configFor(dir), () => {}, { allowTemporaryDir: true });
+    assert.equal(first.saved, 4, 'four posts, four photos — not one photo and three "already had"');
+    assert.equal(first.skipped, 0);
+    const again = await sync(client, configFor(dir), () => {}, { allowTemporaryDir: true });
+    assert.equal(again.saved, 0, 'the same ids on the next listing, fresh signatures and all');
+    assert.equal(again.skipped, 4);
   } finally {
     await mock.close();
     await rm(dir, { recursive: true, force: true });
