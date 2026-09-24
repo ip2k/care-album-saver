@@ -20,7 +20,7 @@ written, so where an entry says "since `ux/shell`" read "since 3cf4581".
 
 **Context:** MIT, public repo. A TypeScript CLI + local web UI that lets a parent archive
 their own child's photos from Brightwheel (a childcare app with no public API) onto their
-own computer. Zero runtime dependencies. Code is at `~/Developer/care-album-saver`;
+own computer. Zero runtime dependencies. Code is in this repository;
 start with `SECURITY.md` and `packages/care-album-saver/src/{secrets,paths,web/server}.ts`.
 
 ---
@@ -172,10 +172,12 @@ inside ignored folders). Everything else, in order of how wrong the entry was:
   `husky`, `lefthook`, `pre-commit` and gitleaks-as-a-dependency are not.
 - **gitleaks in CI is a merge gate, not a fork control.** A fork's commit is public on the
   fork before upstream's workflow can run, and for a first-time contributor it does not
-  run until a maintainer approves. It has also never run anywhere: there is no remote.
-  And before the first push two things must change or the job is red for reasons
-  unrelated to secrets: `gitleaks-action@v2` runs on GitHub's `node20` runtime, which is
-  being retired (v3 is `node24`), and the step passes no `GITHUB_TOKEN`.
+  run until a maintainer approves. It has also never run anywhere: the remote exists
+  (public, unpushed), and neither workflow has run yet. And before the first push two
+  things must change or the job is red for reasons unrelated to secrets:
+  `gitleaks-action@v2` runs on GitHub's `node20` runtime, which is being retired (v3 is
+  `node24`), and the step passes no `GITHUB_TOKEN`. Both are done since: `security.yml`
+  is on v3 and passes the token.
 - **The signed-URL rule misses the URLs Brightwheel actually uses.** It is case-sensitive
   and matches `signature=`; the live CDN is CloudFront, whose parameter is `Signature=`.
   Prefix the regex with `(?i)` and admit `~` in the value class (CloudFront's base64
@@ -308,7 +310,7 @@ handled by code. A download refused with 401 or 403 re-fetches the listing page 
 issued the URL and retries with the fresh signature, at most once per item; every other
 item on that page then reuses the refreshed page (`fetchMedia` in `src/sync.ts`). The
 one-refresh-per-page bound stays: it costs at most one listing request per page per
-child per run, it is pinned by a test, and `media-ferry` serves hosts other than
+child per run, it is pinned by a test, and `src/ferry/` serves hosts other than
 CloudFront by design. Its comments should stop calling the parse a guess.
 
 **Still open: how long a signature lives.** No HAR is needed: `verify` can print
@@ -388,7 +390,7 @@ implementations pinned by a shared language-agnostic test-vector fixture, so beh
 cannot silently diverge. Is the shared-fixture approach worth the ceremony, or should we
 drop the cross-project goal entirely?
 
-**Fable: drop it. Settled.** No such fixture exists (`media-ferry/src/index.ts` says so),
+**Fable: drop it. Settled.** No such fixture exists (`src/ferry/index.ts` says so),
 the two projects use different hash algorithms (XXH3 versus SHA-256) so hashing vectors
 could never be shared, the only shareable vectors are twenty lines of `transferIdentity`
 cases, and Archive Ferry's audience is unrelated. Keep the three "ported from Archive
@@ -518,16 +520,16 @@ default while it is there. Three tests pin that, and `doctor` says when the old 
 the one in use. The one thing a rename cannot reach is the checkout directory and the
 git remote, which are the owner's to rename if they want to.
 
-**Still to decide:** whether `media-ferry` keeps its name (it is already generic), and
-whether a multi-source future means a source-adapter boundary in `src/api/` — worth its
-own entry when it stops being hypothetical.
+**Still to decide:** whether a multi-source future means a source-adapter boundary in
+`src/api/` — worth its own entry when it stops being hypothetical. (Whether `media-ferry`
+kept its name became moot on 2026-09-23, when it was folded into `src/ferry/`.)
 
 ---
 
 ## D. Things we know are unfinished
 
-- **Windows has never been exercised, by CI or by a person.** There is no git remote and no
-  GitHub repository, so neither workflow in `.github/workflows/` has ever run. The matrix
+- **Windows has never been exercised, by CI or by a person.** The remote exists (public,
+  unpushed), and neither workflow in `.github/workflows/` has run yet. The matrix
   in `ci.yml` is *written* to build, run the whole suite and start `dist/cli.js where` on
   windows-latest with Node 20, 22, 24 and 26, and `checkArchiveDir` takes the platform,
   home directory, temp directory and environment as options so the Windows rules can be
@@ -536,8 +538,8 @@ own entry when it stops being hypothetical.
   so the pnpm step is fine on every cell; `exiftool-vendored` declares `node >= 22`, so on
   the Node 20 cells it either fails to install or fails to import, and `getExifTool`'s
   dynamic import catches that and degrades to JSON sidecars as designed — untested there;
-  `gitleaks-action@v2` runs on the retiring `node20` runtime and must move to v3 before
-  the first push. Specifically unproven: whether ExifTool's `-stay_open` process starts
+  `gitleaks-action` is on v3 (`security.yml:29`), off the retiring `node20` runtime.
+  Specifically unproven: whether ExifTool's `-stay_open` process starts
   and exits cleanly on Windows, and whether renaming over an open file (`Manifest.save`,
   the `.part` → final rename) trips an antivirus scanner. File permissions on Windows
   remain ACL-inherited: no `0600` on the session, no `0700` on the archive.
@@ -546,9 +548,7 @@ own entry when it stops being hypothetical.
   image whose callouts overlap each other or the page, so a broken capture would turn that
   job red; but the fresh images are uploaded as an artifact rather than compared with the
   committed ones, so a change to the UI that leaves the old pictures in place still
-  merges. Two branches (`ux/shell`, `ux/cookie-help`) each regenerate the same five PNGs,
-  which is why they conflict; regenerate once after both merge, and later give the script
-  a `--check` mode that compares.
+  merges. Giving the script a `--check` mode that compares them would close that.
 - **The setup page's client script is never executed by a test.** `pnpm test` has no DOM,
   so the page's behaviour is asserted by reading the script the server serves and matching
   source text. The only place that script really runs is `scripts/screenshots.js`, in a

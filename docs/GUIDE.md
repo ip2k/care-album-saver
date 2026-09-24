@@ -36,7 +36,7 @@ pnpm build
 node packages/care-album-saver/dist/cli.js setup
 ```
 
-The tool is not on npm yet, so those four lines build it from a clone; you need
+The tool is not on npm yet, so those five lines build it from a clone; you need
 [pnpm](https://pnpm.io/installation) and Node 20 or newer. Every day after that, only the
 last line. Then it prints a link like
 `http://127.0.0.1:52341/?token=...`.
@@ -116,7 +116,8 @@ nothing.
 small *Saved* appears to say so. The one exception is the folder, because a half-typed
 path is not a folder yet: it is saved when you leave that box, press Enter, or press
 **Use this folder**. When you press **Start saving**, what is on the screen is what runs.
-Open **Advanced options** for the folder, the layout and the rest.
+Open **Advanced options** for the folder layout and the two rarely-changed switches; the
+folder itself sits just above it.
 
 ![The options, with a child unticked, name labelling, location removal, the advanced drawer and the Saved note highlighted](images/03-options.png)
 
@@ -217,34 +218,36 @@ move it between a Mac, a Windows PC and Linux.
 
 ## Doing it automatically every day
 
-### Mac or Linux
+The setup page's last step, **Keep it up to date on its own**, does this for you. Choose a
+time and press **Save new photos every day**. From then on your computer's own scheduler
+starts the tool at that time each day — launchd on a Mac, a systemd timer on Linux (or a
+crontab line where there is no systemd), Task Scheduler on Windows. **Stop saving them
+automatically** takes it away again.
+
+The same thing from the terminal:
 
 ```sh
-crontab -e
+care-album-saver schedule on --at 19:00
+care-album-saver schedule        # whether it is set up, and how the last run went
+care-album-saver schedule off
 ```
 
-Add this line, save and close. It runs at 7pm daily:
+Either way the tool writes in the full paths to Node and to itself, so there is nothing for
+the scheduler to go looking for.
+
+### By hand, if you would rather
+
+On a Mac or Linux, run `crontab -e`, add this line, then save and close. It runs at 7pm
+daily:
 
 ```
 0 19 * * *  /usr/bin/node /path/to/care-album-saver/packages/care-album-saver/dist/cli.js run
 ```
 
-Use the full path to `npx`, not a bare `npx`: a scheduled job like this one looks for
-programs in only a few places and usually does not find it. Type `which npx` in your
-terminal and paste what it prints — on a Mac with Homebrew it is often
-`/opt/homebrew/bin/npx`.
-
-### Windows
-
-Open **Task Scheduler** → **Create Basic Task** → Daily → Start a program:
-
-- Program: `npx.cmd`
-- Arguments: `care-album-saver run`
-
-The `.cmd` matters. Task Scheduler starts the program itself rather than going through a
-command prompt, so a bare `npx` sends it looking for `npx.exe`, which does not exist, and
-the task fails at once with *the system cannot find the file specified*. Setting Program to
-`cmd.exe` and Arguments to `/c node C:\path\to\care-album-saver\packages\care-album-saver\dist\cli.js run` works just as well.
+Both paths must be full ones: a scheduled job looks for programs in only a few places and
+usually finds neither. Type `which node` in your terminal for the first — on a Mac with
+Homebrew it is often `/opt/homebrew/bin/node` — and use the folder you cloned into for the
+second. Do this *instead of* the step above, not as well, or the tool runs twice.
 
 ### Docker
 
@@ -261,7 +264,7 @@ Then, each time:
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   -v ~/.config/care-album-saver:/config \
-  -v ~/Brightwheel\ Photos:/photos \
+  -v ~/Care\ Album\ Photos:/photos \
   care-album-saver run --dir /photos
 ```
 
