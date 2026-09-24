@@ -370,3 +370,104 @@ test('describing the job never refuses, so the setup page can still answer', asy
   const env = { platform: 'darwin', home: await freshHome(), run: recorder().run, nodePath: '/opt/a\nb/node', cliPath: '/opt/bw/cli.js', uid: 501 };
   assert.equal((await schedule.describe('19:00', env)).mechanism, 'launchd');
 });
+
+// ---------------------------------------------------------------- processes-4: a failed install
+
+const macEnv = (home, runner) => ({
+  platform: 'darwin',
+  home,
+  run: runner,
+  nodePath: '/opt/tools/bin/node',
+  cliPath: '/opt/tools/lib/care-album-saver/cli.js',
+  uid: 501,
+});
+const plistOf = (home) => join(home, 'Library', 'LaunchAgents', 'com.care-album-saver.daily.plist');
+
+test('a LaunchAgent macOS would not start is taken away, not left to start at the next login', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  const os = recorder(({ args }) => (args[0] === 'bootstrap' ? { code: 5, stderr: 'Bootstrap failed: 5: Input/output error\n' } : {}));
+
+  await assert.rejects(
+    () => schedule.install('19:30', macEnv(home, os.run)),
+    /macOS would not start the daily run, so it was taken away again .*: Bootstrap failed: 5: Input\/output error\./,
+  );
+  assert.equal(await exists(plistOf(home)), false, 'no plist with RunAtLoad left in ~/Library/LaunchAgents');
+  assert.equal((await loadConfig()).schedule, null);
+  assert.deepEqual(os.said(), [
+    'launchctl bootout gui/501/com.care-album-saver.daily',
+    'launchctl bootstrap gui/501 ' + plistOf(home),
+    // In case launchd had taken some of it before refusing.
+    'launchctl bootout gui/501/com.care-album-saver.daily',
+  ]);
+});
+
+test('a change of time macOS refuses leaves no daily run, and the settings say so', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', macEnv(home, recorder().run));
+  assert.equal((await loadConfig()).schedule.time, '19:00');
+
+  // Writing the new plist and unloading the old job are what a change of time does first,
+  // so when launchd then refuses, the seven o'clock run is already gone too.
+  const refuses = recorder(({ args }) => (args[0] === 'bootstrap' ? { code: 37, stderr: 'Bootstrap failed: 37: Operation already in progress' } : {}));
+  await assert.rejects(() => schedule.install('20:00', macEnv(home, refuses.run)), /Operation already in progress/);
+  assert.equal(await exists(plistOf(home)), false);
+  assert.equal((await loadConfig()).schedule, null, 'not a record of a seven o\'clock run that no longer exists');
+  const state = await schedule.status(macEnv(home, recorder().run));
+  assert.equal(state.installed, false);
+});
+
+const unitDir = (home) => join(home, '.config', 'systemd', 'user');
+const linuxEnv = (home, runner) => ({ platform: 'linux', home, run: runner, nodePath: '/usr/bin/node', cliPath: '/opt/bw/cli.js', uid: 1000 });
+
+test('a timer systemd would not start is disabled and its files taken away', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  const os = recorder(({ args }) => (args[1] === 'enable' ? { code: 1, stderr: 'Failed to start care-album-saver.timer: Unit care-album-saver.service has a bad unit file setting.' } : {}));
+
+  await assert.rejects(() => schedule.install('19:00', linuxEnv(home, os.run)), /systemd would not start the daily run, so its files were taken away again: Failed to start/);
+  assert.equal(await exists(join(unitDir(home), 'care-album-saver.timer')), false);
+  assert.equal(await exists(join(unitDir(home), 'care-album-saver.service')), false);
+  assert.equal((await loadConfig()).schedule, null);
+  const said = os.said();
+  // `enable --now` links the timer before it starts it; the link would start it at the next login.
+  assert.ok(said.indexOf('systemctl --user disable --now care-album-saver.timer') > said.indexOf('systemctl --user enable --now care-album-saver.timer'));
+  assert.equal(said.at(-1), 'systemctl --user daemon-reload', 'and systemd is told the files are gone');
+});
+
+test('a reload that fails stops the install, rather than enabling the timer systemd read before', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', linuxEnv(home, recorder().run));
+
+  const os = recorder(({ args }) => (args[1] === 'daemon-reload' ? { code: 1, stderr: 'Failed to connect to bus: No medium found' } : {}));
+  await assert.rejects(() => schedule.install('06:00', linuxEnv(home, os.run)), /No medium found/);
+  assert.ok(!os.said().includes('systemctl --user enable --now care-album-saver.timer'), 'never enabled at a time it had not read');
+  assert.equal(await exists(join(unitDir(home), 'care-album-saver.timer')), false);
+  assert.equal((await loadConfig()).schedule, null, 'the seven o\'clock files were replaced, so its record goes too');
+});
+
+test('a crontab that refuses the new block keeps the old one, and the record that matches it', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  let crontab = '0 6 * * * /usr/local/bin/backup\n';
+  let refuse = false;
+  const os = recorder(({ file, args, input }) => {
+    if (file === 'systemctl') return { code: 127 };
+    if (args[0] === '-l') return { stdout: crontab };
+    if (refuse) return { code: 1, stderr: 'crontab: installing new crontab: No space left on device' };
+    crontab = input;
+    return {};
+  });
+  await schedule.install('19:00', linuxEnv(home, os.run));
+  const before = crontab;
+
+  refuse = true;
+  await assert.rejects(
+    () => schedule.install('06:00', linuxEnv(home, os.run)),
+    /could not be added to your crontab, so nothing was changed: crontab: installing new crontab: No space left on device/,
+  );
+  assert.equal(crontab, before, 'the seven o\'clock block is still there');
+  assert.equal((await loadConfig()).schedule.time, '19:00', 'and so is its record');
+});

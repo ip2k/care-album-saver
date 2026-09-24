@@ -939,6 +939,17 @@ function assertMayChange(record: ScheduleRecord | null, e: Resolved, options: Ow
  * removed first. That is what makes "change the time" the same operation as "set it up",
  * which in turn is what stops a parent who changed their mind twice from having three
  * copies of the job running at three different times.
+ *
+ * And an install that fails leaves nothing installed (security review processes-4). Before
+ * this, a LaunchAgent that launchctl refused was left in ~/Library/LaunchAgents with
+ * RunAtLoad, while the settings recorded no daily run: it went live at the next login with
+ * no record of it anywhere a parent would look. Now the plist, or the unit files, are taken
+ * away again before the error is reported. Writing them had already replaced any daily run
+ * this mechanism held before, so its record goes too, and the settings say what is true: no
+ * daily run. `crontab -` replaces the whole file or none of it, so a refusal there leaves the
+ * previous block and its record as they were. A refused `schtasks /Create` is taken to have
+ * done the same, which could not be checked from a Mac; if it did not, status() asks Task
+ * Scheduler itself and reports the daily run as gone, never as working.
  */
 export async function install(timeInput: string, env: ScheduleEnvironment = {}, options: OwnershipOptions = {}): Promise<ScheduleStatus> {
   const time = parseTimeOfDay(timeInput);
@@ -946,41 +957,61 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
     throw new Error(`"${timeInput}" is not a time of day. Give it as HH:MM on a 24-hour clock, for example 19:00.`);
   }
   const e = resolveEnv(env);
-  assertMayChange((await loadConfig()).schedule, e, options, 'install');
+  const previous = (await loadConfig()).schedule;
+  assertMayChange(previous, e, options, 'install');
   const mechanism = await chooseMechanism(env);
   assertSchedulable(e, mechanism);
   await mkdir(logDir(e), { recursive: true });
+
+  /** After a refusal that took this mechanism's previous job down with it: see above. */
+  const forgetReplaced = async (): Promise<void> => {
+    if (previous?.mechanism === mechanism) await saveConfig({ ...(await loadConfig()), schedule: null });
+  };
 
   let location: string;
   switch (mechanism) {
     case 'launchd': {
       location = plistPath(e);
+      const target = `gui/${e.uid}/${LAUNCHD_LABEL}`;
       await mkdir(join(e.home, 'Library', 'LaunchAgents'), { recursive: true });
       await writeFile(location, launchAgentPlist(e, time), 'utf8');
       // Unload first: launchd refuses to bootstrap a label it already has, so without this
       // a change of time would write a new plist that nothing ever read.
-      await e.run('launchctl', ['bootout', `gui/${e.uid}/${LAUNCHD_LABEL}`]);
+      await e.run('launchctl', ['bootout', target]);
       const loaded = await e.run('launchctl', ['bootstrap', `gui/${e.uid}`, location]);
       if (loaded.code !== 0) {
+        // Unloaded as well as deleted, in case the refusal came after launchd had taken some
+        // of it; that answer is not checked, since "not loaded" is the likely one and fine.
+        await e.run('launchctl', ['bootout', target]);
+        await rm(location, { force: true });
+        await forgetReplaced();
         throw new Error(
-          `The daily run was written to ${location} but macOS would not start it: ` +
-            `${loaded.stderr.trim() || `launchctl exited with ${loaded.code}`}.`,
+          `macOS would not start the daily run, so it was taken away again rather than left to start at the next login: ` +
+            `${said(loaded, 'launchctl')}.`,
         );
       }
       break;
     }
     case 'systemd': {
       location = timerPath(e);
+      const timer = `${SYSTEMD_UNIT}.timer`;
       await mkdir(systemdDir(e), { recursive: true });
       await writeFile(servicePath(e), systemdService(e), 'utf8');
       await writeFile(location, systemdTimer(time), 'utf8');
-      await e.run('systemctl', ['--user', 'daemon-reload']);
-      const enabled = await e.run('systemctl', ['--user', 'enable', '--now', `${SYSTEMD_UNIT}.timer`]);
+      // The reload is checked too: without it systemd would enable the timer it read before,
+      // at the old time and running the old paths, while this tool recorded the new ones.
+      const reloaded = await e.run('systemctl', ['--user', 'daemon-reload']);
+      const enabled = reloaded.code === 0 ? await e.run('systemctl', ['--user', 'enable', '--now', timer]) : reloaded;
       if (enabled.code !== 0) {
-        throw new Error(
-          `The daily run was written to ${location} but systemd would not start it: ` +
-            `${enabled.stderr.trim() || `systemctl exited with ${enabled.code}`}.`,
-        );
+        // `enable --now` links the timer into timers.target before starting it, so a start
+        // that failed can leave a link that would start it at the next login: disabled
+        // first, then the files, then the reload that makes systemd forget them.
+        await e.run('systemctl', ['--user', 'disable', '--now', timer]);
+        await rm(location, { force: true });
+        await rm(servicePath(e), { force: true });
+        await e.run('systemctl', ['--user', 'daemon-reload']);
+        await forgetReplaced();
+        throw new Error(`systemd would not start the daily run, so its files were taken away again: ${said(enabled, 'systemctl')}.`);
       }
       break;
     }
@@ -988,9 +1019,10 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
       location = 'your crontab (see "crontab -l")';
       const kept = stripCronBlock(await currentCrontab(e));
       const written = `${[...kept, CRON_MARKER, ...cronLines(e, time), CRON_END].join('\n')}\n`;
+      // `crontab -` installs the whole new file or none of it, so a refusal changes nothing.
       const applied = await e.run('crontab', ['-'], written);
       if (applied.code !== 0) {
-        throw new Error(`The daily run could not be added to your crontab: ${applied.stderr.trim() || `crontab exited with ${applied.code}`}.`);
+        throw new Error(`The daily run could not be added to your crontab, so nothing was changed: ${said(applied, 'crontab')}.`);
       }
       break;
     }
@@ -1013,7 +1045,7 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
         await rm(xmlPath, { force: true }).catch(() => {});
       }
       if (created.code !== 0) {
-        throw new Error(`Windows Task Scheduler refused the daily run: ${created.stderr.trim() || `schtasks exited with ${created.code}`}.`);
+        throw new Error(`Windows Task Scheduler refused the daily run: ${said(created, 'schtasks')}.`);
       }
       break;
     }
@@ -1208,7 +1240,12 @@ async function currentCrontab(e: Resolved): Promise<string> {
   const existing = await e.run('crontab', ['-l']);
   if (existing.code === 0) return existing.stdout;
   if (/no crontab for/i.test(existing.stderr)) return '';
-  throw new Error(`Your crontab could not be read, so nothing was changed: ${existing.stderr.trim() || `crontab exited with ${existing.code}`}.`);
+  throw new Error(`Your crontab could not be read, so nothing was changed: ${said(existing, 'crontab')}.`);
+}
+
+/** A scheduler's refusal in its own words, or its exit status when it gave none. */
+function said(result: CommandResult, program: string): string {
+  return result.stderr.trim() || `${program} exited with ${result.code}`;
 }
 
 /**
