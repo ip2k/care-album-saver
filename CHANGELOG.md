@@ -51,6 +51,14 @@ file was started.
 
 ### Changed
 
+- **The README opens with a picture of the tool, a table of contents, and badges** showing it
+  is tested on macOS, Windows and Ubuntu with Node 22, 24 and 26, beside the live test result.
+  It is reorganised for a parent who has never used a terminal: what it does and what it looks
+  like, whether it is safe and private, the quickest way to start, everyday use — and only
+  then the technical material: commands, Docker, how it works, development. Nothing was taken
+  out. The design decisions, with the alternatives turned down, and the questions still open
+  are now in one public document, [docs/DECISIONS.md](docs/DECISIONS.md), in place of the
+  internal review notes; [SECURITY.md](SECURITY.md) gains a threat model.
 - A dead-code audit of the whole tree removed options nothing set, exports nothing imported,
   branches that could not run, and a download-resume path that was never taken; and corrected
   the comments and documentation that described them. Two small things a person could notice:
@@ -79,6 +87,16 @@ file was started.
 
 ### Fixed
 
+- **Privacy wording that promised more than is known.** The README said the tool talks to
+  Brightwheel "and to nothing else"; with the optional update check switched on it also asks
+  GitHub, at most once a day and only from the setup page, which version is the newest, and
+  sends nothing about you, your account or your children. The README now says so and links
+  how that check works. The README, the guide and the cookie help said that signing out of
+  Brightwheel ends a copied session "immediately", which nobody has tested; they now say it
+  should, and that Brightwheel does not document how quickly. The README's tables now say the
+  teacher's note is written into a photo only while both the names switch and **Keep the
+  teacher's note** are on, and that `archive.json`, like the `.json` files, records names and
+  notes. And the README no longer quotes a test count that had gone out of date.
 - Six things the dead-code audit found on the way. The Docker build context now excludes
   `node_modules`, `dist`, sessions and archives at any depth, not only at the root (the host's
   build output had been going into the image). A request the setup page's server cannot read

@@ -1,5 +1,6 @@
 /**
- * Capture the annotated screenshots used in docs/GUIDE.md.
+ * Capture the annotated screenshots used in docs/GUIDE.md, and the plain one at the top of
+ * the README (00-dashboard.png).
  *
  * Everything shown is synthetic: the mock Brightwheel server invents two children called
  * Robin and Sam Maple and draws their "photos" as coloured placeholders. No real child,
@@ -10,7 +11,7 @@
  */
 import { chromium } from 'playwright';
 import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,9 +61,20 @@ async function showPath(page, value) {
  * committed image; another printed this script's own scratch folder, inside node_modules,
  * where the guide means to show a parent their photos folder.
  *
- * Two substitutions, longest first: the scratch archive lives inside the home folder, so
- * replacing the home folder first would leave a half-rewritten path behind.
+ * Longest first: the scratch archive lives inside the home folder, so replacing the home
+ * folder first would leave a half-rewritten path behind.
+ *
+ * The temporary directory gets a pair too. On a Mac it is a per-user
+ * `/var/folders/<hash>/T`, and this script's own config and log folders live there — which
+ * is how three early shots printed that hash into a committed image, and why the history
+ * had to be rewritten before the first push (docs/SECURITY-REVIEW-2026-09-23.md, the `img`
+ * finding). Both spellings: macOS reaches it through the `/private` symlink as well, and
+ * the real path is the longer of the two, so it goes first. On Linux both are `/tmp`, and
+ * the pair changes nothing.
  */
+const TMP = tmpdir();
+const TMP_REAL = realpathSync(TMP);
+const SHOWN_TMP = '/tmp';
 async function scrubPersonal(page) {
   await page.evaluate(
     (pairs) => {
@@ -84,6 +96,8 @@ async function scrubPersonal(page) {
       // other two, so without this pair the real folder layout reached the pictures.
       [PHOTOS.replace(homedir(), '~'), SHOWN_PATH.replace('/Users/alex', '~')],
       [homedir(), '/Users/alex'],
+      [TMP_REAL, SHOWN_TMP],
+      [TMP, SHOWN_TMP],
     ],
   );
 }
@@ -237,7 +251,10 @@ async function annotate(page, notes) {
  * sight in the image.
  */
 async function assertNothingPersonal(page, name) {
-  const real = [process.env.USER, process.env.LOGNAME, homedir()].filter(Boolean);
+  // The temporary directory only where it is personal: on Linux it is `/tmp`, which is
+  // also what it is replaced with, so checking for it there would fail every shot.
+  const real = [process.env.USER, process.env.LOGNAME, homedir(), ...[TMP_REAL, TMP].filter((t) => t !== SHOWN_TMP)]
+    .filter(Boolean);
   const text = await page.evaluate(() => document.body.innerText);
   for (const needle of real) {
     if (text.includes(needle)) {
@@ -432,6 +449,26 @@ const main = async () => {
   await scrubPersonal(dark);
   await shot(dark, '05-dark');
   await dark.close();
+
+  // 0 — the picture at the top of the README. The same dashboard as shot 4, with nothing
+  // pointed at: it is what somebody landing on the repository sees before reading a word,
+  // so it is the plain, friendly one — light, the album full, no callouts. Narrower than the
+  // guide's shots so the page column fills the frame instead of floating in a wide margin,
+  // but wider than 60rem (1080px at 18px type): below that the gallery drops from eight
+  // across to fewer, larger thumbnails and the picture grows taller than a first glance.
+  //
+  // Taken last, because it answers the page's one-time question about checking for new
+  // versions — "No, thanks", which sends nothing anywhere and is stored only in this run's
+  // throwaway config — so that the picture shows the dashboard a parent comes back to
+  // rather than the question they answer once. Shots 4 and 5 still show the question.
+  await page.evaluate(() => document.querySelectorAll('.__ann').forEach((n) => n.remove()));
+  if (await page.isVisible('#btn-updates-no')) {
+    await page.click('#btn-updates-no');
+    await page.waitForSelector('#ask-updates', { state: 'hidden', timeout: 5000 });
+  }
+  await page.setViewportSize({ width: 1120, height: VIEWPORT.height });
+  await page.waitForTimeout(300);
+  await shot(page, '00-dashboard', '.dash');
 
   await browser.close();
   await ui.close();

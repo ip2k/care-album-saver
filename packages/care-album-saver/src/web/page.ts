@@ -721,8 +721,8 @@ ${COOKIE_HELP_CSS}
           <p class="why-ask first-run">
             <b>Why this is needed:</b> it is how the tool proves to Brightwheel that it is
             you, so it can see your own children&rsquo;s photos. It stays on this computer,
-            it is not your password, and you can cancel it at any time by signing out of
-            Brightwheel.
+            it is not your password, and signing out of Brightwheel should cancel it
+            (Brightwheel does not say how quickly).
           </p>
           <div class="field">
             <label class="field-label" for="cookie">Paste the value here</label>

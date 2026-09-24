@@ -29,7 +29,8 @@ Brightwheel's real website, in your own browser, exactly as you always do — in
 
 The value is stored on your own computer, in a file only you can open. It is not your
 password, and it expires. If you ever think it has got out, sign out of Brightwheel
-everywhere from their website: that makes the old value useless immediately.
+everywhere from their website, and change your password. That should end the old value;
+Brightwheel does not document how quickly.
 
 ---
 
@@ -138,7 +139,7 @@ left-hand list is showing a different website's cookies; click your school's add
 Brightwheel tab is the one showing, then press F5 to reload it.
 
 **It worked yesterday and not today.** These values expire, and signing out of Brightwheel
-ends them early. Fetch a fresh one the same way and paste it again; nothing you have
+should end them early. Fetch a fresh one the same way and paste it again; nothing you have
 already saved is affected.
 
 **Your browser is not one of the three above.** Most browsers are Chrome underneath (Brave,

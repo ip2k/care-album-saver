@@ -8,7 +8,7 @@
  *
  * Several of the algorithms descend from Archive Ferry (a private Python project), and say
  * so where they do. That is provenance only: they are re-implemented here, not bound, and no
- * behavioural pinning between the two is intended (docs/QUESTIONS-FOR-FABLE.md, C2).
+ * behavioural pinning between the two is intended (docs/DECISIONS.md, C2).
  */
 
 export { hashFile } from './hash.js';
