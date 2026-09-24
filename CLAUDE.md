@@ -72,8 +72,9 @@ stores, and this tool is deliberately local-only with no cloud component.
   cell since 90bcdff (Ubuntu, macOS and Windows × Node 22/24/26, the screenshots job, and
   the security workflow's gitleaks scan over the full history); the first two runs failed
   on the test script and on tests that assumed a Mac, both fixed the same night. The review's open WARNINGs are in the
-  report with fixes; the ★ ones go in before a first release. `docs/SECURITY-REVIEW-HANDOFF.md`
-  is the brief the review was run from.
+  report with fixes; the ★ ones go in before a first release. The brief the review was run
+  from, `docs/SECURITY-REVIEW-HANDOFF.md`, is in git history at e9b2f14; its durable part (the
+  threat model, trust boundaries and assets) is now in SECURITY.md.
 - **Production and development are separate (2026-09-23).** Production is a clone on
   `main` at ~/Applications/care-album-saver, changed only by `node scripts/deploy.js`,
   which builds and runs the whole suite there, puts production back on its previous commit
@@ -112,11 +113,11 @@ stores, and this tool is deliberately local-only with no cloud component.
   1-based, whether `page_size=100` is honoured, whether `action_type=ac_photo` filters or
   is ignored, whether a higher-resolution original exists, how long a media signature
   lives, and whether a second nursery's records distinguish `event_date` from
-  `created_at`. No HAR has been captured. See docs/QUESTIONS-FOR-FABLE.md section B.
+  `created_at`. No HAR has been captured. See docs/DECISIONS.md, B1 and open questions Q1–Q8.
 - **Settled 2026-09-22: there is one sign-in, and it is the pasted session.** `src/api/login.ts`
   implemented an email/password/2FA flow that nothing imported and no flag, command or field
   reached; the README promised it to parents anyway. The file is deleted and the promise is
-  gone. The argument for not reviving it is in QUESTIONS-FOR-FABLE A1: Brightwheel enforces
+  gone. The argument for not reviving it is in docs/DECISIONS.md A1: Brightwheel enforces
   2FA, so unattended password login is impossible, and teaching a parent to type their real
   password into other people's software is the habit phishing depends on.
 
@@ -144,9 +145,9 @@ Referred to the owner and still open after the audit, each a product decision ra
 dead code: the pre-rename fallbacks (`BRIGHTWHEEL_*` env vars, the old config folder, the
 old default archive folder, the `capturedAt` sidecar key) — all still load-bearing for the
 owner's own install until that folder is migrated; the unused server-side filter options in
-`src/api/client.ts` (planned item B4-7); the parser fallbacks for API shapes no live account
+`src/api/client.ts` (docs/DECISIONS.md Q8); the parser fallbacks for API shapes no live account
 has shown; the nine npm-based install routes in `src/version.ts` (moot until the package is
-published); the `?token=` on `/api/*` requests (DIRECTIONS item 14, for Fable's review); and
+published); the `?token=` on `/api/*` requests (docs/DECISIONS.md Q10); and
 whether `src/index.ts` is a library surface at all.
 
 Counting method, since the original figure does not say: `wc -l` over every `.ts` file

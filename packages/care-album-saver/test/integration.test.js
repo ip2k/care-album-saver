@@ -124,7 +124,7 @@ test('event_date is preferred over created_at where the two differ', async () =>
   // This test used to be called "capture time is preferred over upload time", and it was
   // the project's founding claim. Checked against the live service on 2026-09-22, the two
   // fields are identical on every record and the photographs carry no capture time at all,
-  // so there is no capture time to prefer — see docs/QUESTIONS-FOR-FABLE.md B2.
+  // so there is no capture time to prefer — see docs/DECISIONS.md B2.
   //
   // The preference is kept, and so is this test, for a smaller reason: if some other
   // provider's records ever do distinguish them, event_date is the likelier of the two, and
