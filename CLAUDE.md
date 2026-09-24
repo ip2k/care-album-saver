@@ -86,7 +86,8 @@ stores, and this tool is deliberately local-only with no cloud component.
   `/api/update` sets it. Then GitHub's releases API is asked at most daily, only from the
   setup page, never from the daily run, with no cookie, token or tool-named User-Agent.
   Tests are barred from the network by `CARE_ALBUM_NO_UPDATE_CHECK` (set in test-env.js).
-  See src/updates.ts, src/version.ts (install kinds) and docs/UPDATING.md.
+  See src/updates.ts, src/version.ts (install kinds), docs/UPDATING.md and, for how it works
+  and what a release must consist of, docs/UPDATE-CHECK.md.
 - **Adding to Apple Photos is off by default and must stay that way** (settled 2026-09-23).
   It is the one setting that can send photos off the machine — with iCloud Photos on, Apple
   uploads them — so it is turned on only through `/api/photos`, which asks macOS for
