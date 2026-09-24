@@ -636,6 +636,8 @@ const plistPath = (env: Resolved): string => join(env.home, 'Library', 'LaunchAg
 const systemdDir = (env: Resolved): string => join(env.home, '.config', 'systemd', 'user');
 const timerPath = (env: Resolved): string => join(systemdDir(env), `${SYSTEMD_UNIT}.timer`);
 const servicePath = (env: Resolved): string => join(systemdDir(env), `${SYSTEMD_UNIT}.service`);
+/** The link `systemctl --user enable` makes, which starts the timer with each user manager. */
+const wantsLinkPath = (env: Resolved): string => join(systemdDir(env), 'timers.target.wants', `${SYSTEMD_UNIT}.timer`);
 
 /**
  * Which scheduler this machine gets.
@@ -1557,11 +1559,24 @@ async function removeJob(e: Resolved, mechanism: ScheduleMechanism): Promise<voi
     }
     case 'systemd': {
       const disabled = await e.run('systemctl', ['--user', 'disable', '--now', `${SYSTEMD_UNIT}.timer`]);
+      if (disabled.code === 127) {
+        // No systemctl here at all (security review §4.6, F1): this computer runs no systemd
+        // to start the timer, and there is nothing to ask. Refusing would leave the daily run
+        // impossible to turn on or off. Its files go, and the link `enable` made, so a systemd
+        // that shares this home folder — a container's host — does not start it next time.
+        await rm(timerPath(e), { force: true });
+        await rm(servicePath(e), { force: true });
+        await rm(wantsLinkPath(e), { force: true });
+        break;
+      }
       // A timer file that is not on disk is one systemd cannot load: its "does not exist" is
       // the job already gone. With the file there, the refusal is real — most often a session
       // with no user manager to reach, in which the timer is still enabled for the next one.
       if (disabled.code !== 0 && existsSync(timerPath(e))) {
-        throw new Error(`systemd would not turn the daily run off, so it is still set up and nothing was changed: ${said(disabled, 'systemctl')}.`);
+        throw new Error(
+          `systemd would not turn the daily run off, so it is still set up and nothing was changed: ${said(disabled, 'systemctl')}. ` +
+            `If systemd is not running for you here, deleting ${timerPath(e)} and ${wantsLinkPath(e)} turns it off.`,
+        );
       }
       await rm(timerPath(e), { force: true });
       await rm(servicePath(e), { force: true });
@@ -1571,7 +1586,11 @@ async function removeJob(e: Resolved, mechanism: ScheduleMechanism): Promise<voi
       break;
     }
     case 'cron': {
-      const kept = stripCronBlock(await currentCrontab(e));
+      const listed = await e.run('crontab', ['-l']);
+      // No crontab program at all (§4.6, F1): nothing here can run a line of ours, and there is
+      // nothing to take it away with, so the job is as gone as it can be made.
+      if (listed.code === 127) break;
+      const kept = stripCronBlock(crontabText(listed));
       // Their own lines go back exactly as they were; only ours are gone.
       const cleared = await e.run('crontab', ['-'], kept.length > 0 ? `${kept.join('\n')}\n` : '');
       if (cleared.code !== 0) {
@@ -1699,7 +1718,11 @@ function spokenTime(time: TimeOfDay): string {
  * lines they had with ours alone (found by the 2026-09-23 security review).
  */
 async function currentCrontab(e: Resolved): Promise<string> {
-  const existing = await e.run('crontab', ['-l']);
+  return crontabText(await e.run('crontab', ['-l']));
+}
+
+/** What `crontab -l` answered, as the crontab's text: see currentCrontab. */
+function crontabText(existing: CommandResult): string {
   if (existing.code === 0) return existing.stdout;
   if (/no crontab for/i.test(existing.stderr)) return '';
   throw new Error(`Your crontab could not be read, so nothing was changed: ${said(existing, 'crontab')}.`);
