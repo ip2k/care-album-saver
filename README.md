@@ -17,13 +17,13 @@ What you end up with is yours, on your disk, and it outlives the account.
 ```
 Care Album Photos/
 ├── archive.json           ← the tool's list of what it has already saved
-├── Robin Maple/
+├── Robin-Maple/
 │   ├── 2026-W37/          ← 7–13 September 2026
 │   │   ├── 2026-09-09_084512_a1b2c3d4.jpg
 │   │   ├── 2026-09-09_084512_a1b2c3d4.jpg.json
 │   │   └── README.md
 │   └── 2026-W38/
-└── Sam Maple/
+└── Sam-Maple/
 ```
 
 ---

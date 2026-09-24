@@ -108,7 +108,7 @@ export function checkArchiveDir(input: string, options: CheckOptions = {}): Path
         error:
           `That is a temporary folder, and your computer deletes those automatically — ` +
           `your photos would disappear without warning. Please choose somewhere permanent, ` +
-          `such as ${p.join(home, 'Brightwheel Photos')}.`,
+          `such as ${p.join(home, 'Care Album Photos')}.`,
         resolved,
       };
     }

@@ -45,7 +45,7 @@ test('Windows: temporary folders are refused, whatever their capitalisation', ()
     assert.equal(v.ok, false, `${path} should be refused`);
     assert.match(v.error, /temporary folder/i);
     // The suggestion must be a Windows path, not a POSIX one on a Windows machine.
-    assert.match(v.error, /C:\\Users\\Sam\\Brightwheel Photos/);
+    assert.match(v.error, /C:\\Users\\Sam\\Care Album Photos/);
   }
 });
 

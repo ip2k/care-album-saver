@@ -51,6 +51,12 @@ file was started.
 
 ### Changed
 
+- A dead-code audit of the whole tree removed options nothing set, exports nothing imported,
+  branches that could not run, and a download-resume path that was never taken; and corrected
+  the comments and documentation that described them. Two small things a person could notice:
+  `pnpm clean` now removes the whole build output, and the FAQ, README and guide now show
+  folder names the way the tool writes them (`Robin-Maple`, not `Robin Maple`). The
+  `Brightwheel Photos` suggestion in the temporary-folder refusal now names `Care Album Photos`.
 - **Every line of the daily log says when it was written**, as ISO 8601 in your own time
   zone with its offset from UTC (`2026-09-23T17:00:04-07:00`). Before, only the start and result
   lines had a time, and it was in UTC, so the five o'clock run appeared as midnight the next
