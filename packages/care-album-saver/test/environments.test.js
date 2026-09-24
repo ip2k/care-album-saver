@@ -41,7 +41,7 @@ test('every worktree of the development checkout is development, through git\'s 
 });
 
 test('deploy.js marks the checkout it deploys from, inside git\'s folder rather than the tree', async () => {
-  const deploy = await readFile(fileURLToPath(new URL('../../../scripts/deploy.js', import.meta.url)), 'utf8');
+  const deploy = (await readFile(fileURLToPath(new URL('../../../scripts/deploy.js', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
   assert.match(deploy, /const DEVELOPMENT_MARKER = 'care-album-saver-development';/);
   assert.equal(DEVELOPMENT_MARKER, 'care-album-saver-development', 'the script and the tool agree on the name');
   assert.match(deploy, /--git-common-dir/);
@@ -57,18 +57,18 @@ test('the checkout the suite runs in is classified by its marks, and never by ha
 });
 
 test('the daily run is refused from development before the scheduler can be reached', async () => {
-  const server = await readFile(fileURLToPath(new URL('../src/web/server.ts', import.meta.url)), 'utf8');
+  const server = (await readFile(fileURLToPath(new URL('../src/web/server.ts', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
   const route = server.slice(server.indexOf("url.pathname === '/api/schedule') {\n        const { time }"));
   const guard = route.indexOf("environment() === 'development'");
   const install = route.indexOf('schedule.install(');
   assert.ok(guard > 0 && install > guard, 'the page checks the environment before installing');
 
-  const cli = await readFile(fileURLToPath(new URL('../src/cli.ts', import.meta.url)), 'utf8');
+  const cli = (await readFile(fileURLToPath(new URL('../src/cli.ts', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
   const on = cli.slice(cli.indexOf("if (what === 'on') {"));
   assert.ok(on.indexOf("environment() === 'development'") < on.indexOf('schedule.install('), 'and so does the command line');
 });
 
 test('the demo says which branch it is showing', async () => {
-  const demo = await readFile(fileURLToPath(new URL('../../../scripts/demo.js', import.meta.url)), 'utf8');
+  const demo = (await readFile(fileURLToPath(new URL('../../../scripts/demo.js', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
   assert.match(demo, /Demo of \$\{branch\}/);
 });

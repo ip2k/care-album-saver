@@ -2,6 +2,7 @@
 import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
 import { inspectCookiePaste, cleanPastedPath, PASTE_CLIENT_SOURCE, normaliseCookieInput, startWebUi } from '../dist/index.js';
 
@@ -206,17 +207,21 @@ test('a session saved before the rename is still found, and nothing is moved to 
   const { mkdtemp, mkdir, readdir } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
 
+  // The old folder is wherever each platform keeps settings, which is what paths.ts reads:
+  // Library/Application Support on a Mac, %APPDATA% on Windows, XDG_CONFIG_HOME elsewhere.
   const home = await mkdtemp(join(tmpdir(), 'cas-home-'));
-  const support = join(home, 'Library', 'Application Support');
+  const support = process.platform === 'darwin' ? join(home, 'Library', 'Application Support')
+    : process.platform === 'win32' ? join(home, 'AppData', 'Roaming')
+    : join(home, '.config');
   const legacy = join(support, 'brightwheel-archive');
   await mkdir(legacy, { recursive: true });
-  await mkdir(join(home, '.config', 'brightwheel-archive'), { recursive: true });
 
-  const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config') };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, '.config'), APPDATA: join(home, 'AppData', 'Roaming') };
   for (const k of Object.keys(env)) if (k.startsWith('CARE_ALBUM_') || k.startsWith('BRIGHTWHEEL_')) delete env[k];
 
-  const entry = new URL('../dist/index.js', import.meta.url).pathname;
+  const entry = pathToFileURL(fileURLToPath(new URL('../dist/index.js', import.meta.url))).href;
   const run = (code) => promisify(execFile)(process.execPath, ['-e', code], { env, encoding: 'utf8' });
 
   const before = await run(`import(${JSON.stringify(entry)}).then(m => console.log(m.configDir()))`);
@@ -320,7 +325,7 @@ test('the login prompt never echoes the session into terminal scrollback', async
   const value = 'NotARealSession' + 'Q'.repeat(60);
   const config = await mkdtemp(join(tmpdir(), 'cas-echo-config-'));
   const photos = await mkdtemp(join(tmpdir(), 'cas-echo-photos-'));
-  const cli = new URL('../dist/cli.js', import.meta.url).pathname;
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
   // A local mock that refuses this session at once, so the whole exchange — the prompt, the
   // refusal and the message after it — is checked for the pasted value without the network,

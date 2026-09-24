@@ -49,11 +49,14 @@ test('the page shows the daily run\'s file from the home folder, and the file is
   try {
     const on = await call(handle, '/api/schedule', { time: '19:00' });
     assert.equal(on.status, 200, JSON.stringify(on.body));
-    assert.equal(on.body.schedule.location, '~/Library/LaunchAgents/com.care-album-saver.daily.plist');
+    // The stand-in says darwin, but the path is joined by the machine running the suite, so
+    // on Windows it comes back with backslashes; the shape is what is under test.
+    const slashes = (p) => p.split('\\').join('/');
+    assert.equal(slashes(on.body.schedule.location), '~/Library/LaunchAgents/com.care-album-saver.daily.plist');
 
     const asked = await call(handle, '/api/schedule');
-    assert.equal(asked.body.schedule.location, '~/Library/LaunchAgents/com.care-album-saver.daily.plist');
-    assert.match(asked.body.proposed.location, /^~\/Library\/LaunchAgents\//, 'the proposal too');
+    assert.equal(slashes(asked.body.schedule.location), '~/Library/LaunchAgents/com.care-album-saver.daily.plist');
+    assert.match(slashes(asked.body.proposed.location), /^~\/Library\/LaunchAgents\//, 'the proposal too');
 
     // The record the tool keeps, and the file itself, are the real thing.
     const stored = (await loadConfig()).schedule.location;
