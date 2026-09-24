@@ -26,10 +26,16 @@ file was started.
 - The session box checks what you paste as you paste it, cleans up what it safely can (spaces,
   line breaks, quotes, a whole `Cookie:` line) and says at once when it is the wrong value.
 - `scripts/demo.js`: the whole page against pretend children, a pretend Photos app and a pretend
-  scheduler, for trying changes without touching anything real.
+  scheduler, for trying changes without touching anything real. It says so in a ribbon across
+  the top.
 
 ### Changed
 
+- **Colours are Rosé Pine**: Dawn when your computer is in light mode, the main Rosé Pine
+  palette in dark mode. A few colours are nudged darker where the palette's own would be too
+  faint to read comfortably as text.
+- **Larger text throughout**: 18px body text, and every button and text box at least that.
+  If you have told your browser to use larger text, the page follows it.
 - The project is called **Care Album Saver**. Settings and photo folders saved under the old
   name are still found; nothing needs moving.
 - Requests to Brightwheel no longer carry this tool's name; they identify as the browser the
@@ -38,6 +44,13 @@ file was started.
 
 ### Fixed
 
+- **Button and text-box text was stuck at 13px**, whatever size the page asked for: an
+  invalid rule made the browser ignore it and fall back to its own default. It is now the
+  intended size, and a test stops the mistake coming back.
+- A daily run that is set up but has not run shows as a warning, on the dashboard and in
+  Settings, instead of in a green box.
+- Where the daily run is written down is shown as `~/Library/LaunchAgents/…`, not the full
+  path with your account name in it.
 - **The daily run survives `brew upgrade node`.** A Mac that got Node from Homebrew had its
   daily run point at that exact Node version, which the next upgrade deletes — after which the
   run never happened again and nothing said so. It now uses Homebrew's own stable link

@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
+import { sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BrightwheelClient } from '../api/client.js';
 import type { Student } from '../api/schema.js';
@@ -97,7 +99,23 @@ export interface WebUiOptions {
    * real one from the machine it runs on. Nothing in the product passes anything here.
    */
   schedule?: schedule.ScheduleEnvironment;
+  /** A line shown across the top of the page. The demo labels itself with it; nothing else sets it. */
+  banner?: string;
 }
+
+/**
+ * A path under a home folder, written the way a person reads it: `~/Library/LaunchAgents/…`.
+ * Shorter, the same on every Mac, and it keeps the account name out of screenshots and
+ * support messages; Finder's Go to Folder and every shell accept it as written. Left alone
+ * on Windows, whose Explorer does not, and for anything outside the home folder.
+ */
+function tildify(path: string | null, home: string, platform: NodeJS.Platform = process.platform): string | null {
+  if (!path || platform === 'win32' || !home) return path;
+  return path === home ? '~' : path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path;
+}
+
+const escapeHtml = (text: string): string =>
+  text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export interface WebUiHandle {
   url: string;
@@ -139,6 +157,12 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     configWrites = result.then(() => {}, () => {});
     return result;
   };
+
+  /** The scheduler's answer, with its path as a parent reads it. See `tildify`. */
+  const shown = <T extends { location: string | null }>(answer: T): T => ({
+    ...answer,
+    location: tildify(answer.location, options.schedule?.home ?? homedir(), options.schedule?.platform),
+  });
 
   const readChildren = async (client: BrightwheelClient): Promise<Student[]> => {
     if (!children) {
@@ -290,7 +314,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     try {
       if (req.method === 'GET' && url.pathname === '/') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        res.end(PAGE.replace(/__TOKEN__/g, token));
+        const banner = options.banner ? `<div class="demo-ribbon" role="note">${escapeHtml(options.banner)}</div>` : '';
+        res.end(PAGE.replace(/__TOKEN__/g, token).replace('<!--__BANNER__-->', banner));
         return;
       }
 
@@ -323,7 +348,8 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
        * bounded by lines so an enormous one cannot make it read a disk into memory.
        */
       if (req.method === 'GET' && url.pathname === '/api/logs') {
-        json(200, { ok: true, ...(await schedule.readLog(200)) });
+        const log = await schedule.readLog(200);
+        json(200, { ok: true, ...log, path: tildify(log.path, homedir()) });
         return;
       }
 
@@ -664,11 +690,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         const state = await schedule.status(options.schedule);
         json(200, {
           ok: true,
-          schedule: state,
+          schedule: shown(state),
           // "Already set up" is a session plus a schedule. Anything less is still setup,
           // and the page must not open on a management view for a tool that has never run.
           manage: Boolean(session) && state.installed,
-          proposed: await schedule.describe(state.time ?? config.schedule?.time ?? '19:00', options.schedule),
+          proposed: shown(await schedule.describe(state.time ?? config.schedule?.time ?? '19:00', options.schedule)),
         });
         return;
       }
@@ -684,7 +710,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           // schedule is a read-modify-write of that file like any settings change, and the
           // settings save themselves on each control change — so without this, ticking a box
           // while the schedule is being written loses one of the two.
-          json(200, { ok: true, schedule: await withConfigLock(() => schedule.install(time, options.schedule)) });
+          json(200, { ok: true, schedule: shown(await withConfigLock(() => schedule.install(time, options.schedule))) });
         } catch (error) {
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }
@@ -693,7 +719,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'POST' && url.pathname === '/api/schedule/off') {
         try {
-          json(200, { ok: true, schedule: await withConfigLock(() => schedule.remove(options.schedule)) });
+          json(200, { ok: true, schedule: shown(await withConfigLock(() => schedule.remove(options.schedule))) });
         } catch (error) {
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }

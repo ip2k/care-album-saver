@@ -41,59 +41,89 @@ export const PAGE = String.raw`<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Care Album Saver</title>
 <style>
+  /* Colour: Rosé Pine. Dawn when the computer is in light mode, the main Rosé Pine when it
+     is in dark mode — the palette's own pairing. Values from rosepinetheme.com/palette.
+
+     The --rp-* names are the palette, verbatim, and nothing else in this file names a
+     colour directly. The semantic names below are made from them. Four are mixed towards
+     the palette's own Text, and only as far as reading requires: Dawn's Subtle, Love and
+     Gold are drawn for syntax highlighting, where a word is a few characters on a big
+     screen, and as sentences on their own tints they fall short of WCAG AA's 4.5:1 —
+     Subtle 4.0, Love 3.4, Gold 2.0. Each mix is the least that clears it, measured:
+     muted text 5.0, danger 4.6, warning 4.8. Gold stays verbatim wherever it is a border
+     or a tint rather than letters. */
   :root {
     color-scheme: light dark;
-    --bg: #f4f6fa;
-    --surface: #ffffff;
-    --surface-sunken: #eef1f6;
-    --text: #171c26;
-    --text-muted: #55617a;
-    --border: #d8dee9;
-    --border-strong: #7f8ca3;
-    --accent: #1f5ddb;
-    --accent-hover: #17489f;
-    --accent-text: #ffffff;
-    --accent-tint: #e9f0fe;
-    --accent-ink: #1a4bb0;
-    --ok: #0f6b42;
-    --ok-tint: #e4f4ec;
-    --warn: #7c4a06;
-    --warn-tint: #fcf1de;
-    --danger: #a3141b;
-    --danger-tint: #fdeaea;
-    --focus: #1f5ddb;
+    --rp-base: #faf4ed; --rp-surface: #fffaf3; --rp-overlay: #f2e9e1;
+    --rp-muted: #9893a5; --rp-subtle: #797593; --rp-text: #464261;
+    --rp-love: #b4637a; --rp-gold: #ea9d34; --rp-rose: #d7827e;
+    --rp-pine: #286983; --rp-foam: #56949f; --rp-iris: #907aa9;
+    --rp-hl-low: #f4ede8; --rp-hl-med: #dfdad9; --rp-hl-high: #cecacd;
+
+    --bg: var(--rp-base);
+    --surface: var(--rp-surface);
+    --surface-sunken: var(--rp-overlay);
+    --text: var(--rp-text);
+    --text-muted: color-mix(in srgb, var(--rp-subtle) 70%, var(--rp-text));
+    --border: var(--rp-hl-med);
+    /* Around things that are clicked or typed into: WCAG asks 3:1 of those, which Subtle
+       has (4.2) and Muted, the palette's usual border, does not quite (2.9). */
+    --border-strong: var(--rp-subtle);
+    --accent: var(--rp-pine);
+    --accent-hover: color-mix(in srgb, var(--rp-pine) 80%, var(--rp-text));
+    --accent-text: var(--rp-surface);
+    --accent-tint: color-mix(in srgb, var(--rp-pine) 10%, var(--rp-surface));
+    --accent-ink: var(--rp-pine);
+    --ok: var(--rp-pine);
+    --ok-tint: color-mix(in srgb, var(--rp-foam) 14%, var(--rp-surface));
+    --warn: var(--rp-gold);
+    --warn-ink: color-mix(in srgb, var(--rp-gold) 35%, var(--rp-text));
+    --warn-tint: color-mix(in srgb, var(--rp-gold) 14%, var(--rp-surface));
+    --danger: color-mix(in srgb, var(--rp-love) 65%, var(--rp-text));
+    --danger-tint: color-mix(in srgb, var(--rp-love) 14%, var(--rp-surface));
+    --focus: var(--rp-iris);
+    --backdrop: color-mix(in srgb, var(--rp-text) 45%, transparent);
     --radius: 12px;
     --radius-sm: 8px;
     --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
-    --shadow: 0 1px 2px rgba(16, 24, 40, .05);
+    --shadow: 0 1px 2px color-mix(in srgb, var(--rp-text) 8%, transparent);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #12151c;
-      --surface: #1a1f29;
-      --surface-sunken: #232935;
-      --text: #eef1f6;
-      --text-muted: #a8b3c7;
-      --border: #333c4b;
-      --border-strong: #63708a;
-      --accent: #74a4ff;
-      --accent-hover: #9abaff;
-      --accent-text: #0d1220;
-      --accent-tint: #1d2839;
-      --accent-ink: #a9c5ff;
-      --ok: #5ddba0;
-      --ok-tint: #16281f;
-      --warn: #f0be71;
-      --warn-tint: #2a2115;
-      --danger: #ff9b9b;
-      --danger-tint: #2c1718;
-      --focus: #9abaff;
+      --rp-base: #191724; --rp-surface: #1f1d2e; --rp-overlay: #26233a;
+      --rp-muted: #6e6a86; --rp-subtle: #908caa; --rp-text: #e0def4;
+      --rp-love: #eb6f92; --rp-gold: #f6c177; --rp-rose: #ebbcba;
+      --rp-pine: #31748f; --rp-foam: #9ccfd8; --rp-iris: #c4a7e7;
+      --rp-hl-low: #21202e; --rp-hl-med: #403d52; --rp-hl-high: #524f67;
+
+      /* On the dark palette Subtle, Gold and Foam read easily as they are (5.5, 10.8, 10.4).
+         Pine does not (3.4), so Foam takes the accent here, with Base for its letters. */
+      --text-muted: var(--rp-subtle);
+      --border-strong: var(--rp-muted);
+      --accent: var(--rp-foam);
+      --accent-hover: color-mix(in srgb, var(--rp-foam) 70%, var(--rp-text));
+      --accent-text: var(--rp-base);
+      --accent-tint: color-mix(in srgb, var(--rp-foam) 14%, var(--rp-surface));
+      --accent-ink: var(--rp-foam);
+      --ok: var(--rp-foam);
+      --ok-tint: color-mix(in srgb, var(--rp-foam) 16%, var(--rp-surface));
+      --warn-ink: var(--rp-gold);
+      --warn-tint: color-mix(in srgb, var(--rp-gold) 16%, var(--rp-surface));
+      --danger: color-mix(in srgb, var(--rp-love) 95%, var(--rp-text));
+      --danger-tint: color-mix(in srgb, var(--rp-love) 16%, var(--rp-surface));
+      --backdrop: color-mix(in srgb, var(--rp-base) 70%, transparent);
       --shadow: 0 1px 2px rgba(0, 0, 0, .4);
     }
   }
 
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  /* The whole type scale, in one place. 112.5% of the browser's own setting — 18px for
+     almost everyone — rather than a fixed pixel size, so a parent who has told their
+     browser to use larger text still gets larger text. Every size below is in rem and
+     follows it. The floor that matters: nothing a person clicks is set below 1rem, and no
+     sentence below .875rem. The first two rounds set controls at 14 and 15px, and both
+     times the answer was that they were too small. */
+  html { -webkit-text-size-adjust: 100%; font-size: 112.5%; }
   body {
     margin: 0;
     background: var(--bg);
@@ -132,7 +162,7 @@ export const PAGE = String.raw`<!doctype html>
   .icon-btn {
     background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm); padding: .4375rem .75rem;
-    font: 500 .875rem/1.3 inherit; min-height: 2.25rem;
+    font: inherit; font-weight: 500; font-size: 1rem; line-height: 1.3; min-height: 2.5rem;
     display: inline-flex; align-items: center; gap: .4375rem; cursor: pointer;
   }
   .icon-btn:hover { background: var(--surface-sunken); }
@@ -165,7 +195,7 @@ export const PAGE = String.raw`<!doctype html>
   .gallery .vid { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 1.75rem; }
   .gallery .cap {
     position: absolute; left: 0; right: 0; bottom: 0; padding: .25rem .375rem;
-    background: rgba(0,0,0,.55); color: #fff; font-size: .6875rem; line-height: 1.3;
+    background: rgba(0,0,0,.55); color: #fff; font-size: .75rem; line-height: 1.3;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
@@ -175,7 +205,7 @@ export const PAGE = String.raw`<!doctype html>
     padding: 0; max-width: 46rem; width: calc(100vw - 3rem); max-height: calc(100vh - 4rem);
     background: var(--surface); color: var(--text);
   }
-  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog::backdrop { background: var(--backdrop); }
   .dlg-head {
     display: flex; align-items: center; justify-content: space-between; gap: var(--s4);
     padding: var(--s4) var(--s5); border-bottom: 1px solid var(--border);
@@ -188,7 +218,7 @@ export const PAGE = String.raw`<!doctype html>
   .dlg-foot { margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--border); }
   .logs {
     background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm);
-    padding: var(--s3); font: .8125rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: var(--s3); font: .875rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     max-height: 22rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
   }
 
@@ -245,12 +275,12 @@ export const PAGE = String.raw`<!doctype html>
      3.2.5. Nothing is loaded from the other origin, so the CSP is untouched. */
   a.ext { color: var(--accent-ink); text-underline-offset: 3px; }
   a.ext:hover { color: var(--accent-hover); }
-  a.ext .new-tab { font-size: .8125rem; }
+  a.ext .new-tab { font-size: .875rem; }
   a.ext .mark { margin-left: .25em; text-decoration: none; }
 
   kbd, code {
     background: var(--surface-sunken); padding: .125rem .4rem; border-radius: 5px;
-    font-size: .8125rem; color: var(--text);
+    font-size: .875rem; color: var(--text);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     border: 1px solid var(--border);
   }
@@ -287,15 +317,15 @@ export const PAGE = String.raw`<!doctype html>
     width: 100%; padding: .6875rem .8125rem;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
-    font: .9375rem/1.5 inherit;
+    font: inherit; font-size: 1rem; line-height: 1.5;
     background: var(--surface); color: var(--text);
     min-height: 2.75rem;
   }
   textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
   #cookie-check { min-height: 1.2em; margin: 6px 0 10px; }
-  #cookie-check .good { color: var(--ok, #2a7); }
-  #cookie-check .warn { color: var(--warn, #b70); }
-  #cookie-check .bad { color: var(--err, #c33); }
+  #cookie-check .good { color: var(--ok); }
+  #cookie-check .warn { color: var(--warn-ink); }
+  #cookie-check .bad { color: var(--danger); }
   [aria-invalid="true"] { border-color: var(--danger); border-width: 2px; }
 
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
@@ -308,7 +338,11 @@ export const PAGE = String.raw`<!doctype html>
   button {
     background: var(--accent); color: var(--accent-text);
     border: 1px solid transparent; border-radius: var(--radius-sm);
-    padding: .625rem 1.5rem; font: 600 1.0625rem/1.3 inherit;
+    /* "font: inherit" first and the parts after it, never "font: 600 1rem inherit": a
+       CSS-wide keyword cannot share the shorthand with other values, the browser drops
+       the whole declaration, and every button falls back to its built-in 13.3px. That
+       is what three rounds of "the button text is too small" actually were. */
+    padding: .625rem 1.5rem; font: inherit; font-weight: 600; font-size: 1.0625rem; line-height: 1.3;
     cursor: pointer; min-height: 2.875rem; transition: background .15s;
   }
   button:hover:not(:disabled) { background: var(--accent-hover); }
@@ -318,6 +352,12 @@ export const PAGE = String.raw`<!doctype html>
   /* What the hidden attribute means, everywhere. Without this, any rule that sets display —
      .run-actions is flex — quietly beats it, and a control the script hid stays on screen. */
   [hidden] { display: none !important; }
+  /* Only ever shown by scripts/demo.js, so that a page full of invented children is never
+     mistaken for the real thing. */
+  .demo-ribbon {
+    background: var(--warn-tint); color: var(--warn-ink); border-bottom: 1px solid var(--warn);
+    padding: var(--s2) var(--s4); text-align: center; font-weight: 600; font-size: .875rem;
+  }
   /* The dashboard has no step numbers, so its notes are not indented under one. */
   .dash .hint { margin-left: 0; }
   .nowrap { white-space: nowrap; }
@@ -332,12 +372,12 @@ export const PAGE = String.raw`<!doctype html>
   .photos-links { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s2); margin: var(--s4) 0 0; }
   /* The Photos card has no step number, so nothing to indent under. */
   #card-photos .hint, #card-photos .body { margin-left: 0; }
-  .warn-text { color: var(--warn); font-weight: 600; }
+  .warn-text { color: var(--warn-ink); font-weight: 600; }
 
   .msg { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--radius-sm); font-size: .9375rem; border: 1px solid transparent; }
   .msg.ok { background: var(--ok-tint); color: var(--ok); border-color: var(--ok); }
   .msg.err { background: var(--danger-tint); color: var(--danger); border-color: var(--danger); }
-  .msg.warn { background: var(--warn-tint); color: var(--warn); border-color: var(--warn); }
+  .msg.warn { background: var(--warn-tint); color: var(--warn-ink); border-color: var(--warn); }
   .msg b { font-weight: 650; }
   /* The quiet confirmation for a setting that saved itself. A full banner for every tick
      would shout; this is a footnote. */
@@ -379,7 +419,7 @@ export const PAGE = String.raw`<!doctype html>
 
   details { margin-top: var(--s4); border-top: 1px solid var(--border); padding-top: var(--s3); }
   summary {
-    cursor: pointer; font-size: .9375rem; color: var(--accent-ink); font-weight: 550;
+    cursor: pointer; font-size: 1.0625rem; color: var(--accent-ink); font-weight: 550;
     padding: var(--s2) 0; min-height: 1.5rem;
   }
   details .inner { padding-top: var(--s4); }
@@ -414,7 +454,7 @@ export const PAGE = String.raw`<!doctype html>
 
   .stats { display: flex; flex-wrap: wrap; gap: var(--s6); margin-top: var(--s5); }
   .stat .n { font-size: 1.625rem; font-weight: 650; letter-spacing: -.02em; display: block; margin-bottom: var(--s2); }
-  .stat .l { font-size: .8125rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+  .stat .l { font-size: .875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
 
   .privacy {
     background: var(--surface); border: 1px solid var(--border);
@@ -425,7 +465,7 @@ export const PAGE = String.raw`<!doctype html>
   .privacy p { margin: 0 0 var(--s2); font-size: .9375rem; color: var(--text-muted); }
   .privacy p:last-child { margin-bottom: 0; }
   .path {
-    font-family: ui-monospace, Menlo, monospace; font-size: .8125rem;
+    font-family: ui-monospace, Menlo, monospace; font-size: .875rem;
     background: var(--surface-sunken); padding: .125rem .4rem; border-radius: 5px;
     border: 1px solid var(--border); color: var(--text); word-break: break-all;
   }
@@ -444,6 +484,7 @@ ${COOKIE_HELP_CSS}
 </style>
 </head>
 <body>
+<!--__BANNER__-->
 <a class="skip" href="#main">Skip to the setup steps</a>
 <div class="wrap">
   <header>
@@ -1708,13 +1749,18 @@ function paintSchedule() {
   // The dashboard's one line about the daily run: when the next one is, or that there is
   // none — the "when" a parent looks for without opening Settings.
   const lost = sched.installed && sched.registered === false;
+  // Set up and still registered, but it has not saved anything since — most often because
+  // the Node it points at has moved. The summary says which; this only has to not be green.
+  const stalled = sched.installed && !lost && Boolean(sched.overdue);
   $('dash-schedule').textContent = !sched.installed
     ? 'Photos are saved only when you press Save new photos. A daily run can be set up in Settings and Maintenance.'
     : lost
       ? 'A daily run was set up, but this computer no longer has it. Settings and Maintenance says how to put it back.'
-      : 'Saves new photos every day' + (sched.time ? ' at ' + sched.time : '') +
-        (sched.nextRun ? ' — next run ' + shortWhen(sched.nextRun) : '') + '.';
-  $('dash-schedule').classList.toggle('warn-text', lost);
+      : stalled
+        ? 'The daily run is set up but has not saved anything since. Settings and Maintenance says why.'
+        : 'Saves new photos every day' + (sched.time ? ' at ' + sched.time : '') +
+          (sched.nextRun ? ' — next run ' + shortWhen(sched.nextRun) : '') + '.';
+  $('dash-schedule').classList.toggle('warn-text', lost || stalled);
   if (sched.time) $('schedule-time').value = sched.time;
   $('btn-schedule-off').hidden = !sched.installed;
   $('btn-schedule-on').textContent = sched.installed ? 'Change the time' : 'Save new photos every day';
@@ -1739,6 +1785,12 @@ function paintSchedule() {
     show(box, 'warn', esc(sched.summary) + found);
     setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active',
       'Step 4 of 4. A daily run was set up but the computer no longer has it.');
+    return;
+  }
+  if (sched.overdue) {
+    show(box, 'warn', esc(sched.summary) + found);
+    setStep($('card-schedule'), $('num-4'), $('schedule-state'), 'active',
+      'Step 4 of 4. A daily run is set up but has not saved anything yet.');
     return;
   }
   show(box, 'ok',
