@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Save your own child's photos from Brightwheel to your own computer, organised by week.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ip2k/care-album-saver.git"
+  },
+  "homepage": "https://github.com/ip2k/care-album-saver#readme",
+  "bugs": {
+    "url": "https://github.com/ip2k/care-album-saver/issues"
+  },
   "type": "module",
   "bin": {
     "care-album-saver": "./dist/cli.js"
