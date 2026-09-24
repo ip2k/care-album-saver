@@ -324,12 +324,23 @@ export class BrightwheelClient {
   }
 
   /** Cheap liveness check used by `login` and `doctor`. */
-  async verifySession(): Promise<{ ok: true; email: string | null } | { ok: false; reason: string }> {
+  /**
+   * Whether Brightwheel accepts this session. `rejected` separates "Brightwheel said no" from
+   * everything else that can go wrong on the way (no network, a changed API), because only
+   * the first is fixed by copying the value again — and the caller words it for its reader.
+   */
+  async verifySession(): Promise<
+    { ok: true; email: string | null } | { ok: false; reason: string; rejected: boolean }
+  > {
     try {
       const me = await this.me();
       return { ok: true, email: me.email };
     } catch (error) {
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error),
+        rejected: error instanceof Error && error.name === 'SessionExpiredError',
+      };
     }
   }
 }
