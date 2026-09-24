@@ -73,6 +73,8 @@ file was started.
 
 ### Fixed
 
+- `docker build` failed: the Dockerfile still copied the `media-ferry` package, which was folded
+  into this one on 23 September. A test now checks that everything the Dockerfile copies exists.
 - `scripts/deploy.js` could deploy only once: every later deploy failed a test that assumed the
   suite never runs in production. And when a deploy did fail, the daily run had already been
   switched to the new build, which the script said had not happened. A failed deploy now puts
