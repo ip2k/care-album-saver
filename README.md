@@ -531,7 +531,9 @@ place `--dir` would otherwise come from — so if you name `run`, name `--dir /p
 it, or the photos are written inside the container and thrown away when it exits.
 
 On Linux, `--user` runs the container as you, so it can read the mounted session file —
-which only your account can open — and write into the mounted photos folder. Without it the
+which only your account can open, of the ordinary accounts on the computer (see
+[what this tool cannot protect you from](#what-this-tool-cannot-protect-you-from)) — and
+write into the mounted photos folder. Without it the
 container runs as its own user and can only write folders that user owns. Docker Desktop on
 a Mac or Windows maps bind mounts itself, so the flag does no harm there.
 

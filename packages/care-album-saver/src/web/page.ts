@@ -997,7 +997,7 @@ ${COOKIE_HELP_CSS}
     <p>This page is being served by the program running on your own computer &mdash; that is why the address starts with 127.0.0.1, which means <em>this machine only</em>. Nobody else on your network can open it, and it disappears when you stop the program.</p>
 
     <h3>Why does it want a cookie rather than my password?</h3>
-    <p>So that it never has one. You sign in on Brightwheel&rsquo;s own website, and copy across a value that says &ldquo;this browser is already signed in&rdquo;. It is kept on this computer only, in a file only you can open, and it is sent only back to Brightwheel. If you ever think it has leaked, sign out of Brightwheel on their website and change your password.</p>
+    <p>So that it never has one. You sign in on Brightwheel&rsquo;s own website, and copy across a value that says &ldquo;this browser is already signed in&rdquo;. It is kept on this computer only, in a file only you can open (other people&rsquo;s accounts on this computer cannot, though an administrator of it can), and it is sent only back to Brightwheel. If you ever think it has leaked, sign out of Brightwheel on their website and change your password.</p>
 
     <h3>What date do the photos get?</h3>
     <p>The time each one was <b>posted</b> to Brightwheel, which for a nursery is usually minutes after it was taken and nearly always the same day. The moment the shutter clicked is not something Brightwheel gives out &mdash; the photos arrive with nothing inside them at all, which is why a photo saved from the website lands in your photo app stamped with the moment you clicked.</p>
@@ -1218,6 +1218,16 @@ let saves = Promise.resolve();
 /** Why the last save got no answer it could use, in words; null when the tool answered it. */
 let saveTrouble = null;
 const UNREACHABLE = 'This page cannot reach the tool. It may have been closed, or the computer may be busy.';
+/**
+ * What to say when the tool did answer, but not in a way this page can read (§4.6, F24): only a
+ * request that got no answer at all is UNREACHABLE. A 403 here is nearly always the tool started
+ * again, whose new link this old tab does not carry.
+ */
+function answeredOddly(status) {
+  return status === 403
+    ? 'The tool did not accept this page. If you started it again, open the new link printed in the window you started it from.'
+    : 'The tool answered in a way this page could not read (' + status + '). Reload the page and try again.';
+}
 function persist(patch, opts = {}) {
   // Never rejects: a save that threw used to end in silence, with Start left pressed.
   const run = saves.then(() => save(patch, opts)).catch(() => {
@@ -1239,14 +1249,21 @@ async function save(patch, opts) {
     savedNote();
     return true;
   }
-  let d;
+  let d = null;
+  let r = null;
   saveTrouble = null;
   try {
-    const r = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
-    d = await r.json();
+    r = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
   } catch {
     saveTrouble = UNREACHABLE;
     d = { ok: false, error: 'Could not save that. ' + UNREACHABLE };
+  }
+  if (r) {
+    d = await r.json().catch(() => null);
+    if (!d || typeof d !== 'object') {
+      saveTrouble = answeredOddly(r.status);
+      d = { ok: false, error: 'Could not save that. ' + saveTrouble };
+    }
   }
   if (!d.ok) {
     showSaveError(d, opts);
@@ -2277,8 +2294,8 @@ $('btn-run').onclick = async () => {
     return notStarted(UNREACHABLE);
   }
   if (!r.ok) {
-    const d = await r.json().catch(() => ({}));
-    say($('run-result'), 'err', d.error || 'Could not start.');
+    const d = await r.json().catch(() => null);
+    say($('run-result'), 'err', (d && d.error) || 'Not started. ' + answeredOddly(r.status));
     updateRunReady();
     return;
   }

@@ -15,6 +15,8 @@ import {
 } from '../dist/index.js';
 import { Manifest, ManifestUnusableError, readManifestFile, usableRecord } from '../dist/ferry/manifest.js';
 import { photoAt, records, summarise } from '../dist/gallery.js';
+import { startWebUi } from '../dist/web/server.js';
+import { configPath, writeSecureFile } from '../dist/paths.js';
 import { auditArchive, findDuplicates, removeDuplicates, repairManifest } from '../dist/maintenance.js';
 
 /**
@@ -288,6 +290,32 @@ async function looseArchive(names) {
   await writeList(dir, { schema: 2, source: 'brightwheel', files: names.map((n) => record(`Robin/${n}`)) });
   return { dir, config: { ...DEFAULT_CONFIG, archiveDir: dir } };
 }
+
+test('page-9, the server half: an unknown type is sent as a download, a photo is not', async () => {
+  const { dir, config } = await looseArchive(['a.jpg', 'l.html', 'noextension']);
+  process.env.CARE_ALBUM_CONFIG_DIR = await mkdtemp(join(tmpdir(), 'cas-notes-photo-config-'));
+  assertIsolatedConfigDir();
+  await writeSecureFile(configPath(), JSON.stringify(config));
+  // An address that is never asked: /photo reads the disk only.
+  const ui = await startWebUi({ baseUrl: 'http://127.0.0.1:9/api/v1' });
+  try {
+    const get = (i) => fetch(`http://127.0.0.1:${ui.port}/photo?i=${i}`, { headers: { 'x-setup-token': ui.token } });
+    const jpg = await get(0);
+    assert.equal(jpg.headers.get('content-type'), 'image/jpeg');
+    assert.equal(jpg.headers.get('content-disposition'), null, 'a photo is shown');
+    for (const i of [1, 2]) {
+      const other = await get(i);
+      assert.equal(other.status, 200);
+      assert.equal(other.headers.get('content-type'), 'application/octet-stream');
+      assert.equal(other.headers.get('content-disposition'), 'attachment');
+      await other.arrayBuffer();
+    }
+    await jpg.arrayBuffer();
+  } finally {
+    await ui.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('web-11: the photo route takes an index written in digits and nothing else', async () => {
   const { dir, config } = await looseArchive(['a.jpg', 'b.jpg']);

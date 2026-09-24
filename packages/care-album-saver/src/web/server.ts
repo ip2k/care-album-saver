@@ -633,12 +633,16 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
           return;
         }
-        const headers = {
+        const headers: Record<string, string> = {
           'content-type': found.type,
           // A child's photograph must not sit in a browser cache after the tool is closed.
           'cache-control': 'no-store, no-cache, must-revalidate, private',
           'accept-ranges': 'bytes',
         };
+        // A file whose type the tool does not know is offered for saving, never shown. With
+        // nosniff and the CSP it could not run as a page anyway; `attachment` says so to every
+        // browser (security review page-9, its server half).
+        if (found.type === 'application/octet-stream') headers['content-disposition'] = 'attachment';
         // A part of the file, when the browser asks for one. The photo viewer plays videos
         // in the page, and a <video> asks for byte ranges to seek — Safari will not play one
         // at all from a server that cannot answer them. One range only; anything else gets
