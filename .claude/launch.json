@@ -7,6 +7,13 @@
       "runtimeArgs": ["scripts/demo.js", "--port", "4719"],
       "port": 4719,
       "url": "http://127.0.0.1:4719"
+    },
+    {
+      "name": "setup",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["packages/care-album-saver/dist/cli.js", "setup", "--port", "4720"],
+      "port": 4720,
+      "url": "http://127.0.0.1:4720"
     }
   ]
 }
