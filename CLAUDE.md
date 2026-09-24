@@ -59,7 +59,7 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 320 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+- 335 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
   because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
   of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
   24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
@@ -86,7 +86,8 @@ stores, and this tool is deliberately local-only with no cloud component.
   2026-09-23).** `checkForUpdates` is null until the parent answers on the dashboard; only
   `/api/update` sets it. Then GitHub's releases API is asked at most daily, only from the
   setup page, never from the daily run, with no cookie, token or tool-named User-Agent.
-  Tests are barred from the network by `CARE_ALBUM_NO_UPDATE_CHECK` (set in test-env.js).
+  Tests are barred from the network by `CARE_ALBUM_NO_UPDATE_CHECK` and from desktop notifications
+  by `CARE_ALBUM_NO_NOTIFY` (both set in test-env.js).
   See src/updates.ts, src/version.ts (install kinds), docs/UPDATING.md and, for how it works
   and what a release must consist of, docs/UPDATE-CHECK.md.
 - **Adding to Apple Photos is off by default and must stay that way** (settled 2026-09-23).

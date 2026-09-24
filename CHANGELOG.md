@@ -157,3 +157,29 @@ file was started.
 - A single post dated in the future no longer stops every later run from finding new photos.
 - The session can no longer reach a terminal, a log line or the page, even in an error message.
 - The secret scanner now recognises the signed photo links Brightwheel actually hands out.
+
+### Security
+
+- **A damaged settings file no longer starts your archive over.** If `config.json` is ever
+  damaged (by a full disk or a hand edit), the tool now stops and says which file and why,
+  instead of quietly falling back to a fresh setup, which meant a new default folder and every
+  child's whole feed downloaded again. The daily run records the refusal and shows the "did not
+  work" notice. A damaged saved session now says it is damaged rather than "not connected"
+  (connecting again fixes it). A damaged record of what went into Photos stops the Photos step,
+  rather than adding every photo again, and to iCloud with them.
+- **The daily run stays with the copy that set it up.** Every copy of the tool on a computer
+  shares one daily run. A second copy, such as an unpacked download you only looked at or a copy
+  run once with npx, can no longer quietly point the daily run at itself. The setup page asks
+  first ("Move the daily run to this copy?"). From the command line it takes
+  `schedule on --replace`.
+- **Saved files only get photo and video extensions.** A file is saved as `.jpg`, `.jpeg`,
+  `.png`, `.heic`, `.heif`, `.webp`, `.gif`, `.mp4`, `.mov` or `.m4v`, never as whatever the
+  download link ended in, so nothing in your archive folder can end up named like a program or
+  a web page.
+- **Files the tool rewrites can't be redirected.** The archive list, your settings, your
+  session, each week's README and each photo's `.json` file are written through a temporary
+  file with an unpredictable name that is never opened through a symbolic link. Before, someone
+  who could write to your archive folder could plant a link and make the next run overwrite a
+  different file.
+- **Downloads sent compressed no longer fail as "truncated".** The tool now asks for photos
+  uncompressed, and no longer misreads the size when a server compresses them anyway.
