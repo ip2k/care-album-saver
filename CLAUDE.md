@@ -66,8 +66,9 @@ stores, and this tool is deliberately local-only with no cloud component.
 - **Pushed for the first time on 2026-09-23** to the public https://github.com/ip2k/care-album-saver,
   at b94e7cd, after a history rewrite that dropped eight leaking screenshot blobs and set every
   commit identity to the owner's GitHub noreply address (docs/SECURITY-REVIEW-2026-09-23.md
-  §1/§3). **The ~60 other local branches still point at the old history and carry those
-  blobs: never push them; cut new branches from the new `main`.** CI is green on every
+  §1/§3). The ~60 local branches that pointed at the old history were deleted and the
+  object database garbage-collected the same night: none of the eight blobs remains
+  anywhere locally, and `main` is the only branch. CI is green on every
   cell since 90bcdff (Ubuntu, macOS and Windows × Node 22/24/26, the screenshots job, and
   the security workflow's gitleaks scan over the full history); the first two runs failed
   on the test script and on tests that assumed a Mac, both fixed the same night. The review's open WARNINGs are in the
