@@ -779,11 +779,7 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
     }
     case 'cron': {
       location = 'your crontab (see "crontab -l")';
-      const existing = await e.run('crontab', ['-l']);
-      // An empty crontab exits non-zero with "no crontab for <user>" on most systems, which
-      // is not a failure — it is the ordinary state of a machine nobody has scheduled
-      // anything on. Only the lines we get back matter.
-      const kept = stripCronBlock(existing.code === 0 ? existing.stdout : '');
+      const kept = stripCronBlock(await currentCrontab(e));
       const written = `${[...kept, CRON_MARKER, ...cronLines(e, time), CRON_END].join('\n')}\n`;
       const applied = await e.run('crontab', ['-'], written);
       if (applied.code !== 0) {
@@ -849,10 +845,12 @@ export async function remove(env: ScheduleEnvironment = {}): Promise<ScheduleSta
       await e.run('systemctl', ['--user', 'daemon-reload']);
       break;
     case 'cron': {
-      const existing = await e.run('crontab', ['-l']);
-      const kept = stripCronBlock(existing.code === 0 ? existing.stdout : '');
+      const kept = stripCronBlock(await currentCrontab(e));
       // Their own lines go back exactly as they were; only ours are gone.
-      await e.run('crontab', ['-'], kept.length > 0 ? `${kept.join('\n')}\n` : '');
+      const cleared = await e.run('crontab', ['-'], kept.length > 0 ? `${kept.join('\n')}\n` : '');
+      if (cleared.code !== 0) {
+        throw new Error(`The daily run could not be removed from your crontab, so nothing was changed: ${cleared.stderr.trim() || `crontab exited with ${cleared.code}`}.`);
+      }
       break;
     }
     case 'schtasks':
@@ -963,6 +961,19 @@ function spokenTime(time: TimeOfDay): string {
   const hour12 = time.hour % 12 === 0 ? 12 : time.hour % 12;
   const part = time.hour < 12 ? 'in the morning' : time.hour < 18 ? 'in the afternoon' : 'in the evening';
   return `${hour12}:${pad(time.minute)} ${part}`;
+}
+
+/**
+ * The person's crontab, or nothing when they have none. "no crontab for <user>" is the
+ * ordinary state of a machine nobody has scheduled anything on; any other failure to read it
+ * is exactly that, a failure — treating it as empty and writing back would replace whatever
+ * lines they had with ours alone (found by the 2026-09-23 security review).
+ */
+async function currentCrontab(e: Resolved): Promise<string> {
+  const existing = await e.run('crontab', ['-l']);
+  if (existing.code === 0) return existing.stdout;
+  if (/no crontab for/i.test(existing.stderr)) return '';
+  throw new Error(`Your crontab could not be read, so nothing was changed: ${existing.stderr.trim() || `crontab exited with ${existing.code}`}.`);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from './ferry/index.js';
+import { containedFile } from './contain.js';
 import type { BrightwheelClient } from './api/client.js';
 import type { Config } from './config.js';
 import { formatBytes } from './units.js';
@@ -312,7 +313,8 @@ export async function repairManifest(config: Config): Promise<RepairResult> {
 
   let added = 0;
   for (const rel of audit.unrecorded) {
-    const absolute = join(root, ...rel.split(posix.sep));
+    const absolute = await containedFile(root, rel);
+    if (!absolute) continue;
     const info = await stat(absolute).catch(() => null);
     if (!info) continue;
     const sidecar = await readSidecar(`${absolute}.json`);
@@ -433,14 +435,17 @@ export async function findDuplicates(config: Config): Promise<DuplicateReport> {
   for (const [sha256, bucket] of byHash) {
     if (bucket.length < 2) continue;
     // Only copies that are really there, and really identical now.
-    const present: { rel: string; record: ManifestRecord; bytes: number }[] = [];
+    const present: { rel: string; record: ManifestRecord; bytes: number; absolute: string }[] = [];
     for (const record of bucket) {
       const rel = record.path.split('\\').join('/');
-      const absolute = join(root, ...rel.split(posix.sep));
+      const absolute = await containedFile(root, rel);
+      if (!absolute) continue;
+      // Two spellings of one file are one file, not a copy and its duplicate.
+      if (present.some((p) => p.absolute === absolute)) continue;
       const info = await stat(absolute).catch(() => null);
       if (!info?.isFile()) continue;
       if ((await hashFile(absolute).catch(() => null)) !== sha256) continue;
-      present.push({ rel, record, bytes: info.size });
+      present.push({ rel, record, bytes: info.size, absolute });
     }
     if (present.length < 2) continue;
 
@@ -531,7 +536,8 @@ export async function removeDuplicates(config: Config, options: { confirm: strin
   const removed: string[] = [];
   let bytes = 0;
   for (const rel of wanted) {
-    const absolute = join(root, ...rel.split(posix.sep));
+    const absolute = await containedFile(root, rel);
+    if (!absolute) continue;
     const info = await stat(absolute).catch(() => null);
     if (!info) continue;
     await rm(absolute, { force: true });
