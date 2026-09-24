@@ -88,6 +88,14 @@ file was started.
   Windows (the containment check assumed `/`), and a symbolic link planted inside the archive
   can no longer reach a file outside it. The demo's "open the log" no longer opens a real
   log viewer.
+- Two things the security review reproduced. Everything that reads the archive's list —
+  the gallery, the duplicate finder and remover, the repair, the Photos step — now resolves
+  each entry to a real place inside the archive and refuses anything else, so a list edited
+  by something else that can write the folder cannot make the tool delete, serve or import a
+  file outside it, and the duplicate remover can no longer mistake two spellings of one file
+  for a copy and delete the only one. A crontab the tool cannot read is no longer treated as
+  empty and overwritten, and a `crontab` write that fails is reported instead of recorded as
+  done.
 - `docker build` failed: the Dockerfile still copied the `media-ferry` package, which was folded
   into this one on 23 September. A test now checks that everything the Dockerfile copies exists.
 - `scripts/deploy.js` could deploy only once: every later deploy failed a test that assumed the
