@@ -17,6 +17,7 @@ import type { MediaActivity, Student } from './api/schema.js';
 import type { Config } from './config.js';
 import { applyMetadata, closeMetadata } from './metadata.js';
 import { ARCHIVE_DIR_MODE, checkArchiveDir } from './safety.js';
+import { takeRunLock } from './run-lock.js';
 
 export interface SyncProgress {
   /**
@@ -392,6 +393,30 @@ export async function sync(
   config: Config,
   onProgress: (p: SyncProgress) => void = () => {},
   options: { allowTemporaryDir?: boolean; signal?: AbortSignal } = {},
+): Promise<SyncResult> {
+  // One run per archive folder at a time, across processes: see run-lock.ts. The folder is
+  // checked and made first, because the lock lives in it — and a folder the OS would empty
+  // is refused before anything is created, exactly as before. A run that finds the lock
+  // held throws RunInProgressError having read and fetched nothing.
+  const verdict = checkArchiveDir(config.archiveDir, { allowTemporary: options.allowTemporaryDir });
+  if (!verdict.ok) throw new Error(verdict.error);
+  await mkdir(config.archiveDir, { recursive: true, mode: ARCHIVE_DIR_MODE });
+  const lock = await takeRunLock(config.archiveDir);
+  try {
+    return await syncHoldingTheLock(client, config, (p) => {
+      lock.touch();
+      onProgress(p);
+    }, options);
+  } finally {
+    await lock.release();
+  }
+}
+
+async function syncHoldingTheLock(
+  client: BrightwheelClient,
+  config: Config,
+  onProgress: (p: SyncProgress) => void,
+  options: { allowTemporaryDir?: boolean; signal?: AbortSignal },
 ): Promise<SyncResult> {
   const result: SyncResult = {
     saved: 0,
