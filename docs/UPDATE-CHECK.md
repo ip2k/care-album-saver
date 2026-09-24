@@ -60,6 +60,26 @@ together, or the check tells parents the wrong thing:
    body is what the page shows under "What's new". Drafts and pre-releases are ignored by
    the check, so a pre-release can be published without telling every parent about it.
 
+Publishing the release is also what puts it on npm: `.github/workflows/release.yml` runs on
+it, refuses a tag that does not match `packages/care-album-saver/package.json` or is not on
+`main`, builds and tests, and runs `npm publish`. A pre-release goes to npm's `next` tag, so
+`@latest` never picks it up. Nothing is bumped by the workflow; step 1 is still yours.
+
+### One-time setup for npm
+
+The workflow has no npm token. It uses [trusted publishing](https://docs.npmjs.com/trusted-publishers):
+npm accepts this repository's GitHub Actions identity instead, and records which commit
+built each version (provenance). Before the first automated release:
+
+1. A trusted publisher is configured per package, so the package must exist first: publish
+   the first version by hand (`pnpm build`, copy `README.md` into
+   `packages/care-album-saver/`, then `npm publish --access public` there).
+2. On npmjs.com, the package's **Settings → Trusted Publisher → GitHub Actions**:
+   organization or user `ip2k`, repository `care-album-saver`, workflow `release.yml`,
+   environment `npm`.
+3. In this repository's **Settings → Environments**, create `npm`. Restricting it to tags,
+   or adding a required reviewer, makes a publish wait for that too.
+
 What goes wrong if the three come apart: a tag without the bump means every copy sees
 "new version" for a release it already has, forever; a bump without a tag means nobody is
 told. The first is loud and gets fixed; the second is silent, so the release process is
