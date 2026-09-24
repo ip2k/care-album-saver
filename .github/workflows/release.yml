@@ -1,0 +1,88 @@
+name: release
+
+# Publishes packages/care-album-saver to npm when a GitHub release is published. Drafts never
+# reach here (a draft is not "published"), so a release can be written and reviewed first.
+#
+# The release process is docs/UPDATE-CHECK.md's: bump `version` on main, tag that commit
+# vX.Y.Z, publish the release. This workflow does not bump anything. It refuses a tag that
+# does not match package.json, because the update check compares exactly those two, and a
+# package on npm that disagrees with its own tag would tell every npm install the wrong thing.
+#
+# No NPM_TOKEN: npm trusted publishing exchanges this job's OIDC identity for a one-time
+# publish credential, and attaches a provenance statement saying which commit and workflow
+# built the tarball. npmjs.com only accepts that identity from this repository, this file
+# and the `npm` environment (see "One-time setup" in docs/UPDATE-CHECK.md).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write   # The OIDC token trusted publishing and provenance are built on.
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0   # To prove the tagged commit is on main, below.
+
+      - name: The tag matches package.json and is on main
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(node -p "require('./packages/care-album-saver/package.json').version")"
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "::error::Tag $TAG does not match packages/care-album-saver/package.json version $version. Bump the version on main and tag that commit."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tag $TAG points at a commit that is not on main."
+            exit 1
+          fi
+
+      # The same toolchain as ci.yml.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later; publishing is done with npm, not pnpm,
+      # for that reason. The package has no workspace: dependencies for pnpm to rewrite.
+      - run: npm install -g npm@11
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+
+      # The package's `files` lists README.md, but the README lives at the repository root.
+      # Copied only for the tarball; npmjs.com resolves its relative links against the
+      # repository root on GitHub, which is where they point.
+      - run: cp README.md packages/care-album-saver/README.md
+
+      - name: Publish
+        working-directory: packages/care-album-saver
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          # A pre-release (marked on GitHub, or a -pre.N version) goes to the `next` dist-tag,
+          # so `npm install care-album-saver` and `@latest` never pick it up — the same way the
+          # update check ignores pre-releases.
+          version="$(node -p "require('./package.json').version")"
+          if [ "$PRERELEASE" = "true" ] || [[ "$version" == *-* ]]; then
+            npm publish --access public --tag next
+          else
+            npm publish --access public
+          fi
