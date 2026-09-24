@@ -119,6 +119,22 @@ const MUST_EXCLUDE = {
     `${PKG}/kids/2026-09-18_1.m4v`,
     `${PKG}/kids/2026-09-18_1.jpg.xmp`,
   ],
+  // sc-9 and docs-10: what a run leaves behind while it works, and the tool's own state files,
+  // which live beside the session in the config folder and name children and folders.
+  "a run's leftovers and the tool's own state files": [
+    `${PKG}/kids/.care-album-saver.lock`,
+    `${PKG}/kids/2026-09-18_1.jpg.part`,
+    `${PKG}/kids/2026-09-18_1.jpg_exiftool_tmp`,
+    `${PKG}/kids/.archive.json.3f9a1c2b7d4e.tmp`,
+    'photos.json',
+    `${PKG}/photos.lock`,
+    `${PKG}/photos-handover-Xy12Ab/2026-09-18_1.mp4`,
+    `${PKG}/src/fingerprints.json`,
+    'last-run.json',
+    `${PKG}/update-check.json`,
+    `${PKG}/logs/daily.log`,
+    'care-album-saver-development',
+  ],
   'git, agent worktrees and docs': [
     '.git/config',
     `${PKG}/.git/HEAD`,

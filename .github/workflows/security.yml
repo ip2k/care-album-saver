@@ -58,10 +58,11 @@ jobs:
       # Same pnpm setup as ci.yml, so the two workflows cannot drift apart.
       - uses: pnpm/action-setup@v6
         with:
-          version: 12
+          version: 12.5.1
           cache: true
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+      # Without install scripts: the audit only reads the installed tree, and runs no code.
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm audit --audit-level=moderate

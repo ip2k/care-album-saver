@@ -182,7 +182,9 @@ test('a credential rule that has stopped matching fails, as it did in the first 
 });
 
 test('a default archive folder rule that has gone fails, though its photos are still caught by extension', posixOnly, () => {
-  for (const [rule, probe] of [['Care*Album*Photos/', 'Care Album Photos/.care-album-saver.lock'], ['Brightwheel*Photos/', 'Brightwheel Photos/.care-album-saver.lock']]) {
+  // The probe is a file no other rule names. It was the run lock until the lock got a rule of
+  // its own (sc-9), which would have kept this passing with the folder rule gone.
+  for (const [rule, probe] of [['Care*Album*Photos/', 'Care Album Photos/notes.txt'], ['Brightwheel*Photos/', 'Brightwheel Photos/notes.txt']]) {
     const repo = makeRepo();
     writeFileSync(join(repo, '.gitignore'), rulesWith([[rule, null]]));
     const r = run(repo);

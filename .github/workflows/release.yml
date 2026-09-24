@@ -55,10 +55,10 @@ jobs:
             exit 1
           fi
 
-      # The same toolchain as ci.yml.
+      # The same toolchain as ci.yml, pnpm at the same exact version.
       - uses: pnpm/action-setup@v6
         with:
-          version: 12
+          version: 12.5.1
           cache: true
       - uses: actions/setup-node@v6
         with:
@@ -67,6 +67,7 @@ jobs:
       # Trusted publishing needs npm 11.5.1 or later; publishing is done with npm, not pnpm,
       # for that reason. The package has no workspace: dependencies for pnpm to rewrite.
       - run: npm install -g npm@11
+      # The same install as ci.yml's test job, so what is published is what the matrix tested.
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test

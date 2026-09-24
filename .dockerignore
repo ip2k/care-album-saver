@@ -10,8 +10,9 @@
 # the root, and test/dockerignore.test.js fails on any rule that does not start with it.
 #
 # Every rule in .gitignore above its "Build and tooling" heading has one here too, the
-# credentials and everything an archive run writes, so a file kept out of git by name is
-# kept out of the image the same way; test/dockerignore.test.js checks that they agree.
+# credentials, everything an archive run writes and the tool's own state files, so a file kept
+# out of git by name is kept out of the image the same way; test/dockerignore.test.js checks
+# that they agree.
 **/.git
 **/.claude
 **/docs
@@ -19,6 +20,7 @@
 **/dist
 **/*.tsbuildinfo
 **/.care-album-saver-production
+**/care-album-saver-development
 
 # Credentials and personal data.
 **/*.har
@@ -80,3 +82,16 @@
 **/*.3gp.json
 **/*.webm.json
 **/*.avi.json
+**/.care-album-saver.lock
+**/*.part
+**/*_exiftool_tmp
+**/*.tmp
+
+# The tool's own state, which lives beside the session in the config folder.
+**/photos.json
+**/photos.lock
+**/photos-handover-*
+**/fingerprints.json
+**/last-run.json
+**/update-check.json
+**/daily.log

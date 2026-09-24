@@ -1,12 +1,25 @@
-# Multi-stage so that build tooling does not reach the published image. Note what this
-# does NOT do: the build stage copies the build context in, so anything sitting in the
-# context is in the image's history whether or not the runtime stage copies it forward.
-# .dockerignore is what keeps a session out — see SECURITY.md.
+# Two stages. The build stage copies in the build context — whatever .dockerignore lets
+# through — installs every dependency, the dev ones included, and compiles. The runtime stage
+# starts again from the base image and takes across only what runs: the compiled dist/, the
+# package's own package.json, the AppleScript, the LICENSE and the production node_modules.
+# So the published image carries no src/, no test files (two of which hold deliberately fake
+# sessions and signed URLs) and no build tooling (security review sc-7).
+#
+# What that does NOT do: the build stage's layers still hold everything the context carried.
+# They are not part of the published image, but they stay in the build cache of the machine
+# that built it, `docker build --target build` makes an image of them, and a runtime COPY
+# widened again would carry them forward. .dockerignore is what keeps a session out of the
+# build in the first place — see SECURITY.md.
 FROM node:22-slim AS build
 WORKDIR /app
-RUN corepack enable
+# pnpm at exactly the version CI runs (.github/workflows/*.yml; test/workflows.test.js keeps
+# the two equal). Given no version, corepack asks the registry for the latest pnpm, so two
+# builds of one commit could install with two different ones (security review sc-6).
+RUN corepack enable && corepack install -g pnpm@12.5.1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json ./
 COPY packages/care-album-saver/package.json packages/care-album-saver/
+# Exactly the locked versions, and no dependency's install scripts: none of them needs one,
+# and building an image is no reason to run code from the registry.
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY packages ./packages
 RUN pnpm build && pnpm prune --prod
@@ -26,8 +39,14 @@ FROM node:22-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+# Only what runs, each named (test/dockerfile.test.js refuses anything else). node_modules is
+# the production set `pnpm prune --prod` left: the store at the root, and the package's own
+# links into it, which are relative and so resolve here as they did there.
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
+COPY --from=build /app/packages/care-album-saver/node_modules ./packages/care-album-saver/node_modules
+COPY --from=build /app/packages/care-album-saver/dist ./packages/care-album-saver/dist
+COPY --from=build /app/packages/care-album-saver/applescript ./packages/care-album-saver/applescript
+COPY --from=build /app/packages/care-album-saver/package.json /app/packages/care-album-saver/LICENSE ./packages/care-album-saver/
 # The mount points must exist and belong to `node` before the volumes are declared. A
 # VOLUME path that is absent from the image is created at container start as root:root,
 # which the unprivileged user below cannot write — so a named volume would fail on the

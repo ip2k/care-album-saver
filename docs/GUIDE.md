@@ -46,8 +46,9 @@ last line. Then it prints a link like
 ![The setup assistant's first step, with the five instructions for finding your Brightwheel session and the box you paste it into both highlighted](images/01-connect.png)
 
 > **Why the odd-looking link?** `127.0.0.1` means *this computer*. The page is not on the
-> internet — nobody else can open it. The `token` is a password only this run of the program knows, so that other
-> programs on your computer cannot open it either.
+> internet — nobody else can open it. The `token` is a password that only this run of the program, and the
+> link it printed, know. It is there so that a website you happen to visit cannot use the page behind your back,
+> even though the page is on your own computer. Treat the link like a password while the program is open.
 
 Leave that black window open while you work. Everything happens inside it, and closing it
 stops the tool.
@@ -85,8 +86,10 @@ If it worked, the step turns green and your children appear, each with a tick bo
 ![The assistant after connecting, showing a green tick and the two children read from the account, each with a ticked box](images/02-connected.png)
 
 > **Is it safe to copy that value?** It is a temporary pass that says you are already
-> signed in. It is stored on your computer only, in a file only you can open, and sent
-> only back to Brightwheel. It is not your password, and it expires.
+> signed in. It is stored on your computer only, in a file only you can open — other
+> people's accounts on the computer cannot, though an administrator of it can, and on Windows
+> the protection is weaker ([what this tool cannot protect you from](../README.md#what-this-tool-cannot-protect-you-from)) —
+> and sent only back to Brightwheel. It is not your password, and it expires.
 >
 > **If you ever think it has leaked**, sign out of Brightwheel everywhere from their
 > website, and change your password. That should end the old value; Brightwheel does not
