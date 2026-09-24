@@ -85,12 +85,20 @@ async function loadUpdateState(): Promise<UpdateState> {
 
 /**
  * Compare two versions: negative when `a` is older, positive when newer, 0 when the same.
- * major.minor.patch numerically; a pre-release ("0.2.0-beta.1") is older than its release.
+ *
+ * Semantic Versioning's precedence (semver.org §11): major.minor.patch numerically; a
+ * pre-release ("0.2.0-beta.1") is older than its release; two pre-releases compare field by
+ * field, split on ".", a field of digits numerically and below any field with a letter in it,
+ * others in ASCII order, and a shorter list below a longer one it begins. Build metadata
+ * ("+sha.abc") takes no part. The pre-release fields used to be compared as one string, so
+ * "rc.10" came before "rc.9" (security review outbound-12). Only a release is ever offered
+ * (parseRelease refuses pre-releases), but the copy running may be a pre-release, and it must
+ * not be told that an older one is new.
  */
 export function compareVersions(a: string, b: string): number {
-  const split = (v: string): [number[], string] => {
-    const [core = '', pre = ''] = v.replace(/^v/, '').split(/-(.*)/s);
-    return [core.split('.').map((n) => Number.parseInt(n, 10) || 0), pre];
+  const split = (v: string): [number[], string[]] => {
+    const [core = '', pre = ''] = v.replace(/^v/, '').replace(/\+.*$/s, '').split(/-(.*)/s);
+    return [core.split('.').map((n) => Number.parseInt(n, 10) || 0), pre ? pre.split('.') : []];
   };
   const [ca, pa] = split(a);
   const [cb, pb] = split(b);
@@ -98,10 +106,34 @@ export function compareVersions(a: string, b: string): number {
     const d = (ca[i] ?? 0) - (cb[i] ?? 0);
     if (d !== 0) return Math.sign(d);
   }
-  if (pa === pb) return 0;
-  if (!pa) return 1;
-  if (!pb) return -1;
-  return pa < pb ? -1 : 1;
+  // A release is newer than any pre-release of it.
+  if (pa.length === 0 && pb.length === 0) return 0;
+  if (pa.length === 0) return 1;
+  if (pb.length === 0) return -1;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i];
+    const y = pb[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const d = comparePreReleaseField(x, y);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** One dot-separated pre-release field against another, as semver §11.4 orders them. */
+function comparePreReleaseField(x: string, y: string): number {
+  const xNumeric = /^\d+$/.test(x);
+  const yNumeric = /^\d+$/.test(y);
+  if (xNumeric && yNumeric) {
+    // As whole numbers of any length: without leading zeros, the longer is the larger.
+    const [p, q] = [x.replace(/^0+(?=\d)/, ''), y.replace(/^0+(?=\d)/, '')];
+    if (p.length !== q.length) return p.length < q.length ? -1 : 1;
+    return p === q ? 0 : p < q ? -1 : 1;
+  }
+  if (xNumeric) return -1;
+  if (yNumeric) return 1;
+  return x === y ? 0 : x < y ? -1 : 1;
 }
 
 const TAG = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
@@ -128,9 +160,20 @@ export function parseRelease(body: unknown): Release | null {
     version,
     tag,
     url,
-    publishedAt: typeof r.published_at === 'string' ? r.published_at : null,
+    publishedAt: readPublishedAt(r.published_at),
     notes: notes.length > MAX_NOTES ? `${notes.slice(0, MAX_NOTES)}\n…` : notes,
   };
+}
+
+/**
+ * When the release was published, kept only when it is one: an ISO 8601 date-time, the form
+ * GitHub sends, that `Date.parse` reads as a real moment. Anything else used to be kept as
+ * sent and reach the page to be shown as a date (security review page-6); `Date.parse` alone
+ * is no test, as it makes a date out of nearly any text with a number in it.
+ */
+function readPublishedAt(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return null;
+  return Number.isFinite(Date.parse(value)) ? value : null;
 }
 
 /** The same checks on what was stored, since the file can be edited by hand. */
