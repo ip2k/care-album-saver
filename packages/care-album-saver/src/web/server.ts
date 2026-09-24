@@ -12,7 +12,7 @@ import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
 import { photoAt, summarise } from '../gallery.js';
 import { open, type FileHandle } from 'node:fs/promises';
-import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
+import { archiveBusy, auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
 import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
 import { PAGE } from './page.js';
@@ -403,6 +403,18 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
    * attention and two processes waiting on them.
    */
   let choosing = false;
+
+  /**
+   * How many looks at, or changes to, the archive the Maintenance panel has in progress. A
+   * run is refused while there are any, as they are while a run is going (security review
+   * web-5): the guard used to be one-way, so a run could start in the middle of a repair or
+   * a removal and the two wrote archive.json over each other. Across processes the run lock
+   * does the same job (see run-lock.ts); this answers the page's own clicks at once, in words.
+   */
+  let maintaining = 0;
+  const MAINTENANCE_IN_PROGRESS =
+    'The archive is being checked or tidied up on the Maintenance page right now. Nothing was started. ' +
+    'Wait for that to finish, then try again.';
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Nothing here may ever be cached: the pages list children's names and photos.
@@ -811,6 +823,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           json(409, { ok: false, error: 'Already running.' });
           return;
         }
+        if (maintaining > 0) {
+          json(409, { ok: false, error: MAINTENANCE_IN_PROGRESS });
+          return;
+        }
         // Claimed here, in the same turn as the check above and before the first await.
         // Reading the session file is an await like any other, and two clicks of Start
         // landing either side of it both used to pass a check made while `running` was
@@ -1001,6 +1017,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       // the same time, and the manifest is one file: letting the two overlap is how a
       // repair writes a list that the run then overwrites, or the other way about. So they
       // wait, and the page says why rather than failing silently.
+      //
+      // Both ways round, and across processes (security review web-5 and missed-fs): a run
+      // from this page is refused while one of these is in progress (`maintaining`), the
+      // repair and the removal hold the run lock a run in any process takes, and the two
+      // looks refuse while any process holds it. Each refusal is a 409 with the reason.
 
       if (req.method === 'POST' && url.pathname.startsWith('/api/maintenance/')) {
         if (running) {
@@ -1008,51 +1029,75 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           return;
         }
         const action = url.pathname.slice('/api/maintenance/'.length);
-        const config = await loadConfig();
+        // Asking Brightwheel who is on the account reads the list only for names, and a run
+        // beside it changes nothing it reports, so it neither blocks a run nor waits for one.
+        const touchesArchive = action !== 'children';
+        // Claimed before the first await, as /api/sync claims `running`, so that a Start
+        // pressed while the settings are being read is refused rather than let in.
+        if (touchesArchive) maintaining += 1;
         try {
-          switch (action) {
-            case 'children': {
-              const session = await loadSession();
-              if (!session) {
-                json(400, { ok: false, error: 'Connect to your Brightwheel account first.' });
-                return;
-              }
-              const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
-              const check = await checkChildren(client, config);
-              // This call has just read the account, so whatever the cache above holds is
-              // the older answer of the two. Dropped rather than patched: it holds full
-              // Student records and this one holds names and ids, and a half-updated cache
-              // is what a stored selection is checked against when the page saves a tick.
-              children = null;
-              json(200, { ok: true, result: check });
+          const config = await loadConfig();
+          try {
+            // Read-only, but while a run in another process (the daily run, say) is writing
+            // the list, what they report is half written. The repair and the removal take
+            // the lock themselves, in maintenance.ts, so the command line's are covered too.
+            const busy = action === 'archive' || action === 'duplicates' ? await archiveBusy(config, 'check') : null;
+            if (busy) {
+              json(409, { ok: false, error: scrub(busy) });
               return;
             }
-            case 'archive':
-              json(200, { ok: true, result: await auditArchive(config) });
-              return;
-            case 'repair':
-              json(200, { ok: true, result: await repairManifest(config) });
-              return;
-            case 'duplicates':
-              // Reporting only. Removing is a separate request carrying the list back.
-              json(200, { ok: true, result: await findDuplicates(config) });
-              return;
-            case 'duplicates/remove': {
-              const { paths } = (await readJson(req)) as { paths?: unknown };
-              if (!Array.isArray(paths) || !paths.every((p) => typeof p === 'string' && p.length > 0)) {
-                json(400, { ok: false, error: 'Nothing was named for removal, so nothing was deleted.' });
+            switch (action) {
+              case 'children': {
+                const session = await loadSession();
+                if (!session) {
+                  json(400, { ok: false, error: 'Connect to your Brightwheel account first.' });
+                  return;
+                }
+                const client = new BrightwheelClient({ session: session.session, baseUrl: options.baseUrl, userAgent: session.userAgent });
+                const check = await checkChildren(client, config);
+                // This call has just read the account, so whatever the cache above holds is
+                // the older answer of the two. Dropped rather than patched: it holds full
+                // Student records and this one holds names and ids, and a half-updated cache
+                // is what a stored selection is checked against when the page saves a tick.
+                children = null;
+                json(200, { ok: true, result: check });
                 return;
               }
-              json(200, { ok: true, result: await removeDuplicates(config, { confirm: paths as string[] }) });
+              case 'archive':
+                json(200, { ok: true, result: await auditArchive(config) });
+                return;
+              case 'repair':
+                json(200, { ok: true, result: await repairManifest(config) });
+                return;
+              case 'duplicates':
+                // Reporting only. Removing is a separate request carrying the list back.
+                json(200, { ok: true, result: await findDuplicates(config) });
+                return;
+              case 'duplicates/remove': {
+                const { paths } = (await readJson(req)) as { paths?: unknown };
+                if (!Array.isArray(paths) || !paths.every((p) => typeof p === 'string' && p.length > 0)) {
+                  json(400, { ok: false, error: 'Nothing was named for removal, so nothing was deleted.' });
+                  return;
+                }
+                json(200, { ok: true, result: await removeDuplicates(config, { confirm: paths as string[] }) });
+                return;
+              }
+              default:
+                json(404, { ok: false, error: 'Not found' });
+                return;
+            }
+          } catch (error) {
+            // A run, or another repair or removal, holds the folder — in this process or
+            // another. Not a failure: nothing was changed, and the message says why.
+            if (error instanceof Error && error.name === 'RunInProgressError') {
+              json(409, { ok: false, error: scrub(error.message) });
               return;
             }
-            default:
-              json(404, { ok: false, error: 'Not found' });
-              return;
+            json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+            return;
           }
-        } catch (error) {
-          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
-          return;
+        } finally {
+          if (touchesArchive) maintaining -= 1;
         }
       }
 

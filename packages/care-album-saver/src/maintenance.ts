@@ -2,6 +2,7 @@ import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
 import { Manifest, MANIFEST_FILENAME, hashFile, writeAtomically, type ManifestRecord } from './ferry/index.js';
 import { containedFile } from './contain.js';
+import { runLockRefusal, takeRunLock, type RunLock } from './run-lock.js';
 import type { BrightwheelClient } from './api/client.js';
 import type { Config } from './config.js';
 import { formatBytes } from './units.js';
@@ -136,6 +137,50 @@ async function readManifestJson(archiveDir: string): Promise<{ data: Record<stri
   const data = JSON.parse(raw) as Record<string, unknown>;
   const records = Array.isArray(data.files) ? (data.files as ManifestRecord[]) : [];
   return { data, records };
+}
+
+/**
+ * Do `work` holding the folder's run lock, as a run does (see run-lock.ts).
+ *
+ * The two actions that rewrite archive.json read it, change it and write it back whole, and a
+ * run does the same with its own copy every 25 photos. Without the lock, whichever writes
+ * second erases the other's change: a repair's added records vanish under the run's next
+ * save and those files are fetched again as copies, or the run's new records vanish under the
+ * repair's (security review missed-fs). A run meeting the lock refuses in turn (web-5).
+ *
+ * A folder that does not exist yet has nothing to repair or remove, and the lock cannot be
+ * made in it, so the work runs as it always did — it will find nothing, and write nothing.
+ */
+async function holdingTheRunLock<T>(archiveDir: string, purpose: 'repair' | 'duplicates', work: () => Promise<T>): Promise<T> {
+  let lock: RunLock;
+  try {
+    lock = await takeRunLock(archiveDir, { purpose });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return work();
+    if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
+      throw new Error('This folder cannot be written to from this account, so nothing was changed.');
+    }
+    throw error;
+  }
+  try {
+    return await work();
+  } finally {
+    await lock.release();
+  }
+}
+
+/**
+ * Why the archive cannot be looked at or changed right now, in words for a parent; null when
+ * it can.
+ *
+ * The setup page and the command line ask this before a look (`check`), which would describe
+ * a list a run in another process is still writing, and before asking a parent to confirm a
+ * change the lock would then refuse. It takes nothing and never waits; the repair and the
+ * removal still take the lock themselves, which is what actually keeps a run out.
+ */
+export async function archiveBusy(config: Config, wanted: 'check' | 'repair' | 'duplicates'): Promise<string | null> {
+  return (await runLockRefusal(config.archiveDir, wanted))?.message ?? null;
 }
 
 /** Write the manifest back, atomically and owner-only, exactly as the run would. */
@@ -316,6 +361,12 @@ export interface RepairResult {
  * as a single press.
  */
 export async function repairManifest(config: Config): Promise<RepairResult> {
+  // The audit as well as the write, under the lock: files a run has saved but not yet listed
+  // look unrecorded to an audit taken beside it, and the repair would list them a second time.
+  return holdingTheRunLock(config.archiveDir, 'repair', () => repairHoldingTheLock(config));
+}
+
+async function repairHoldingTheLock(config: Config): Promise<RepairResult> {
   const root = config.archiveDir;
   const audit = await auditArchive(config);
   const { data, records } = await readManifestJson(root);
@@ -530,7 +581,12 @@ export async function removeDuplicates(config: Config, options: { confirm: strin
   if (wanted.length === 0) {
     throw new Error('Nothing was named for removal, so nothing was deleted.');
   }
+  // The search is repeated under the lock too, so what is deleted is checked against the
+  // folder and the list as they are while nothing else can change either.
+  return holdingTheRunLock(config.archiveDir, 'duplicates', () => removeHoldingTheLock(config, wanted));
+}
 
+async function removeHoldingTheLock(config: Config, wanted: string[]): Promise<RemovalResult> {
   const report = await findDuplicates(config);
   const removable = new Map<string, DuplicateGroup>();
   for (const group of report.groups) for (const rel of group.extra) removable.set(rel, group);
