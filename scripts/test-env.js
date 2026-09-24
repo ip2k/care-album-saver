@@ -84,6 +84,31 @@ function isInside(child, parent) {
 }
 
 /**
+ * The same rule for the photos as for the session: a test may only archive somewhere
+ * disposable. Called by assertIsolatedConfigDir, so every file that already guards its
+ * config directory gets this for free.
+ */
+function assertIsolatedArchiveDir() {
+  const dir = process.env.CARE_ALBUM_DIR;
+  if (!dir) {
+    throw new Error(
+      'CARE_ALBUM_DIR is not set. Import scripts/test-env.js first: without it a ' +
+        'sync built from DEFAULT_CONFIG archives into the real default photos folder ' +
+        '(~/Care Album Photos, or ~/Brightwheel Photos where that already exists).',
+    );
+  }
+  const scratch = process.env.CARE_ALBUM_TEST_SCRATCH;
+  const allowed = scratch ? [tmpdir(), scratch] : [tmpdir()];
+  if (!isAbsolute(dir) || !allowed.some((root) => isInside(dir, root))) {
+    throw new Error(
+      `CARE_ALBUM_DIR is ${dir}, which is not a throwaway test directory. A test ` +
+        'must not write photographs anywhere a person keeps theirs.',
+    );
+  }
+  return dir;
+}
+
+/**
  * Fail loudly rather than write a mock session over a real one.
  *
  * The import above cannot be the whole guard: it fills the variable in only when it is
@@ -100,30 +125,6 @@ function isInside(child, parent) {
  * scratch space in CARE_ALBUM_TEST_SCRATCH. Anywhere else is refused, whether or
  * not anyone has thought of it.
  */
-/**
- * The same rule for the photos as for the session: a test may only archive somewhere
- * disposable. Called by assertIsolatedConfigDir, so every file that already guards its
- * config directory gets this for free.
- */
-function assertIsolatedArchiveDir() {
-  const dir = process.env.CARE_ALBUM_DIR;
-  if (!dir) {
-    throw new Error(
-      'CARE_ALBUM_DIR is not set. Import scripts/test-env.js first: without it a ' +
-        'sync built from DEFAULT_CONFIG archives into the real ~/Brightwheel Photos.',
-    );
-  }
-  const scratch = process.env.CARE_ALBUM_TEST_SCRATCH;
-  const allowed = scratch ? [tmpdir(), scratch] : [tmpdir()];
-  if (!isAbsolute(dir) || !allowed.some((root) => isInside(dir, root))) {
-    throw new Error(
-      `CARE_ALBUM_DIR is ${dir}, which is not a throwaway test directory. A test ` +
-        'must not write photographs anywhere a person keeps theirs.',
-    );
-  }
-  return dir;
-}
-
 export function assertIsolatedConfigDir() {
   const dir = process.env.CARE_ALBUM_CONFIG_DIR;
   if (!dir) {

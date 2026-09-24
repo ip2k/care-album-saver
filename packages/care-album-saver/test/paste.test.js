@@ -325,8 +325,8 @@ test('the login prompt never echoes the session into terminal scrollback', async
   const output = await new Promise((resolve) => {
     // baseUrl points nowhere on purpose: this is about what reaches the terminal before
     // any request is made, so the sign-in failing afterwards is fine.
-    const child = spawn(process.execPath, [cli, 'login'], {
-      env: { ...process.env, CARE_ALBUM_CONFIG_DIR: config, CARE_ALBUM_DIR: photos, CARE_ALBUM_BASE_URL: 'http://127.0.0.1:1' },
+    const child = spawn(process.execPath, [cli, 'login', '--base-url', 'http://127.0.0.1:1'], {
+      env: { ...process.env, CARE_ALBUM_CONFIG_DIR: config, CARE_ALBUM_DIR: photos },
     });
     let text = '';
     child.stdout.on('data', (d) => { text += d; });

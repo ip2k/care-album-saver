@@ -39,7 +39,7 @@ jobs:
       - run: pnpm build
       - run: pnpm test
       - name: The CLI entry point starts on this platform
-        # `where` reads two paths and prints them; no network, nothing written. It proves
+        # `where` resolves four paths and prints them; no network, nothing written. It proves
         # the shebang-headed dist/cli.js loads under this Node and OS and that the config
         # directory resolves per platform — APPDATA on Windows, not a POSIX guess.
         run: node packages/care-album-saver/dist/cli.js where
