@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { parse as parsePath, join, sep } from 'node:path';
+import { basename, parse as parsePath, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
@@ -15,6 +15,7 @@ import {
   PHOTOS_SCRIPT,
   Secret,
   addToPhotos,
+  checkPhotosAccess,
   parseActivities,
   parseMe,
   parseStudents,
@@ -329,7 +330,14 @@ test('outbound-4: a feed whose posts all carry an empty id is saved whole, and t
 function recorder() {
   const calls = [];
   const spawn = async (file, args) => {
-    calls.push({ file, args: [...args] });
+    // Photos is handed private copies, gone once it has them, so each is read now: which
+    // file of the archive it is (the album's folders and its own name) and what is in it.
+    const at = args.indexOf('--');
+    const copies = [];
+    for (const copy of args.slice(at + 1)) {
+      copies.push({ copy, rel: [...args.slice(2, at), basename(copy)].join('/'), sha256: sha256(await readFile(copy)) });
+    }
+    calls.push({ file, args: [...args], copies });
     return { code: 0, stdout: '', stderr: '' };
   };
   return { calls, spawn };
@@ -337,15 +345,16 @@ function recorder() {
 
 /** A recorded call as the script sees it: names before `--`, files after. */
 function parts(call) {
-  assert.equal(call.file, 'osascript');
+  assert.equal(call.file, '/usr/bin/osascript');
   assert.equal(call.args[0], PHOTOS_SCRIPT);
   const rest = call.args.slice(1);
   const at = rest.indexOf('--');
   return { names: rest.slice(0, at), files: rest.slice(at + 1) };
 }
-const handedOver = (photos) => photos.calls.flatMap((c) => parts(c).files);
-/** Whether a handed-over file is the one the list calls `path` (handed-over paths are real ones). */
-const isRecord = (file, path) => file.endsWith(sep + path.split('/').join(sep));
+/** What was handed over, as the archive's own paths for the files the copies were made of. */
+const handedOver = (photos) => photos.calls.flatMap((c) => (parts(c), c.copies.map((copy) => copy.rel)));
+/** Whether a handed-over file is the one the list calls `path`. */
+const isRecord = (rel, path) => rel === path;
 
 const manifestOf = async (dir) => JSON.parse(await readFile(join(dir, 'archive.json'), 'utf8'));
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -384,7 +393,7 @@ test('processes-5: a file that is no longer the one saved is not handed to Photo
     assert.equal(result.changed, 1);
     assert.equal(result.added, files.length - 1);
     assert.ok(result.error.includes(target.path), 'names the file, so the parent can find it');
-    assert.match(result.error, /no longer the file this tool saved/);
+    assert.match(result.error, /not a file this tool saved on this Mac, or not as it saved it/);
     assert.match(result.error, new RegExp(`The other ${files.length - 1} were added`));
 
     const status = await photosStatus(config, { platform: 'darwin' });
@@ -408,6 +417,90 @@ test('processes-5: a file that is no longer the one saved is not handed to Photo
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('processes-5: a photo replaced together with its line in the list is still not handed over', async () => {
+  // The list is in the photos folder, so anything that can replace a photo can make its line
+  // agree. The reference is the record kept outside that folder (fingerprints.ts).
+  await freshConfigDir();
+  const dir = await mkdtemp(join(tmpdir(), 'cas-photos-both-'));
+  try {
+    const config = await savedForPhotos(dir);
+    const manifest = await manifestOf(dir);
+    const target = manifest.files[0];
+    const replacement = Buffer.from('a picture of somebody else\'s choosing');
+    await writeFile(join(dir, ...target.path.split('/')), replacement);
+    manifest.files[0] = { ...target, sha256: sha256(replacement), bytes: replacement.length };
+    await writeFile(join(dir, 'archive.json'), JSON.stringify(manifest));
+
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    assert.ok(!photos.calls.some((c) => c.copies.some((copy) => copy.sha256 === sha256(replacement))), 'those bytes never reach Photos');
+    assert.equal(result.reason, 'changed');
+    assert.equal(result.changed, 1);
+    assert.equal(result.added, manifest.files.length - 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: an archive saved before the record began goes in whole, however its list was hashed', async () => {
+  // Until 2026-09-22 sync hashed each file before writing its tags in, so an older list's
+  // hashes describe bytes that no longer exist. Such an archive has no record in the config
+  // folder either. Its photos are taken as they are, once, not reported as tampered with.
+  await freshConfigDir();
+  const dir = await mkdtemp(join(tmpdir(), 'cas-photos-legacy-'));
+  try {
+    const config = await savedForPhotos(dir);
+    const manifest = await manifestOf(dir);
+    manifest.files = manifest.files.map((f, i) => ({ ...f, sha256: sha256(Buffer.from(`before the tags went in ${i}`)) }));
+    await writeFile(join(dir, 'archive.json'), JSON.stringify(manifest));
+    await rm(join(process.env.CARE_ALBUM_CONFIG_DIR, 'fingerprints.json'));
+
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.changed, 0);
+    assert.equal(result.added, manifest.files.length);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: a copy of the tool that is not talking to Apple\'s Photos says so, and nothing is recorded', async () => {
+  await freshConfigDir();
+  const dir = await mkdtemp(join(tmpdir(), 'cas-photos-impostor-'));
+  try {
+    const config = await savedForPhotos(dir);
+    const refusal = {
+      code: 1,
+      stdout: '',
+      stderr: "add-to-photos.applescript:3120:3260: execution error: This is not Apple's Photos app: the Photos this Mac would open is at /Users/alex/Applications/Photos.app. (3)\n",
+    };
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: async () => refusal });
+    assert.equal(result.ok, false);
+    assert.equal(result.added, 0);
+    assert.match(result.error, /Nothing was added to Photos: the Photos this Mac would open is at \/Users\/alex\/Applications\/Photos\.app\./);
+    assert.match(result.error, /only to Apple's own Photos app, the one in \/System\/Applications/);
+    const access = await checkPhotosAccess({ platform: 'darwin', spawn: async () => refusal });
+    assert.equal(access.ok, false);
+    assert.match(access.error, /\/Users\/alex\/Applications\/Photos\.app/);
+    const status = await photosStatus(config, { platform: 'darwin' });
+    assert.equal(status.pending, (await manifestOf(dir)).files.length, 'nothing written down as added');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('processes-5: the script talks only to Apple\'s Photos, by its identifier, after checking where it is', async () => {
+  const script = await readFile(PHOTOS_SCRIPT, 'utf8');
+  const code = script.split('\n').filter((line) => !line.trim().startsWith('--')).join('\n');
+  assert.ok(!/tell application "Photos"/.test(code), 'never by name, which any app can take');
+  assert.equal((code.match(/tell application id "com\.apple\.Photos"/g) ?? []).length, 2, 'both places it talks to Photos');
+  assert.match(code, /URLForApplicationWithBundleIdentifier:photosID/);
+  assert.match(code, /runningApplicationsWithBundleIdentifier:photosID/);
+  assert.match(code, /property photosPath : "\/System\/Applications\/Photos\.app"/);
+  assert.ok(code.indexOf('checkItIsApplesPhotos()') < code.indexOf('tell application id'), 'checked before anything is asked of it');
 });
 
 test('processes-5: an album is named after the folder a file is really in, not the list\'s words for it', posixOnly, async () => {
@@ -489,7 +582,7 @@ test('processes-5: a photos folder that looks cloud-synced is warned about where
     const config = await savedForPhotos(dir);
     const status = await photosStatus(config, { platform: 'darwin' });
     assert.match(status.warning ?? '', /synced to a cloud service/);
-    assert.match(status.warning, /has a say in what is added to Photos/);
+    assert.match(status.warning, /does not decide what goes into Photos/);
     assert.equal(status.problem, null, 'a warning, not a stop');
 
     const photos = recorder();

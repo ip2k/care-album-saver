@@ -71,6 +71,14 @@ const CHOOSER_TIMEOUT_MS = 10 * 60 * 1000;
 /** A file manager either appears or does not; it never waits for an answer. */
 const OPEN_TIMEOUT_MS = 20 * 1000;
 
+/**
+ * osascript by its full path, never looked up on PATH. It is part of macOS, on the system
+ * volume that nothing can change while System Integrity Protection is on; the first program
+ * called `osascript` on PATH could be anything, and it would be handed what osascript is
+ * handed — for the Photos step, every photo to be added.
+ */
+export const OSASCRIPT = '/usr/bin/osascript';
+
 /** The real `execFile`, as a SpawnCommand. Shared with photos.ts and scripts/demo.js, which need the same guarantees. */
 export const runProgram: SpawnCommand = (file, args, timeoutMs) =>
   new Promise((resolve) => {
@@ -144,7 +152,7 @@ function choosers(platform: NodeJS.Platform): Chooser[] {
   if (platform === 'darwin') {
     return [
       {
-        file: 'osascript',
+        file: OSASCRIPT,
         // `choose folder` is part of macOS itself, so there is nothing to install and no
         // second candidate to fall back to.
         args: ['-e', 'POSIX path of (choose folder with prompt "Choose where to save your photos")'],

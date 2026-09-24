@@ -9,6 +9,7 @@ import { scrub } from './secrets.js';
 import { logTimestamp } from './log-lines.js';
 import { ConfigUnusableError, loadConfig, saveConfig, type Config, type ScheduleMechanism, type ScheduleRecord } from './config.js';
 import { isProductionRoot } from './environment.js';
+import { OSASCRIPT } from './native.js';
 
 /**
  * The daily run: installing it, asking after it, and taking it away again.
@@ -252,7 +253,7 @@ export async function notify(message: string, env: ScheduleEnvironment = {}): Pr
           ? `display notification "Your new photos were saved, but could not be added to Photos. Open the setup assistant to see why." with title "${title}"`
           : null;
       if (!script) return false;
-      return (await e.run('osascript', ['-e', script])).code === 0;
+      return (await e.run(OSASCRIPT, ['-e', script])).code === 0;
     }
     if (e.platform === 'win32') return false;
     return (await e.run('notify-send', [title, message])).code === 0;

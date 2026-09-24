@@ -20,6 +20,7 @@ import { applyMetadata, closeMetadata } from './metadata.js';
 import { realFolderUnder } from './contain.js';
 import { ARCHIVE_DIR_MODE, checkArchiveDir } from './safety.js';
 import { takeRunLock } from './run-lock.js';
+import { rememberSaved, savedFingerprints } from './fingerprints.js';
 
 export interface SyncProgress {
   /**
@@ -544,6 +545,34 @@ async function syncHoldingTheLock(
   // for here: it names every child, quotes every note and names whoever posted each photo, so
   // it is as identifying as the photos it lists and belongs behind the same wall.
   const manifest = await Manifest.open(config.archiveDir, 'brightwheel');
+  // Each saved file's hash, noted where only this tool writes, for the Photos step to check
+  // against (see fingerprints.ts). Noted before each save of the list, so that no file the
+  // list names is missing from the record: the other way round, a crash between the two
+  // would leave a photo this tool saved looking like one it did not.
+  const unnoted: string[] = [];
+  // Once per archive folder, before anything is saved into it: the files this tool saved
+  // before it kept that record, as they are on disk now. Nothing at all for a new folder.
+  try {
+    await savedFingerprints(config, () =>
+      onProgress({ phase: 'starting', message: 'Noting which photos are already saved; this happens once and can take a minute', ...counts(result) }),
+    );
+  } catch (error) {
+    if (config.addToPhotos && result.warnings.length < 8) {
+      result.warnings.push(`The photos already saved could not be noted for adding to Photos: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const noteSaved = async (): Promise<void> => {
+    if (unnoted.length === 0) return;
+    try {
+      await rememberSaved(unnoted.splice(0));
+    } catch (error) {
+      // Not the run's failure: the photos are saved. Only adding them to Photos is affected,
+      // and that step says why when it meets them.
+      if (config.addToPhotos && result.warnings.length < 8) {
+        result.warnings.push(`These photos were saved, but not noted for adding to Photos: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
   const walked = walkedThrough(manifest);
   const gone = goneFromBrightwheel(manifest);
   const timezone = archiveTimezone();
@@ -695,6 +724,7 @@ async function syncHoldingTheLock(
             });
             const { dl, metadata, sha256 } = saved;
             taken.add(filename.toLowerCase());
+            unnoted.push(sha256);
 
             // Either failure is worth telling the person about: the tags not going into
             // the file, or the .xmp sidecar they asked for not being written. Reporting
@@ -728,7 +758,10 @@ async function syncHoldingTheLock(
             result.saved += 1;
 
             // Persist as we go: a run interrupted after 400 photos should not redo them.
-            if (result.saved % 25 === 0) await manifest.save();
+            if (result.saved % 25 === 0) {
+              await noteSaved();
+              await manifest.save();
+            }
           } catch (error) {
             // A dead session or a broken API is the run's problem, not this item's: no later
             // item can do better, and each further attempt is a request Brightwheel may
@@ -805,6 +838,7 @@ async function syncHoldingTheLock(
     // Whatever happened above — a session that expired on page three, a disk that filled
     // up — what was downloaded is recorded before anything else. Without this, a run that
     // died halfway discarded up to 25 downloaded items and every later run fetched them again.
+    await noteSaved();
     try {
       await manifest.save();
     } catch (error) {

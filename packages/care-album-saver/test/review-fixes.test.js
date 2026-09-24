@@ -123,7 +123,7 @@ test('the Photos-failure notice is one of the two the tool can show, and only fi
   assert.equal(await schedule.notify('Something with a child\'s name in it', env), false, 'an unknown message is not shown');
   assert.equal(calls.length, 2);
   for (const [file, args] of calls) {
-    assert.equal(file, 'osascript');
+    assert.equal(file, '/usr/bin/osascript');
     assert.equal(args[0], '-e');
     assert.match(args[1], /^display notification "[^"$]+" with title "Care Album Saver"$/, 'a literal, with nothing interpolated');
   }

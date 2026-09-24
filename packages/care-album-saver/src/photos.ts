@@ -1,14 +1,16 @@
-import { mkdir, open, realpath, rm, stat, utimes } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, open, readdir, realpath, rm, stat, utimes } from 'node:fs/promises';
 import { platform as osPlatform } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { basename, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config } from './config.js';
 import { hashFile, type ManifestRecord } from './ferry/index.js';
 import { records } from './gallery.js';
-import { runProgram, type SpawnCommand } from './native.js';
+import { OSASCRIPT, runProgram, type SpawnCommand } from './native.js';
 import { containedFile } from './contain.js';
 import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 import { checkArchiveDir } from './safety.js';
+import { savedFingerprints } from './fingerprints.js';
 
 /**
  * Adding saved photos to the Photos app, on a Mac, when the parent has asked for it.
@@ -28,7 +30,14 @@ import { checkArchiveDir } from './safety.js';
  * osascript hands every argument after the file to the script as data (`--` and `-e`
  * included, which was checked rather than assumed). That is the same rule native.ts keeps
  * for the folder chooser, reached a different way — the chooser needs no input at all, and
- * this needs a list of files, so the files go in as arguments instead of as source.
+ * this needs a list of files, so the files go in as arguments instead of as source. The
+ * osascript is /usr/bin/osascript, never whatever PATH finds first, and the script itself
+ * stops unless the Photos it would talk to is Apple's own, in /System/Applications.
+ *
+ * WHAT PHOTOS IS GIVEN. Private copies, never the files in the photos folder, and only copies
+ * whose SHA-256 is one this tool recorded when it saved the file, in a record kept outside
+ * that folder. Anything else that can write the folder can make a photo be left out, and
+ * nothing more. See `addToPhotos` and fingerprints.ts.
  *
  * WHERE THEY GO. Into a folder named after the source, then folders and an album that repeat
  * the folders on disk: `child-then-week` gives Brightwheel › Robin-Maple › 2026-W38, and
@@ -111,8 +120,9 @@ export interface PhotosResult {
   /** Listed in the manifest but no longer on disk, so not handed over. */
   missing: number;
   /**
-   * On disk, but no longer the file this tool saved — its SHA-256 differs from the one
-   * recorded — so not handed over, and not written down as added either. Optional because
+   * On disk, but not a file this tool saved, or not as it saved it — its SHA-256 is not in
+   * the record kept outside the photos folder (fingerprints.ts) — so not handed over, and
+   * not written down as added either. Optional because
    * the callers that stand in a result of their own for a throw have none to count.
    */
   changed?: number;
@@ -157,6 +167,12 @@ const realSpawn: SpawnCommand = (file, args, timeoutMs) =>
     : runProgram(file, args, timeoutMs);
 
 const statePath = (): string => join(configDir(), 'photos.json');
+
+/**
+ * Where each batch's private copies are made: in the config folder, which is this account's
+ * alone, under a fresh name per batch (mkdtemp makes it owner-only). See `addToPhotos`.
+ */
+const HANDOVER_PREFIX = 'photos-handover-';
 const lockPath = (): string => join(configDir(), 'photos.lock');
 
 export function photosSupported(platform: NodeJS.Platform = osPlatform()): boolean {
@@ -259,36 +275,26 @@ async function sortOut(config: Config, all: readonly ManifestRecord[], state: Ph
 }
 
 /**
- * What to say when the photos folder looks cloud-synced — and why this warns rather than
- * refuses (security review processes-5, the question it left open).
+ * What to say when the photos folder looks cloud-synced (security review processes-5, the
+ * question it left open: refuse, or warn).
  *
- * A folder that something else can write to is a folder whose contents that something has a
- * say in, and this step hands those contents to Photos, and with iCloud Photos on, to Apple.
- * Refusing the step there would be the stricter answer, and it is not taken, because:
+ * Neither, as a warning. A folder something else can write to is a folder whose contents that
+ * something has a say in, and this step hands contents to Photos — and with iCloud Photos on,
+ * to Apple. But what it hands over no longer depends on that folder: only bytes whose hash is
+ * in the record this tool keeps outside it (fingerprints.ts), copied privately before they
+ * are checked. A sync peer can make a photo be left out and reported, and no more. Refusing,
+ * on the strength of a guess made from the path alone (`checkArchiveDir` flags Desktop and
+ * Documents, where many people keep things), would switch off a setup that works.
  *
- *  - It would switch off a setup that works, on the strength of a guess. `checkArchiveDir`
- *    judges by the path alone, and it flags Desktop and Documents because macOS and Windows
- *    often sync them — often, not always, and they are where many people keep things. A
- *    parent whose photos stopped reaching Photos one evening, with nothing changed on their
- *    side, would be told nothing they could act on.
- *  - The parent has already chosen twice: the folder, after being told it looks synced (and
- *    every run repeats that in its warnings), and Photos, after macOS asked their permission.
- *  - What a sync peer could do through this step is now narrow. A photo it changed is left
- *    out and reported (`addToPhotos` compares every file with the SHA-256 recorded when it
- *    was saved). What remains is a new photo placed together with an entry in archive.json,
- *    and a peer that can do that can already put whatever it likes in the folder the parent
- *    browses.
- *
- * So it is said where the switch is, in `photosStatus`, and the choice stays the parent's.
+ * So it is said once, beside the switch, as what it is: a fact about the folder that the
+ * parent may want to know when turning this on, with what this step does about it.
  */
 function cloudWarning(config: Config): string | null {
   if (!checkArchiveDir(config.archiveDir).warning) return null;
   return (
-    'Your photos folder looks like it may be synced to a cloud service. If it is, anything else that can ' +
-    'change that folder — another computer signed in to the same account, say — has a say in what is added ' +
-    'to Photos. This tool leaves out any photo that is no longer the one it saved, but a new photo put there ' +
-    'together with an entry in the folder’s archive.json would be added like any other. If that matters to ' +
-    'you, keep your photos folder somewhere only this Mac can change.'
+    'Your photos folder looks like it may be synced to a cloud service. That does not decide what goes into ' +
+    'Photos: only photos this tool saved go in, checked against a record kept on this Mac rather than in that ' +
+    'folder, and anything changed or added there is left out and reported.'
   );
 }
 
@@ -348,6 +354,16 @@ function explain(code: number, stderr: string): { reason: PhotosFailure; error: 
         'rather than a welcome screen, and try again. Nothing was lost; they will be added next time.',
     };
   }
+  // The script's own refusal: see ONLY APPLE'S PHOTOS in add-to-photos.applescript.
+  if (/This is not Apple's Photos app: /.test(stderr)) {
+    const where = said.replace(/^.*?This is not Apple's Photos app: /, '').replace(/\s*\(3\)$/, '');
+    return {
+      reason: 'failed',
+      error:
+        `Nothing was added to Photos: ${where} Care Album Saver hands photos only to Apple's own Photos app, the one in ` +
+        '/System/Applications, and this is not that one. Your photos are safe in your folder.',
+    };
+  }
   if (/\(-600\)|\(-10810\)|\(-10814\)/.test(stderr)) {
     return { reason: 'failed', error: 'Photos could not be opened on this Mac, so nothing was added to it.' };
   }
@@ -364,9 +380,9 @@ function changedReport(paths: readonly string[], added: number): string {
   const which = paths.slice(0, 3).join(', ') + (paths.length > 3 ? `, and ${paths.length - 3} more` : '');
   return (
     `${one ? 'One photo was' : `${paths.length} photos were`} not added to Photos, because ` +
-    `${one ? 'it is' : 'they are'} no longer the file this tool saved: ${which}. Something has changed ${it} since — ` +
-    `an edit of your own, or another program or computer that can write to your photos folder. If you changed ${it} ` +
-    `yourself, you can add ${it} to Photos by hand; if you did not, look at ${it} before you do.` +
+    `${one ? 'it is' : 'they are'} not ${one ? 'a file' : 'files'} this tool saved on this Mac, or not as it saved ${it}: ${which}. ` +
+    `Something has changed or put ${it} there since — an edit of your own, another program, or another computer that can ` +
+    `write to your photos folder. If that was you, you can add ${it} to Photos by hand; if not, look at ${it} before you do.` +
     (added > 0 ? ` The other ${added} ${added === 1 ? 'was' : 'were'} added.` : '')
   );
 }
@@ -406,7 +422,7 @@ async function takeLock(): Promise<(() => Promise<void>) | null> {
 export async function checkPhotosAccess(options: PhotosOptions = {}): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!photosSupported(options.platform)) return { ok: false, error: 'Adding to Photos is only possible on a Mac.' };
   const spawn = options.spawn ?? realSpawn;
-  const result = await spawn('osascript', [PHOTOS_SCRIPT], CHECK_TIMEOUT_MS);
+  const result = await spawn(OSASCRIPT, [PHOTOS_SCRIPT], CHECK_TIMEOUT_MS);
   if (result.missing) return { ok: false, error: 'This Mac has no osascript, so Photos cannot be reached.' };
   if (result.code === 0) return { ok: true };
   return { ok: false, error: explain(result.code, result.stderr).error };
@@ -446,8 +462,15 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
   const changed: string[] = [];
   try {
     const state = await loadState();
-    const { due } = await sortOut(config, await records(config), state);
+    // Copies a run that was killed part-way left behind. Under the lock, so none is in use.
+    for (const name of await readdir(configDir()).catch(() => [] as string[])) {
+      if (name.startsWith(HANDOVER_PREFIX)) await rm(join(configDir(), name), { recursive: true, force: true });
+    }
+    const listed = await records(config);
+    const { due } = await sortOut(config, listed, state);
     if (due.length === 0) return { ok: true, added: 0, remaining: 0, missing: 0, changed: 0 };
+    // What this tool saved, from outside the photos folder; see fingerprints.ts.
+    const saved = await savedFingerprints(config, () => say('Noting which photos this tool saved, once; this can take a minute…'));
 
     const albums = new Map<string, Waiting[]>();
     for (const item of due) {
@@ -466,52 +489,69 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
         // Stopped: what Photos has taken is written down, the rest waits for the next run.
         // Asked before the batch is read and hashed, which is the slow part of a batch.
         if (options.signal?.aborted) return { ok: true, added, remaining, missing, changed: changed.length };
-        const batch: Waiting[] = [];
-        for (const item of items.slice(i, i + BATCH)) {
-          // One file gone from disk would fail the whole call in AppleScript, and then
-          // every call after it, for ever. It is left out instead, and counted — as is one
-          // that is there but cannot be read, which Photos could not read either.
-          const there = await stat(item.file).then((s) => s.isFile(), () => false);
-          const actual = there ? await hashFile(item.file).catch(() => null) : null;
-          if (actual === null) {
-            missing += 1;
-            remaining -= 1;
-            continue;
+        // Photos is never handed a file in the photos folder, only a private copy of it
+        // (security review processes-5, and the time between check and use). Whatever else
+        // can write that folder could swap a checked file for a link, or for other bytes, in
+        // the minutes before Photos reads it. So each file is copied into a folder only this
+        // account can open — a clone on APFS, which costs no space — the copy is hashed, and
+        // Photos gets the copy only if its hash is one of the files this tool saved, from the
+        // record kept outside the photos folder (fingerprints.ts). Nothing can change a copy
+        // between that check and Photos reading it, and no link survives being copied.
+        const stage = await mkdtemp(join(configDir(), HANDOVER_PREFIX));
+        try {
+          const batch: Array<Waiting & { copy: string }> = [];
+          for (const [n, item] of items.slice(i, i + BATCH).entries()) {
+            // A folder of its own for each copy, so its name is the file's own — Photos shows
+            // it — and two names that differ only in case cannot meet on a Mac's disk.
+            const copy = join(stage, String(n), basename(item.file));
+            const copied = await mkdir(join(stage, String(n)))
+              .then(() => copyFile(item.file, copy, fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE))
+              .then(() => true, () => false);
+            // One file gone from disk would fail the whole call in AppleScript, and then
+            // every call after it, for ever. It is left out instead, and counted — as is one
+            // that is there but cannot be read, which Photos could not read either.
+            const actual = copied ? await hashFile(copy).catch(() => null) : null;
+            if (actual === null) {
+              missing += 1;
+              remaining -= 1;
+              continue;
+            }
+            // Not one this tool saved, or no longer what it saved: changed since by the parent,
+            // perhaps, or by anything else that can write the folder, such as another computer
+            // it syncs with — and what reaches Photos, and iCloud, is not for that to choose.
+            // It is left out, not written down as added (so it is looked at again next time,
+            // and goes in if it is put back), and reported.
+            if (!saved.has(actual)) {
+              changed.push(item.record.path);
+              remaining -= 1;
+              await rm(copy, { force: true });
+              continue;
+            }
+            batch.push({ ...item, copy });
           }
-          // Only the file this tool saved goes to Photos (security review processes-5). The
-          // SHA-256 in the list was taken of the finished file as it was put in place, so a
-          // file that no longer matches has been changed since — by the parent, perhaps, or
-          // by anything else that can write the folder, such as another computer it syncs
-          // with — and what reaches Photos, and iCloud, is not for that to choose. It is left
-          // out, not written down as added (so it is looked at again next time, and goes in
-          // if it is put back), and reported. The check is made just before the batch is
-          // handed over; a swap in the moment between is beyond what any check here can see.
-          if (actual !== item.record.sha256.toLowerCase()) {
-            changed.push(item.record.path);
-            remaining -= 1;
-            continue;
-          }
-          batch.push(item);
-        }
-        if (batch.length === 0) continue;
+          if (batch.length === 0) continue;
 
-        await utimes(lockPath(), new Date(), new Date()).catch(() => {});
-        const album = batch[0]!.album;
-        const result = await spawn('osascript', [PHOTOS_SCRIPT, ...album, '--', ...batch.map((b) => b.file)], IMPORT_TIMEOUT_MS);
-        if (result.missing || result.code !== 0) {
-          const why = result.missing
-            ? { reason: 'failed' as const, error: 'This Mac has no osascript, so Photos cannot be reached.' }
-            : explain(result.code, result.stderr);
-          state.lastAttempt = { at: new Date().toISOString(), ok: false, added, error: why.error };
+          await utimes(lockPath(), new Date(), new Date()).catch(() => {});
+          const album = batch[0]!.album;
+          const result = await spawn(OSASCRIPT, [PHOTOS_SCRIPT, ...album, '--', ...batch.map((b) => b.copy)], IMPORT_TIMEOUT_MS);
+          if (result.missing || result.code !== 0) {
+            const why = result.missing
+              ? { reason: 'failed' as const, error: 'This Mac has no osascript, so Photos cannot be reached.' }
+              : explain(result.code, result.stderr);
+            state.lastAttempt = { at: new Date().toISOString(), ok: false, added, error: why.error };
+            await saveState(state);
+            return { ok: false, added, remaining, missing, changed: changed.length, ...why };
+          }
+          const now = new Date().toISOString();
+          for (const b of batch) state.added[b.record.sha256] = now;
+          added += batch.length;
+          remaining -= batch.length;
           await saveState(state);
-          return { ok: false, added, remaining, missing, changed: changed.length, ...why };
+          say(`Added ${added} of ${due.length} to Photos…`);
+        } finally {
+          // Photos has copied them into its library by the time the script returns.
+          await rm(stage, { recursive: true, force: true });
         }
-        const now = new Date().toISOString();
-        for (const b of batch) state.added[b.record.sha256] = now;
-        added += batch.length;
-        remaining -= batch.length;
-        await saveState(state);
-        say(`Added ${added} of ${due.length} to Photos…`);
       }
     }
 
