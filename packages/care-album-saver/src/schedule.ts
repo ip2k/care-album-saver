@@ -6,6 +6,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir, readJsonFile, writeSecureFile } from './paths.js';
 import { scrub } from './secrets.js';
+import { logTimestamp } from './log-lines.js';
 import { loadConfig, saveConfig, type ScheduleMechanism, type ScheduleRecord } from './config.js';
 
 /**
@@ -444,14 +445,17 @@ export async function readLog(lines = 200, env: ScheduleEnvironment = {}): Promi
   }
 }
 
-/** Append one line. Never throws: a log that cannot be written must not fail the run. */
+/**
+ * Append one line, stamped with when it was written. Never throws: a log that cannot be
+ * written must not fail the run.
+ */
 export async function appendLog(line: string, env: ScheduleEnvironment = {}): Promise<void> {
   const e = resolveEnv(env);
   try {
     await mkdir(logDir(e), { recursive: true, mode: 0o700 });
     // Owner-only: these lines name a child and the folder their photographs are in, so the
     // log gets the session file's treatment rather than a world-readable default.
-    await appendFile(logFile(env), `${scrub(line)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await appendFile(logFile(env), `${logTimestamp()}  ${scrub(line)}\n`, { encoding: 'utf8', mode: 0o600 });
     // The create mode above only applies to a file this call creates. launchd creates the
     // same file first, from the job's own output, at 0644 — so it is put right every time.
     if (e.platform !== 'win32') {
