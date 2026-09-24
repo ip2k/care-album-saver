@@ -79,6 +79,28 @@ file was started.
 
 ### Fixed
 
+- Six things the dead-code audit found on the way. The Docker build context now excludes
+  `node_modules`, `dist`, sessions and archives at any depth, not only at the root (the host's
+  build output had been going into the image). A request the setup page's server cannot read
+  gets a fixed "not understood" answer instead of an error that quoted part of it. The settings
+  patch stores only the eight settings the page can change, each in its expected shape. The
+  "could not be added to Photos" notification can now actually be shown. Photos are served on
+  Windows (the containment check assumed `/`), and a symbolic link planted inside the archive
+  can no longer reach a file outside it. The demo's "open the log" no longer opens a real
+  log viewer.
+- Two things the security review reproduced. Everything that reads the archive's list —
+  the gallery, the duplicate finder and remover, the repair, the Photos step — now resolves
+  each entry to a real place inside the archive and refuses anything else, so a list edited
+  by something else that can write the folder cannot make the tool delete, serve or import a
+  file outside it, and the duplicate remover can no longer mistake two spellings of one file
+  for a copy and delete the only one. A crontab the tool cannot read is no longer treated as
+  empty and overwritten, and a `crontab` write that fails is reported instead of recorded as
+  done.
+- Three more from the review. A photo the server could not open, or an empty file asked for
+  by range, could take the whole setup page down; now they are an ordinary error, and a
+  range request the viewer abandons no longer keeps a file open. The link to a new release
+  is checked on its parsed address, so it can only ever point at this project's releases. A
+  saved browser identity with a control character in it is not sent.
 - `docker build` failed: the Dockerfile still copied the `media-ferry` package, which was folded
   into this one on 23 September. A test now checks that everything the Dockerfile copies exists.
 - `scripts/deploy.js` could deploy only once: every later deploy failed a test that assumed the

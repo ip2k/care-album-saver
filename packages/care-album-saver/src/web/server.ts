@@ -11,7 +11,7 @@ import { sync, type SyncProgress } from '../sync.js';
 import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
 import { photoAt, summarise } from '../gallery.js';
-import { createReadStream } from 'node:fs';
+import { open, type FileHandle } from 'node:fs/promises';
 import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from '../maintenance.js';
 import * as schedule from '../schedule.js';
 import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type PhotosResult } from '../photos.js';
@@ -92,6 +92,10 @@ function crossSite(req: IncomingMessage): boolean {
 export function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | 'unsatisfiable' {
   const m = /^bytes=(\d*)-(\d*)$/.exec((header ?? '').trim());
   if (!m || (m[1] === '' && m[2] === '')) return null;
+  // Nothing in an empty file can be asked for: a suffix range on it used to produce
+  // {start: 0, end: -1}, which the read stream rejected after the headers were sent, and the
+  // unhandled error took the whole process with it (security review, 2026-09-23).
+  if (size === 0) return 'unsatisfiable';
   if (m[1] === '') {
     // The last N bytes.
     const suffix = Number(m[2]);
@@ -109,6 +113,27 @@ function tokenMatches(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** A request the server will not act on. Its message is fixed text and never quotes the request. */
+class BadRequest extends Error {}
+const NOT_UNDERSTOOD = 'That request was not understood, so nothing was changed.';
+
+/**
+ * A request's JSON body as an object, or BadRequest. Too large, not JSON, or JSON that is
+ * not an object (an array, a string, null) all get the same fixed answer, because
+ * JSON.parse's own message quotes what it was given — and what /api/session is given is a
+ * paste, which must never come back in an error. The outer catch turns BadRequest into a 400.
+ */
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readBody(req));
+  } catch {
+    throw new BadRequest(NOT_UNDERSTOOD);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new BadRequest(NOT_UNDERSTOOD);
+  return parsed as Record<string, unknown>;
 }
 
 async function readBody(req: IncomingMessage, limit = 64 * 1024): Promise<string> {
@@ -298,18 +323,45 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
    */
   type PatchResult =
     | { ok: true; config: Config; warning?: string }
-    | { ok: false; error: string; field: 'archiveDir' | 'includeStudents' };
+    | { ok: false; error: string; field: string };
 
-  const applyConfigPatch = async (patch: Partial<Config>): Promise<PatchResult> => {
+  /**
+   * The settings the page may change, and the shape each must arrive in. Anything else in a
+   * patch is dropped, not stored: whether photos go to Apple, and whether GitHub is asked
+   * about updates, have routes of their own that ask first (/api/photos, /api/update); the
+   * pause between requests, the schedule record and the walk state are the tool's own.
+   * Until 2026-09-23 the patch was spread into config.json whole, so a request could set
+   * delayMs to 0 or write a schedule record the scheduler had never seen.
+   */
+  const PATCHABLE = {
+    archiveDir: 'string',
+    organiseBy: 'organiseBy',
+    tagChildName: 'boolean',
+    tagNote: 'boolean',
+    stripLocation: 'boolean',
+    writeSidecar: 'boolean',
+    incremental: 'boolean',
+    includeStudents: 'array',
+  } as const;
+  const ORGANISE_BY: readonly string[] = ['week', 'week-per-child', 'child-then-week'];
+
+  const applyConfigPatch = async (raw: Record<string, unknown>): Promise<PatchResult> => {
+    let warning: string | undefined;
+    const patch: Partial<Config> = {};
+    for (const [key, kind] of Object.entries(PATCHABLE)) {
+      if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+      const value = raw[key];
+      const accepted =
+        kind === 'string' ? typeof value === 'string'
+        : kind === 'boolean' ? typeof value === 'boolean'
+        : kind === 'array' ? Array.isArray(value)
+        : typeof value === 'string' && ORGANISE_BY.includes(value);
+      // The key named here is one of the tool's own, never something from the request.
+      if (!accepted) return { ok: false, error: `The setting "${key}" did not arrive in a form this tool understands, so nothing was changed.`, field: key };
+      (patch as Record<string, unknown>)[key] = value;
+    }
     // Never persist a destination without checking it. This endpoint previously
     // accepted any path at all and the tool wrote a child's photos there.
-    let warning: string | undefined;
-    // Whether photos go to Apple — and from when — is decided by /api/photos, which asks
-    // the Mac for permission first. A settings patch cannot reach round that.
-    delete patch.addToPhotos;
-    delete patch.addToPhotosFrom;
-    // Likewise whether GitHub is asked about updates: /api/update, which is the parent's answer.
-    delete patch.checkForUpdates;
     if (typeof patch.archiveDir === 'string') {
       patch.archiveDir = cleanPastedPath(patch.archiveDir);
       // Full paths only, from the page. A relative one would be resolved against wherever the
@@ -425,14 +477,14 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
        * bounded by lines so an enormous one cannot make it read a disk into memory.
        */
       if (req.method === 'GET' && url.pathname === '/api/logs') {
-        const log = await schedule.readLog(200);
-        json(200, { ok: true, ...log, path: tildify(log.path, homedir()) });
+        const log = await schedule.readLog(200, options.schedule);
+        json(200, { ok: true, ...log, path: tildify(log.path, options.schedule?.home ?? homedir(), options.schedule?.platform) });
         return;
       }
 
       /** Hand the log to whatever the platform has for reading logs. */
       if (req.method === 'POST' && url.pathname === '/api/open-logs') {
-        json(200, { ok: true, ...(await schedule.openLogs()) });
+        json(200, { ok: true, ...(await schedule.openLogs(options.schedule)) });
         return;
       }
 
@@ -472,17 +524,35 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           res.writeHead(416, { ...headers, 'content-range': `bytes */${found.bytes}` }).end();
           return;
         }
+        // The stream's errors are handled and the stream is destroyed when the browser goes
+        // away: an unhandled 'error' on a read stream (a file that stats but cannot be opened)
+        // is fatal to the process, and a range request the viewer abandons would otherwise
+        // keep its file handle open for the life of the server.
+        // Opened before any header is written, so a file that cannot be opened is a 500 rather
+        // than a 200 with nothing in it.
+        let handle: FileHandle;
+        try {
+          handle = await open(found.path, 'r');
+        } catch {
+          res.writeHead(500, { 'content-type': 'text/plain' }).end('That photo could not be read.');
+          return;
+        }
+        const stream = handle.createReadStream(range ? { start: range.start, end: range.end } : {});
+        stream.on('error', () => {
+          if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' });
+          res.end();
+        });
+        res.on('close', () => stream.destroy());
         if (range) {
           res.writeHead(206, {
             ...headers,
             'content-length': String(range.end - range.start + 1),
             'content-range': `bytes ${range.start}-${range.end}/${found.bytes}`,
           });
-          createReadStream(found.path, { start: range.start, end: range.end }).pipe(res);
-          return;
+        } else {
+          res.writeHead(200, { ...headers, 'content-length': String(found.bytes) });
         }
-        res.writeHead(200, { ...headers, 'content-length': String(found.bytes) });
-        createReadStream(found.path).pipe(res);
+        stream.pipe(res);
         return;
       }
 
@@ -502,7 +572,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       }
 
       if (req.method === 'POST' && url.pathname === '/api/session') {
-        const { cookie } = JSON.parse(await readBody(req)) as { cookie?: unknown };
+        const { cookie } = (await readJson(req)) as { cookie?: unknown };
         // The same check the page runs as the person types: it cleans what it can, refuses
         // what is certainly something else, and its message never repeats the paste.
         const verdict = inspectCookiePaste(typeof cookie === 'string' ? cookie : '');
@@ -536,8 +606,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       }
 
       if (req.method === 'POST' && url.pathname === '/api/config') {
-        const patch = JSON.parse(await readBody(req)) as Partial<Config>;
-        const saved = await applyConfigPatch(patch);
+        const saved = await applyConfigPatch(await readJson(req));
         if (!saved.ok) {
           json(400, { ok: false, error: saved.error, field: saved.field });
           return;
@@ -650,7 +719,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         let force = false;
         let config = await loadConfig();
         if (req.method === 'POST') {
-          const body = JSON.parse(await readBody(req)) as { enabled?: unknown; check?: unknown };
+          const body = (await readJson(req)) as { enabled?: unknown; check?: unknown };
           if (typeof body.enabled === 'boolean') {
             const enabled = body.enabled;
             config = await withConfigLock(async () => {
@@ -698,7 +767,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
        * turning it on never pours the whole archive into Photos unasked.
        */
       if (req.method === 'POST' && url.pathname === '/api/photos') {
-        const body = JSON.parse(await readBody(req)) as { enabled?: unknown; earlier?: unknown };
+        const body = (await readJson(req)) as { enabled?: unknown; earlier?: unknown };
         const photoOptions = { platform: options.native?.platform, spawn: options.native?.spawn };
         if (!photosSupported(photoOptions.platform)) {
           json(400, { ok: false, error: 'Adding to Photos is only possible on a Mac.' });
@@ -874,7 +943,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       }
 
       if (req.method === 'POST' && url.pathname === '/api/schedule') {
-        const { time } = JSON.parse(await readBody(req)) as { time?: string };
+        const { time } = (await readJson(req)) as { time?: string };
         if (!time || !schedule.parseTimeOfDay(time)) {
           json(400, { ok: false, error: 'Choose a time of day first, as hours and minutes.', field: 'scheduleTime' });
           return;
@@ -949,7 +1018,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
               json(200, { ok: true, result: await findDuplicates(config) });
               return;
             case 'duplicates/remove': {
-              const { paths } = JSON.parse(await readBody(req)) as { paths?: unknown };
+              const { paths } = (await readJson(req)) as { paths?: unknown };
               if (!Array.isArray(paths) || !paths.every((p) => typeof p === 'string' && p.length > 0)) {
                 json(400, { ok: false, error: 'Nothing was named for removal, so nothing was deleted.' });
                 return;
@@ -969,6 +1038,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
     } catch (error) {
+      if (error instanceof BadRequest) {
+        json(400, { ok: false, error: error.message });
+        return;
+      }
       json(500, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
     }
   });
