@@ -51,14 +51,12 @@ const SCHTASKS_NAME = 'Care Album Saver daily';
  * The first line of the crontab block this tool owns.
  *
  * A crontab belongs to the person, not to us: it may well hold lines they wrote themselves.
- * So installing rewrites only the lines between this marker and the line after it, and
- * removing takes only those away. Anything unmarked is copied through untouched.
+ * So installing rewrites only the lines from this marker to CRON_END, and removing takes
+ * only those away. Anything unmarked is copied through untouched.
  */
 const CRON_MARKER = '# care-album-saver: the daily run. Delete this block to stop it.';
-/** Closes the block. The first version wrote one line and no end marker; `stripCronBlock` still removes that shape. */
+/** Closes the block. */
 const CRON_END = '# care-album-saver: end of the daily run.';
-/** What the first version wrote. Still recognised so that block can be removed. */
-const LEGACY_CRON_MARKER = '# care-album-saver: the daily run. Delete these two lines to stop it.';
 
 export interface CommandResult {
   /** Exit status. 127 stands in for "the program is not installed". */
@@ -92,7 +90,10 @@ export interface ScheduleEnvironment {
   platform?: NodeJS.Platform;
   home?: string;
   run?: CommandRunner;
-  /** The Node binary the scheduled run should use. Defaults to the one running now. */
+  /**
+   * The Node binary the scheduled run should use. Defaults to the one running now; either
+   * way a Homebrew keg path is rewritten by durableNodePath.
+   */
   nodePath?: string;
   /** This tool's command-line entry point. Defaults to `cli.js` beside this file. */
   cliPath?: string;
@@ -171,7 +172,7 @@ const KEG = /[\/\\]Cellar[\/\\][^\/\\]+[\/\\][^\/\\]+[\/\\]/;
  * never linked into <prefix>/bin. So a keg path becomes the same file under opt/ — but only
  * when that link exists and leads back into the same formula's own kegs, so a link that
  * points somewhere unexpected is never trusted. Anything else is returned as it was, and
- * EPHEMERAL, which knows about Cellar, is then what says so.
+ * KEG is then what reports it as fragile.
  */
 export function durableNodePath(execPath: string): string {
   const keg = /^(.*)[\/\\]Cellar[\/\\]([^\/\\]+)[\/\\][^\/\\]+[\/\\](.+)$/.exec(execPath);
@@ -262,7 +263,7 @@ export function parseTimeOfDay(input: string): TimeOfDay | null {
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
-export const formatTimeOfDay = (t: TimeOfDay): string => `${pad(t.hour)}:${pad(t.minute)}`;
+const formatTimeOfDay = (t: TimeOfDay): string => `${pad(t.hour)}:${pad(t.minute)}`;
 
 /**
  * The next time of day on this computer's clock, as an instant.
@@ -509,7 +510,7 @@ const servicePath = (env: Resolved): string => join(systemdDir(env), `${SYSTEMD_
  * never fire. Asking `systemctl` whether it is there costs one command and is the only
  * honest way to decide — so the answer is reported back to the parent rather than assumed.
  */
-export async function chooseMechanism(env: ScheduleEnvironment = {}): Promise<ScheduleMechanism> {
+async function chooseMechanism(env: ScheduleEnvironment = {}): Promise<ScheduleMechanism> {
   const e = resolveEnv(env);
   if (e.platform === 'darwin') return 'launchd';
   if (e.platform === 'win32') return 'schtasks';
@@ -524,7 +525,7 @@ function xml(value: string): string {
   return value.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] as string);
 }
 
-export function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
+function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
   const log = join(logDir(env), 'daily.log');
   const args = [env.nodePath, env.cliPath, ...RUN_ARGS].map((a) => `    <string>${xml(a)}</string>`).join('\n');
   return [
@@ -585,7 +586,7 @@ export function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
   ].join('\n');
 }
 
-export function systemdService(env: Resolved): string {
+function systemdService(env: Resolved): string {
   return [
     '[Unit]',
     'Description=Save new Brightwheel photos to this computer',
@@ -626,23 +627,16 @@ export function cronLines(env: Resolved, time: TimeOfDay): string[] {
 }
 
 /** The catch-up line. `@reboot` is in every cron implementation this tool will meet. */
-export function rebootLine(env: Resolved): string {
+function rebootLine(env: Resolved): string {
   const log = join(logDir(env), 'daily.log');
   return `@reboot "${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')} >> "${log}" 2>&1`;
 }
 
-export function cronLine(env: Resolved, time: TimeOfDay): string {
+function cronLine(env: Resolved, time: TimeOfDay): string {
   const log = join(logDir(env), 'daily.log');
   return `${time.minute} ${time.hour} * * * "${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')} >> "${log}" 2>&1`;
 }
 
-/**
- * The command Task Scheduler stores, as one string.
- *
- * `/TR` takes a whole command line rather than an argument list, so this is the one place a
- * command is assembled as text — by Windows' design, not ours. It is still handed to
- * `execFile` as a single argument, so no shell ever sees it.
- */
 /**
  * The task, as Task Scheduler's own XML.
  *
@@ -706,10 +700,6 @@ export function schtasksXml(env: Resolved, time: TimeOfDay): string {
   ].join('\r\n');
 }
 
-export function schtasksCommand(env: Resolved): string {
-  return `"${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')}`;
-}
-
 // ------------------------------------------------------------------ install
 
 export interface ScheduleStatus {
@@ -725,7 +715,7 @@ export interface ScheduleStatus {
   lastRun: LastRun | null;
   /**
    * What the operating system's own scheduler says when asked whether it knows this job.
-   * `null` when it could not be asked — a crontab has nothing to ask.
+   * `null` when nothing is installed, so there was nothing to ask about.
    */
   registered: boolean | null;
   /** The file or entry holding it, so it can be found without this tool. */
@@ -949,8 +939,8 @@ export async function status(env: ScheduleEnvironment = {}): Promise<ScheduleSta
   };
 }
 
-/** Whether the platform's scheduler itself still knows the job. `null` when unanswerable. */
-async function isRegistered(e: Resolved, mechanism: ScheduleMechanism): Promise<boolean | null> {
+/** Whether the platform's scheduler itself still knows the job. */
+async function isRegistered(e: Resolved, mechanism: ScheduleMechanism): Promise<boolean> {
   switch (mechanism) {
     case 'launchd':
       return (await e.run('launchctl', ['print', `gui/${e.uid}/${LAUNCHD_LABEL}`])).code === 0;
@@ -976,7 +966,7 @@ function spokenTime(time: TimeOfDay): string {
 /**
  * A crontab with our block taken out.
  *
- * The block is the marker line and the one after it. Trailing blank lines go too, so that
+ * The block runs from CRON_MARKER to CRON_END. Trailing blank lines go too, so that
  * installing and removing repeatedly does not grow the file a line at a time.
  */
 function stripCronBlock(crontab: string): string[] {
@@ -984,18 +974,17 @@ function stripCronBlock(crontab: string): string[] {
   const kept: string[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]?.trim();
-    // Either marker opens our block: a crontab written before the @reboot line existed
-    // carries the old wording, and removing it must still work years later.
-    if (line !== CRON_MARKER && line !== LEGACY_CRON_MARKER) {
+    if (line !== CRON_MARKER) {
       kept.push(lines[i] ?? '');
       continue;
     }
-    // Newer installs close the block explicitly. The first version wrote the marker and
-    // exactly one line, so with no end marker the block is that one line.
+    // A block whose CRON_END was deleted by hand loses only the marker and the line after
+    // it. Reading on to the end of the file instead could take the person's own lines with
+    // it, and those are the one thing removing must never touch.
     let end = -1;
     for (let j = i + 1; j < lines.length; j += 1) {
       if (lines[j]?.trim() === CRON_END) { end = j; break; }
-      if (lines[j]?.trim() === CRON_MARKER || lines[j]?.trim() === LEGACY_CRON_MARKER) break;
+      if (lines[j]?.trim() === CRON_MARKER) break;
     }
     i = end === -1 ? i + 1 : end;
   }
