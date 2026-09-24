@@ -310,10 +310,12 @@ test('video metadata round-trips: UTC headers, local Apple date, name and note, 
   // Read with the QuickTime UTC rule, as Apple Photos, Immich and Google Photos do, the
   // same header comes back as the local capture time — on the right calendar day.
   const applied = await readRaw(video.path, '-api', 'QuickTimeUTC=1', '-QuickTime:CreateDate');
-  assert.equal(applied['QuickTime:CreateDate'], `${local}${offset}`);
+  // ExifTool on Windows reads the local zone from the system, not from TZ, so the local
+  // spellings are checked where the pin can take effect; the UTC ones above hold everywhere.
+  if (process.platform !== 'win32') assert.equal(applied['QuickTime:CreateDate'], `${local}${offset}`);
 
   // Apple's own key carries the wall clock and the offset explicitly.
-  assert.equal(raw['Keys:CreationDate'], `${local}${offset}`);
+  if (process.platform !== 'win32') assert.equal(raw['Keys:CreationDate'], `${local}${offset}`);
   assert.equal(raw['XMP-photoshop:DateCreated'], `${local}${offset}`);
   assert.equal(raw['XMP-xmp:CreateDate'], `${local}${offset}`);
   assert.equal(raw['ExifIFD:DateTimeOriginal'], undefined, 'DateTimeOriginal is not a QuickTime tag');
