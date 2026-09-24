@@ -54,7 +54,7 @@ export function weekFolder(date: Date): string {
 }
 
 /** The Monday that starts the ISO week containing `date`, at local midnight. */
-export function weekStart(date: Date): Date {
+function weekStart(date: Date): Date {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const dayNum = d.getDay() || 7;
   d.setDate(d.getDate() - (dayNum - 1));
@@ -62,7 +62,7 @@ export function weekStart(date: Date): Date {
 }
 
 /** The Sunday that ends the ISO week containing `date`, at local midnight. */
-export function weekEnd(date: Date): Date {
+function weekEnd(date: Date): Date {
   const d = weekStart(date);
   d.setDate(d.getDate() + 6);
   return d;
@@ -72,12 +72,12 @@ export function weekEnd(date: Date): Date {
  * A human-friendly description of the week, for a folder README or UI label.
  * e.g. "15-21 September 2026" or "29 September - 5 October 2026".
  */
-export function weekLabel(date: Date, locale = 'en-US'): string {
+export function weekLabel(date: Date): string {
   const s = weekStart(date);
   const e = weekEnd(date);
   const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
-  const month = new Intl.DateTimeFormat(locale, { month: 'long' });
-  const full = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric', year: 'numeric' });
+  const month = new Intl.DateTimeFormat('en-US', { month: 'long' });
+  const full = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   if (sameMonth) {
     return `${s.getDate()}-${e.getDate()} ${month.format(s)} ${s.getFullYear()}`;
   }
