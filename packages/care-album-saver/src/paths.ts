@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { writeAtomically } from './ferry/index.js';
 
 /**
  * Where configuration and the saved session live.
@@ -87,10 +88,11 @@ export function defaultArchiveDir(): string {
 /**
  * Write a file containing secrets with owner-only permissions.
  *
- * The mode is passed to `writeFile` rather than applied afterwards with `chmod`. Doing it
- * in two steps leaves a window — however short — in which the file exists and is readable
- * by every account on the machine. On a shared family computer that window is the whole
- * threat.
+ * The mode is set on the temporary file before the secret is written into it, never
+ * afterwards: doing it in two steps leaves a window — however short — in which the file
+ * exists and is readable by every account on the machine. On a shared family computer that
+ * window is the whole threat. The temporary file's name is unpredictable and never opened
+ * through a symlink; see writeAtomically.
  *
  * Windows ignores POSIX modes. There, the file inherits the ACL of the per-user AppData
  * directory, which already excludes other standard users. That is weaker than 0600 but it
@@ -99,19 +101,44 @@ export function defaultArchiveDir(): string {
  */
 export async function writeSecureFile(path: string, contents: string): Promise<void> {
   await mkdir(join(path, '..'), { recursive: true, mode: 0o700 });
-  const temp = `${path}.tmp`;
-  await writeFile(temp, contents, { encoding: 'utf8', mode: 0o600, flag: 'w' });
-  if (platform() !== 'win32') {
-    // Re-assert in case a permissive umask altered the create mode.
-    await chmod(temp, 0o600);
-  }
-  await rename(temp, path);
+  await writeAtomically(path, contents, 0o600);
 }
 
-export async function readJsonFile<T>(path: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(path, 'utf8')) as T;
-  } catch {
-    return null;
+/**
+ * One of this tool's own files that is there but cannot be read back.
+ *
+ * Kept apart from "it is not there" on purpose. The two used to be the same `null`, so a
+ * `config.json` damaged by a full disk or a hand edit read exactly like a first run: the
+ * daily job forgot which folder the photos were in and which children to save, made the
+ * default folder and downloaded every child's whole feed into it (security review fs-5).
+ * Each caller decides what a damaged file means for it; none may take it for a fresh start
+ * without saying so.
+ */
+export class UnreadableFileError extends Error {
+  constructor(public readonly path: string, public readonly reason: string) {
+    super(`${path} cannot be read: ${reason}.`);
+    this.name = 'UnreadableFileError';
   }
+}
+
+/** Read one of this tool's JSON files: `null` only when it does not exist. See UnreadableFileError. */
+export async function readJsonFile<T>(path: string): Promise<T | null> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new UnreadableFileError(path, (error as NodeJS.ErrnoException).code ?? String(error));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Not the parser's message: it can quote the file's contents, and this one holds a session.
+    throw new UnreadableFileError(path, 'it is not valid JSON');
+  }
+  // `null` is this function's "not there", so a file that says only `null` cannot be let
+  // through as one: it is there, and it holds nothing this tool wrote.
+  if (parsed === null) throw new UnreadableFileError(path, 'it does not contain anything');
+  return parsed as T;
 }

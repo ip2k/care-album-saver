@@ -4,7 +4,7 @@ import { isAbsolute, sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { BrightwheelClient } from '../api/client.js';
 import type { Student } from '../api/schema.js';
-import { loadConfig, loadSession, saveConfig, saveSession, type Config } from '../config.js';
+import { loadConfig, loadSession, saveConfig, saveSession, SessionUnusableError, type Config } from '../config.js';
 import { Secret, scrub } from '../secrets.js';
 import { cleanPastedPath, inspectCookiePaste } from '../paste.js';
 import { sync, type SyncProgress } from '../sync.js';
@@ -449,7 +449,14 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
 
       if (req.method === 'GET' && url.pathname === '/api/state') {
         const config = await loadConfig();
-        const session = await loadSession();
+        // A damaged session file is shown on step 1 as what it is, not as "not connected"
+        // and not as a page that will not load: connecting again is the remedy either way.
+        let sessionProblem: string | null = null;
+        const session = await loadSession().catch((error: unknown) => {
+          if (!(error instanceof SessionUnusableError)) throw error;
+          sessionProblem = scrub(error.message);
+          return null;
+        });
         // What the archive holds, so the page can answer "is this still working?" with the
         // photographs themselves rather than with a green tick that outlives the truth.
         const archive = await summarise(config).catch(() => null);
@@ -458,6 +465,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           archive,
           photos,
           hasSession: Boolean(session),
+          sessionProblem,
           sessionSavedAt: session?.savedAt.toISOString() ?? null,
           email: session?.email ?? null,
           config,
@@ -943,7 +951,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       }
 
       if (req.method === 'POST' && url.pathname === '/api/schedule') {
-        const { time } = (await readJson(req)) as { time?: string };
+        const { time, replace } = (await readJson(req)) as { time?: string; replace?: unknown };
         if (!time || !schedule.parseTimeOfDay(time)) {
           json(400, { ok: false, error: 'Choose a time of day first, as hours and minutes.', field: 'scheduleTime' });
           return;
@@ -959,8 +967,15 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           // schedule is a read-modify-write of that file like any settings change, and the
           // settings save themselves on each control change — so without this, ticking a box
           // while the schedule is being written loses one of the two.
-          json(200, { ok: true, schedule: shown(await withConfigLock(() => schedule.install(time, options.schedule))) });
+          // `replace` takes over another copy's daily run once the parent has agreed to it on
+          // the page, and never a production copy's: see ScheduleOwnedElsewhereError.
+          const install = () => schedule.install(time, options.schedule, { replace: replace === true });
+          json(200, { ok: true, schedule: shown(await withConfigLock(install)) });
         } catch (error) {
+          if (error instanceof schedule.ScheduleOwnedElsewhereError) {
+            json(409, { ok: false, error: scrub(error.message), replaceable: !error.production });
+            return;
+          }
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }
         return;
@@ -970,6 +985,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         try {
           json(200, { ok: true, schedule: shown(await withConfigLock(() => schedule.remove(options.schedule))) });
         } catch (error) {
+          if (error instanceof schedule.ScheduleOwnedElsewhereError) {
+            json(409, { ok: false, error: scrub(error.message), replaceable: false });
+            return;
+          }
           json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
         }
         return;

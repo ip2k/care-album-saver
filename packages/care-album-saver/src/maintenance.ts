@@ -1,6 +1,6 @@
-import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
-import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from './ferry/index.js';
+import { Manifest, MANIFEST_FILENAME, hashFile, writeAtomically, type ManifestRecord } from './ferry/index.js';
 import { containedFile } from './contain.js';
 import type { BrightwheelClient } from './api/client.js';
 import type { Config } from './config.js';
@@ -26,7 +26,11 @@ import { formatBytes } from './units.js';
  * clever with them is not a thing this tool gets to do.
  */
 
-/** Files that belong to the archive itself rather than to any photo. */
+/**
+ * Files that belong to the archive itself rather than to any photo. `archive.json.tmp` is
+ * what a version before writeAtomically left behind when it crashed mid-save; today's
+ * temporary files start with a dot, which isArchiveOwnFile skips as well.
+ */
 const ARCHIVE_FILES = new Set([MANIFEST_FILENAME, `${MANIFEST_FILENAME}.tmp`, 'README.md']);
 
 /** Archive-relative path, forward slashes on every platform — the manifest's own spelling. */
@@ -125,11 +129,8 @@ async function readManifestJson(archiveDir: string): Promise<{ data: Record<stri
 
 /** Write the manifest back, atomically and owner-only, exactly as the run would. */
 async function writeManifestJson(archiveDir: string, data: Record<string, unknown>, records: ManifestRecord[]): Promise<void> {
-  const target = join(archiveDir, MANIFEST_FILENAME);
-  const temp = `${target}.tmp`;
   const payload = { ...data, files: records, updatedAt: new Date().toISOString() };
-  await writeFile(temp, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 });
-  await rename(temp, target);
+  await writeAtomically(join(archiveDir, MANIFEST_FILENAME), JSON.stringify(payload, null, 2), 0o600);
 }
 
 // ------------------------------------------------------------------ 1. who is on the account

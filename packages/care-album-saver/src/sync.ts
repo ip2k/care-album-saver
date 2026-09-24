@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, stat } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { join, posix, sep } from 'node:path';
 import {
@@ -11,6 +11,7 @@ import {
   uniqueName,
   weekFolder,
   weekLabel,
+  writeAtomically,
 } from './ferry/index.js';
 import type { ActivityListOptions, ActivityPage, BrightwheelClient } from './api/client.js';
 import type { MediaActivity, Student } from './api/schema.js';
@@ -129,11 +130,26 @@ function nameFor(activity: MediaActivity, ext: string): { stem: string; ext: str
   return { stem: `${stamp}_${shortId}`, ext };
 }
 
-function extensionOf(url: string, kind: 'image' | 'video'): string {
+/**
+ * The extensions a saved file may carry, by kind.
+ *
+ * The extension used to be whatever two to five letters ended the media URL, and the URL is
+ * chosen by the server. `.html`, `.svg`, `.exe` and `.lnk` were all accepted — into a folder
+ * a parent opens by double-clicking what is in it, where the extension decides which
+ * program opens the file (security review fs-4). Anything not on this list becomes the
+ * kind's usual extension: a mislabelled photo still opens in a photo viewer, which sniffs
+ * the bytes; a photo labelled as a program is a different matter.
+ */
+const SAVED_EXTENSIONS: Record<'image' | 'video', ReadonlySet<string>> = {
+  image: new Set(['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'gif']),
+  video: new Set(['mp4', 'mov', 'm4v']),
+};
+
+/** The extension to save a media URL's file under, from SAVED_EXTENSIONS only. */
+export function extensionOf(url: string, kind: 'image' | 'video'): string {
   try {
-    const path = new URL(url).pathname;
-    const m = path.match(/\.([a-zA-Z0-9]{2,5})$/);
-    if (m?.[1]) return m[1];
+    const ext = /\.([a-zA-Z0-9]{2,5})$/.exec(new URL(url).pathname)?.[1]?.toLowerCase();
+    if (ext && SAVED_EXTENSIONS[kind].has(ext)) return ext;
   } catch {
     /* fall through */
   }
@@ -172,7 +188,8 @@ async function writeWeekReadme(dir: string, when: Date, childName: string): Prom
     'Saved by care-album-saver. These files are yours; nothing here phones home.',
     '',
   ].join('\n');
-  await writeFile(join(dir, 'README.md'), body, 'utf8');
+  // A fixed name in a folder other things can write to: see writeAtomically.
+  await writeAtomically(join(dir, 'README.md'), body);
 }
 
 /**

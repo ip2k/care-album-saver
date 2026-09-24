@@ -1,5 +1,4 @@
-import { writeFile } from 'node:fs/promises';
-import { exifDateTime, exifOffset } from './ferry/index.js';
+import { exifDateTime, exifOffset, writeAtomically } from './ferry/index.js';
 import type { MediaActivity, Student } from './api/schema.js';
 
 export interface MetadataInput {
@@ -238,7 +237,9 @@ async function writeJsonSidecar(input: MetadataInput): Promise<void> {
     savedAt: new Date().toISOString(),
     savedBy: 'care-album-saver',
   };
-  await writeFile(`${input.filePath}.json`, JSON.stringify(sidecar, null, 2), 'utf8');
+  // Its name is predictable from the photo's, so it goes through writeAtomically: a symlink
+  // planted at `<photo>.json` is replaced, never written through.
+  await writeAtomically(`${input.filePath}.json`, JSON.stringify(sidecar, null, 2));
 }
 
 export interface MetadataResult {

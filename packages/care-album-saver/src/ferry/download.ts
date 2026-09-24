@@ -9,7 +9,11 @@ export interface RemoteValidators {
   etag?: string | null;
   /** HTTP Last-Modified, verbatim. Never a local mtime. */
   lastModified?: string | null;
-  /** Content-Length, if known. */
+  /**
+   * The file's length in bytes, from Content-Length — or null when the server gave none, or
+   * when the body came compressed in transit, since Content-Length then counts the
+   * compressed bytes rather than the file's.
+   */
   size?: number | null;
 }
 
@@ -27,10 +31,15 @@ export interface DownloadOptions {
 
 function readValidators(h: Headers): RemoteValidators {
   const len = h.get('content-length');
+  // fetch undoes gzip, deflate and br before a byte reaches us, so what lands on disk is
+  // the decoded file while Content-Length measured the encoded one. Compared anyway, every
+  // compressed download failed as "truncated" (security review outbound-3).
+  const encoding = h.get('content-encoding')?.trim().toLowerCase();
+  const encoded = Boolean(encoding) && encoding !== 'identity';
   return {
     etag: h.get('etag'),
     lastModified: h.get('last-modified'),
-    size: len ? Number(len) : null,
+    size: len && !encoded ? Number(len) : null,
   };
 }
 
@@ -50,7 +59,10 @@ export async function download(options: DownloadOptions): Promise<DownloadResult
   await mkdir(dirname(destination), { recursive: true });
   await unlink(partPath).catch(() => {});
 
-  const response = await fetch(url, { headers, redirect: 'follow' });
+  // Asked for uncompressed: photographs and videos are compressed already, so gzip gains
+  // nothing, and an uncompressed body is one whose length can be checked. A server that
+  // compresses anyway is handled in readValidators.
+  const response = await fetch(url, { headers: { 'Accept-Encoding': 'identity', ...headers }, redirect: 'follow' });
 
   if (!response.ok) {
     throw new DownloadError(`HTTP ${response.status} for ${redactUrl(url)}`, response.status);
@@ -62,7 +74,9 @@ export async function download(options: DownloadOptions): Promise<DownloadResult
   const validators = readValidators(response.headers);
   const total = validators.size ?? null;
 
-  const out = createWriteStream(partPath);
+  // `wx`: the name is predictable, and the unlink above is not a guarantee — something could
+  // put a symlink there in between. Opening exclusively refuses it rather than following it.
+  const out = createWriteStream(partPath, { flags: 'wx' });
   const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
 
   await pipeline(source, out);

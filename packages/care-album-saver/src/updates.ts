@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { Config } from './config.js';
-import { configDir, readJsonFile, writeSecureFile } from './paths.js';
+import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 import { currentVersion, installKind, type InstallKind, type VersionInfo } from './version.js';
 
 /**
@@ -74,7 +74,11 @@ const EMPTY: UpdateState = { checkedAt: null, attemptedAt: null, latest: null, e
 const statePath = (): string => join(configDir(), 'update-check.json');
 
 async function loadUpdateState(): Promise<UpdateState> {
-  const stored = await readJsonFile<Partial<UpdateState>>(statePath());
+  // A damaged record only means asking GitHub again, so it is read as no record at all.
+  const stored = await readJsonFile<Partial<UpdateState>>(statePath()).catch((error: unknown) => {
+    if (error instanceof UnreadableFileError) return null;
+    throw error;
+  });
   return { ...EMPTY, ...(stored ?? {}), latest: parseStoredRelease(stored?.latest) };
 }
 

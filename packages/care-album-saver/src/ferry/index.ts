@@ -12,6 +12,7 @@
  */
 
 export { hashFile } from './hash.js';
+export { writeAtomically } from './atomic.js';
 export { transferIdentity, sameRemoteFile, signedUrlExpiry } from './url.js';
 export { safeStem, safeExtension, uniqueName } from './names.js';
 export {

@@ -58,7 +58,7 @@ test('the checkout the suite runs in is classified by its marks, and never by ha
 
 test('the daily run is refused from development before the scheduler can be reached', async () => {
   const server = (await readFile(fileURLToPath(new URL('../src/web/server.ts', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
-  const route = server.slice(server.indexOf("url.pathname === '/api/schedule') {\n        const { time }"));
+  const route = server.slice(server.indexOf("url.pathname === '/api/schedule') {\n        const { time"));
   const guard = route.indexOf("environment() === 'development'");
   const install = route.indexOf('schedule.install(');
   assert.ok(guard > 0 && install > guard, 'the page checks the environment before installing');

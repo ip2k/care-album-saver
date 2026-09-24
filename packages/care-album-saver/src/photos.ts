@@ -7,7 +7,7 @@ import type { ManifestRecord } from './ferry/index.js';
 import { records } from './gallery.js';
 import { runProgram, type SpawnCommand } from './native.js';
 import { containedFile } from './contain.js';
-import { configDir, readJsonFile, writeSecureFile } from './paths.js';
+import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 
 /**
  * Adding saved photos to the Photos app, on a Mac, when the parent has asked for it.
@@ -157,7 +157,22 @@ export function albumPathFor(recordPath: string): string[] {
 }
 
 async function loadState(): Promise<PhotosState> {
-  const stored = await readJsonFile<PhotosState>(statePath());
+  let stored: PhotosState | null;
+  try {
+    stored = await readJsonFile<PhotosState>(statePath());
+  } catch (error) {
+    // Read as empty, a damaged record would say nothing had ever been added, and the next
+    // run would hand every photo since the option was turned on to Photos a second time —
+    // and to iCloud with it. So it stops here instead (security review fs-5).
+    if (error instanceof UnreadableFileError) {
+      throw new Error(
+        `The record of what has already been added to Photos (${error.path}) cannot be read: ${error.reason}. ` +
+          'Nothing was added, so nothing has been added twice. Moving that file somewhere safe starts the ' +
+          'record again, which adds every photo since you turned this on a second time.',
+      );
+    }
+    throw error;
+  }
   const added = stored && typeof stored.added === 'object' && stored.added !== null ? stored.added : {};
   return { added, lastAttempt: stored?.lastAttempt ?? null };
 }

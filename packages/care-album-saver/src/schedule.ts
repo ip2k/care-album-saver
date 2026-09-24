@@ -1,13 +1,14 @@
 import { execFile } from 'node:child_process';
-import { realpathSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { appendFile, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, platform as osPlatform, tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { configDir, readJsonFile, writeSecureFile } from './paths.js';
+import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 import { scrub } from './secrets.js';
 import { logTimestamp } from './log-lines.js';
 import { loadConfig, saveConfig, type ScheduleMechanism, type ScheduleRecord } from './config.js';
+import { PRODUCTION_MARKER } from './environment.js';
 
 /**
  * The daily run: installing it, asking after it, and taking it away again.
@@ -214,6 +215,8 @@ export function durableNodePath(execPath: string): string {
  * the run — if the desktop has no notifier, the run's own record is still written.
  */
 export async function notify(message: string, env: ScheduleEnvironment = {}): Promise<boolean> {
+  // Under test, never the real notifier: see scripts/test-env.js.
+  if (!env.run && process.env.CARE_ALBUM_NO_NOTIFY) return false;
   const e = resolveEnv(env);
   const title = 'Care Album Saver';
   try {
@@ -387,7 +390,11 @@ export function isDue(
 }
 
 export async function loadLastRun(): Promise<LastRun | null> {
-  const stored = await readJsonFile<LastRun>(lastRunPath());
+  // Only a report: a damaged one is shown as no report, and the next run writes a new one.
+  const stored = await readJsonFile<LastRun>(lastRunPath()).catch((error: unknown) => {
+    if (error instanceof UnreadableFileError) return null;
+    throw error;
+  });
   if (!stored || typeof stored.at !== 'string') return null;
   return stored;
 }
@@ -727,6 +734,79 @@ export interface ScheduleStatus {
 }
 
 /**
+ * The daily run belongs to another copy of this tool, and that copy is still there.
+ *
+ * Every copy on a computer shares one settings folder and one job name, so whichever copy
+ * last set up the daily run is the one it runs. Before this, a throwaway copy — an unpacked
+ * download looked at once, an npx cache, a second clone — that was asked to "turn on the
+ * daily run", or whose setup page had the time changed, quietly re-pointed the real job at
+ * itself (security review, missed-web). Now the copy that set it up is written down, and
+ * another copy takes it over only when told to: the setup page asks the parent first, the
+ * command line needs --replace. A production copy's job is never taken from the page at
+ * all, and only the command line's --replace takes it; deploying moves it.
+ */
+export class ScheduleOwnedElsewhereError extends Error {
+  /**
+   * @param owner the other copy's `cli.js`, absolute.
+   * @param shown the folder it is in, as a person reads it.
+   */
+  constructor(public readonly owner: string, public readonly production: boolean, shown: string = owner) {
+    super(
+      production
+        ? `The daily run belongs to the production copy of this tool, in ${shown}, and this copy leaves it alone. ` +
+            'Deploying (node scripts/deploy.js) is what moves it.'
+        : `The daily run was set up by another copy of this tool, in ${shown}, and runs that copy. ` +
+            'Change it from there, or have this copy take it over.',
+    );
+    this.name = 'ScheduleOwnedElsewhereError';
+  }
+}
+
+export interface OwnershipOptions {
+  /** Take over a daily run another copy set up. The setup page sends it only once the parent agrees. */
+  replace?: boolean;
+  /** Also take over, or turn off, a production copy's. The command line's --replace; the page never sends it. */
+  replaceProduction?: boolean;
+}
+
+/** The folder a copy's `cli.js` belongs to: dist → the package → packages → the repository. */
+function copyRoot(cliPath: string): string {
+  return resolve(dirname(cliPath), '..', '..', '..');
+}
+
+function isProductionCopy(cliPath: string): boolean {
+  return existsSync(join(copyRoot(cliPath), PRODUCTION_MARKER));
+}
+
+function samePath(a: string, b: string): boolean {
+  const real = (p: string) => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return real(a) === real(b);
+}
+
+/**
+ * Refuse to change a daily run that runs another copy, unless told to. A copy that no longer
+ * exists owns nothing — its job cannot run — and a record from before copies were written
+ * down names no owner, so neither stops anything. The production copy may always take it:
+ * that is what deploying does.
+ */
+function assertMayChange(record: ScheduleRecord | null, e: Resolved, options: OwnershipOptions, action: 'install' | 'remove'): void {
+  const owner = record?.cliPath;
+  if (!owner || samePath(owner, e.cliPath) || !existsSync(owner) || isProductionCopy(e.cliPath)) return;
+  const production = isProductionCopy(owner);
+  if (production ? options.replaceProduction : action === 'remove' || options.replace || options.replaceProduction) return;
+  // The package folder, not `dist/cli.js`, and from the home folder where it is under it.
+  const folder = resolve(dirname(owner), '..');
+  const shown = e.platform !== 'win32' && folder.startsWith(e.home + sep) ? `~${folder.slice(e.home.length)}` : folder;
+  throw new ScheduleOwnedElsewhereError(owner, production, shown);
+}
+
+/**
  * Install or move the daily run. Idempotent: running it twice leaves one job, not two.
  *
  * Every mechanism below replaces rather than appends — the plist and the unit files are
@@ -735,12 +815,13 @@ export interface ScheduleStatus {
  * which in turn is what stops a parent who changed their mind twice from having three
  * copies of the job running at three different times.
  */
-export async function install(timeInput: string, env: ScheduleEnvironment = {}): Promise<ScheduleStatus> {
+export async function install(timeInput: string, env: ScheduleEnvironment = {}, options: OwnershipOptions = {}): Promise<ScheduleStatus> {
   const time = parseTimeOfDay(timeInput);
   if (!time) {
     throw new Error(`"${timeInput}" is not a time of day. Give it as HH:MM on a 24-hour clock, for example 19:00.`);
   }
   const e = resolveEnv(env);
+  assertMayChange((await loadConfig()).schedule, e, options, 'install');
   const mechanism = await chooseMechanism(env);
   await mkdir(logDir(e), { recursive: true });
 
@@ -794,7 +875,10 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
       // missed run happen at all has no flag. See schtasksXml. UTF-16LE with a BOM is what
       // Task Scheduler writes and the encoding schtasks reads most reliably.
       const xmlPath = join(tmpdir(), `care-album-saver-task-${process.pid}.xml`);
-      await writeFile(xmlPath, `\ufeff${schtasksXml(e, time)}`, 'utf16le');
+      // Cleared first and then created exclusively, so a file or link left at this name —
+      // by a crashed run whose pid was reused, or by anything else — is never written through.
+      await rm(xmlPath, { force: true });
+      await writeFile(xmlPath, `\ufeff${schtasksXml(e, time)}`, { encoding: 'utf16le', flag: 'wx' });
       let created;
       try {
         created = await e.run('schtasks', ['/Create', '/TN', SCHTASKS_NAME, '/XML', xmlPath, '/F']);
@@ -816,6 +900,7 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
     installedAt: new Date().toISOString(),
     fragilePath:
       EPHEMERAL.test(e.nodePath) || KEG.test(e.nodePath) ? e.nodePath : EPHEMERAL.test(e.cliPath) ? e.cliPath : null,
+    cliPath: e.cliPath,
   };
   const config = await loadConfig();
   await saveConfig({ ...config, schedule: record });
@@ -826,9 +911,12 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
  * Take the daily run away. Idempotent: removing one that is not there is not an error, and
  * says so plainly rather than reporting a failure a parent would have to interpret.
  */
-export async function remove(env: ScheduleEnvironment = {}): Promise<ScheduleStatus> {
+export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOptions = {}): Promise<ScheduleStatus> {
   const e = resolveEnv(env);
   const config = await loadConfig();
+  // Turning off another copy's daily run is allowed — it is the safe direction — except a
+  // production copy's, which a stray copy must not be able to silence.
+  assertMayChange(config.schedule, e, options, 'remove');
   // Whatever installed it is what has to remove it — a machine that has since gained
   // systemd must still be able to clear the crontab line left by the version that had not.
   const mechanism = config.schedule?.mechanism ?? (await chooseMechanism(env));
