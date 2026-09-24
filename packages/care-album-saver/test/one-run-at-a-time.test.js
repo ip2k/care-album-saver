@@ -211,7 +211,7 @@ test('a daily run that finds another run saving leaves quietly: no failure, no r
     });
     assert.match(stdout, /Another run is already saving photos into this folder/);
     assert.equal(await exists(join(configDir, 'last-run.json')), false, 'the other run records the outcome');
-    assert.match(await readFile(join(logDir, 'daily.log'), 'utf8'), /SKIPPED another run was already saving photos/);
+    assert.match(await readFile(join(logDir, 'daily.log'), 'utf8'), /SKIPPED Another run is already saving photos into this folder/);
     assert.equal(await exists(join(archive, 'archive.json')), false, 'it read and wrote nothing');
   } finally {
     await rm(archive, { recursive: true, force: true });

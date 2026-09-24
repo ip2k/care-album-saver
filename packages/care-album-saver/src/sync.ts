@@ -530,8 +530,13 @@ async function syncHoldingTheLock(
   options: { signal?: AbortSignal },
   archiveWarning?: string,
 ): Promise<SyncResult> {
-  // Stopped while the lock was being taken, which can wait a minute: see takeRunLock.
-  if (options.signal?.aborted) return stoppedBeforeStarting(config, onProgress);
+  // Stopped while the lock was being taken, which can wait a minute: see takeRunLock. The
+  // list is still written, as a stopped run always writes it, and nothing is asked of
+  // Brightwheel. (Stopped during that wait, without the lock, it is not: see sync.)
+  if (options.signal?.aborted) {
+    await (await Manifest.open(config.archiveDir, 'brightwheel')).save();
+    return stoppedBeforeStarting(config, onProgress);
+  }
   const result = freshResult(config);
 
   onProgress({ phase: 'starting', message: 'Checking your Brightwheel session', ...counts(result) });
