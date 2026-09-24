@@ -43,7 +43,13 @@ const run = (cmd, args, cwd, opts = {}) => {
     say(`(dry run) would run: ${cmd} ${args.join(' ')}  in ${cwd}`);
     return '';
   }
-  return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: opts.quiet ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'pipe', 'inherit'] }).trim();
+  return execFileSync(cmd, args, {
+    cwd,
+    env: opts.env ?? process.env,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: opts.quiet ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'pipe', 'inherit'],
+  }).trim();
 };
 const fail = (why) => {
   process.stderr.write(`\n  Not deployed: ${why}\n`);
@@ -88,7 +94,11 @@ if (!dry || existsSync(join(PROD, '.git'))) {
     run('pnpm', ['run', 'build'], PROD, { mutates: true });
     step = 'testing';
     say('Running the test suite in production…');
-    run('pnpm', ['test'], PROD, { mutates: true, quiet: true });
+    // The suite makes its own throwaway folders (scripts/test-env.js) unless it inherits
+    // some. Folders set in the shell that runs this — a demo's, or a test's — would be shared
+    // by every deploy's run of the suite, and each would find the last one's settings.
+    const testEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CARE_ALBUM_|BRIGHTWHEEL_)/.test(k)));
+    run('pnpm', ['test'], PROD, { mutates: true, quiet: true, env: testEnv });
   } catch (error) {
     const out = String(error.stdout ?? '').split('\n').filter((l) => /^(ℹ (tests|pass|fail)|✖)/.test(l)).slice(0, 12).join('\n  ');
     const what = step === 'testing' ? 'the tests failed in production' : `${step} failed in production`;
