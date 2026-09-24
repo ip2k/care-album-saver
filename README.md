@@ -131,8 +131,10 @@ You sign in on Brightwheel's own website, exactly as you always do, including th
 like a temporary ticket that says "this person is already signed in" — and paste it in.
 
 That session is stored **on your computer only**, in your private settings folder, in a
-file only your user account can open. It is never sent anywhere except back to
-Brightwheel.
+file only your user account can open — on a Mac or Linux, and apart from anyone who is an
+administrator of the computer; on Windows the protection is weaker
+([what this tool cannot protect you from](#what-this-tool-cannot-protect-you-from)). It is
+never sent anywhere except back to Brightwheel.
 
 Copying that value out of your browser is fiddlier than typing a password would be, and
 that is a trade we made on purpose: getting into the habit of typing your real password
@@ -175,6 +177,9 @@ Honesty matters more here than reassurance, so:
   permissions of the folder they are in. For `%APPDATA%` that already keeps other standard
   accounts on the PC out, but it is weaker than what a Mac or Linux gets, and it is not
   something this tool can fix.
+- **An administrator can open anything.** "Only your account can open it" means other
+  ordinary accounts. Anyone who is an administrator of the computer — on a Mac, Linux or
+  Windows alike — can open every file on it, the session and the photos included.
 
 If you are a developer, the technical side of all this is in [SECURITY.md](SECURITY.md), and
 [For people who fork this project](#for-people-who-fork-this-project) is further down.
@@ -479,7 +484,7 @@ tool is built. None of it is needed to save your photos.
 | `check --repair` | The same, and then fix the list, without downloading anything. |
 | `duplicates` | Find photos saved twice, and show them. Deletes nothing. |
 | `duplicates --remove` | The same, and then offer to delete the extra copies. It lists them and asks you to type `yes` before deleting any. |
-| `doctor` | Check everything is working. It never prints your session, only a short fingerprint of it — but it does print your folder paths, which contain your computer's user name. |
+| `doctor` | Check everything is working. To find out whether your session still works it sends Brightwheel one request with it, the same one a run starts with (`GET /users/me`). It never prints your session, only a short fingerprint of it — but it does print your folder paths, which contain your computer's user name. |
 | `verify` | Check that Brightwheel's API still has the shape this tool expects. Read-only: it saves no photos, and prints no names, notes or ids. |
 | `verify --deep` | The same, and also read three photos to check whether they carry a capture time or a location, then delete them. |
 | `where` | Show where your files and settings are kept. |
@@ -583,7 +588,8 @@ this is hard:
   putting it in an error message produces `[redacted]`, not the value. You have to call
   `.expose()` on purpose.
 - **`.gitignore` blocks** browser captures (`.har`), cookie files, `.env` files, session
-  files and downloaded photos.
+  files, downloaded photos, everything a run writes beside them, and the tool's own
+  record files, and `scripts/verify-ignores.sh` checks each of those rules really works.
 - **A secret scanner runs on every pull request** in this repository, with a custom rule
   that recognises a Brightwheel session specifically. Be aware of two real limits: GitHub's
   own built-in secret scanning does **not** know what a Brightwheel session looks like

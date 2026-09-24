@@ -27,8 +27,10 @@ That means **you never type your Brightwheel password into this tool**. You sign
 Brightwheel's real website, in your own browser, exactly as you always do — including the
 6-digit code they send you — and then copy one value across.
 
-The value is stored on your own computer, in a file only you can open. It is not your
-password, and it expires. If you ever think it has got out, sign out of Brightwheel
+The value is stored on your own computer, in a file only you can open: other people's
+accounts on the computer cannot, though an administrator of it can, and on Windows the
+protection is weaker ([what this tool cannot protect you from](../README.md#what-this-tool-cannot-protect-you-from)).
+It is not your password, and it expires. If you ever think it has got out, sign out of Brightwheel
 everywhere from their website, and change your password. That should end the old value;
 Brightwheel does not document how quickly.
 
