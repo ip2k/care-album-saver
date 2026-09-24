@@ -255,7 +255,9 @@ The setup page asks once whether to check for new versions. Say yes and it asks 
 day, while the page is open, and shows a gold **New version** button when there is one, with
 the steps for the way you installed it — a clone, a download, Docker or a package manager. For
 a clone like the one above, updating is `git pull`, `pnpm install` and `pnpm build`.
-[docs/UPDATING.md](docs/UPDATING.md) has every way, and exactly what the check sends.
+[docs/UPDATING.md](docs/UPDATING.md) has every way, and exactly what the check sends;
+[docs/UPDATE-CHECK.md](docs/UPDATE-CHECK.md) explains how the check works and what a release
+must consist of for it to keep working.
 
 ---
 

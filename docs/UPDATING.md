@@ -27,6 +27,9 @@ You can also watch the repository's
 [releases page](https://github.com/ip2k/care-album-saver/releases) instead: each release lists
 what changed.
 
+How the check is built — why it compares versions and never hashes, what a release has to
+consist of, and what each answer from GitHub becomes — is in [UPDATE-CHECK.md](UPDATE-CHECK.md).
+
 ## How to update
 
 The page works out how you installed it and shows only your steps. Here they all are.
