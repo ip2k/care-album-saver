@@ -8,7 +8,7 @@ personas over their files, one adversarial verifier per lane that had to reprodu
 each finding, and two lanes that viewed every one of the 88 screenshots ever committed. The
 reviewer ran the probes in §2 by hand. Review target: `main` at 894d820 (the dead-code audit
 plus the handoff). Time-boxed to forty minutes at the owner's request: the filesystem and
-and processes verifiers had reported when this was first written, and the outbound, page,
+processes verifiers had reported when this was first written, and the outbound, page,
 supply-chain and docs verifiers before it was committed — every one of their reviewers'
 findings below was CONFIRMED or PLAUSIBLE, none refuted; only the web-server verifier was
 still running, so that lane's findings stand as the reviewer's reproductions.
