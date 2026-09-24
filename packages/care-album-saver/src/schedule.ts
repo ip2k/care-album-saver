@@ -55,6 +55,13 @@ import { isProductionRoot } from './environment.js';
 
 /** The label, unit and task name. One job, one name, on every platform. */
 const LAUNCHD_LABEL = 'com.care-album-saver.daily';
+
+/** How long launchd gives a run it is stopping before SIGKILL: the plist's ExitTimeOut. */
+const LAUNCHD_EXIT_TIMEOUT_S = 60;
+
+/** launchctl's answer while it is still taking a job down: EINPROGRESS. */
+const LAUNCHD_STOPPING = 36;
+
 const SYSTEMD_UNIT = 'care-album-saver';
 const SCHTASKS_NAME = 'Care Album Saver daily';
 
@@ -110,6 +117,8 @@ export interface ScheduleEnvironment {
   cliPath?: string;
   /** POSIX user id, for launchctl's `gui/<uid>` domain. */
   uid?: number;
+  /** Wait between asking launchd again whether a job has stopped. Test-only. */
+  pause?: (ms: number) => Promise<void>;
 }
 
 interface Resolved {
@@ -119,6 +128,7 @@ interface Resolved {
   nodePath: string;
   cliPath: string;
   uid: number;
+  pause: (ms: number) => Promise<void>;
 }
 
 function resolveEnv(env: ScheduleEnvironment = {}): Resolved {
@@ -131,6 +141,7 @@ function resolveEnv(env: ScheduleEnvironment = {}): Resolved {
     // be: resolving it through the package name would depend on how the tool was installed.
     cliPath: env.cliPath ?? fileURLToPath(new URL('./cli.js', import.meta.url)),
     uid: env.uid ?? (typeof process.getuid === 'function' ? process.getuid() : 0),
+    pause: env.pause ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
   };
 }
 
@@ -635,6 +646,16 @@ function assertSchedulable(e: Resolved, mechanism: ScheduleMechanism): void {
           'Rename that folder, or move it somewhere whose name has none, and turn the daily run on again.',
       );
     }
+    // systemd checks the program it runs (never its arguments) with string_is_safe(), and a
+    // unit whose ExecStart= program has a quote, a backslash or a glob character is a "bad
+    // unit file setting": the timer then cannot start. Said here, in words, instead.
+    if (mechanism === 'systemd' && what === 'Node' && /['"\\*?[]/.test(path)) {
+      throw new Error(
+        'The daily run cannot be set up, and nothing was changed: the path to Node has a quote, a backslash or one of ' +
+          `* ? [ in it, which systemd will not run a program from — ${path}. ` +
+          'Rename that folder, or install Node somewhere whose name has none, and turn the daily run on again.',
+      );
+    }
     if (mechanism === 'schtasks' && what !== 'the daily log' && /%.*%/.test(path)) {
       throw new Error(
         `The daily run cannot be set up, and nothing was changed: the path to ${what} has two % signs in it, and ` +
@@ -695,7 +716,7 @@ function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
     // with SIGTERM. The run then finishes the photo it is on and writes down what it saved;
     // launchd's default twenty seconds before SIGKILL can cut that short on a large video.
     '  <key>ExitTimeOut</key>',
-    '  <integer>60</integer>',
+    `  <integer>${LAUNCHD_EXIT_TIMEOUT_S}</integer>`,
     '  <key>StandardOutPath</key>',
     `  <string>${xml(log)}</string>`,
     '  <key>StandardErrorPath</key>',
@@ -974,19 +995,42 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
       location = plistPath(e);
       const target = `gui/${e.uid}/${LAUNCHD_LABEL}`;
       await mkdir(join(e.home, 'Library', 'LaunchAgents'), { recursive: true });
-      await writeFile(location, launchAgentPlist(e, time), 'utf8');
       // Unload first: launchd refuses to bootstrap a label it already has, so without this
-      // a change of time would write a new plist that nothing ever read.
-      await e.run('launchctl', ['bootout', target]);
+      // a change of time would write a new plist that nothing ever read. And waited for: a
+      // run in progress is given a minute to finish its photo, and a bootstrap sent while it
+      // is still going is refused — which used to cost the parent the run they were moving.
+      const unloaded = await unloadLaunchd(e, target);
+      if (!unloaded.gone) {
+        throw new Error(
+          unloaded.stopping
+            ? 'macOS was still stopping the daily run a minute later, so nothing was changed. Try again in a minute.'
+            : `macOS would not stop the daily run that is set up now, so nothing was changed: ${said(unloaded.answer, 'launchctl')}.`,
+        );
+      }
+      const before = await readFile(location, 'utf8').catch(() => null);
+      await writeFile(location, launchAgentPlist(e, time), 'utf8');
       const loaded = await e.run('launchctl', ['bootstrap', `gui/${e.uid}`, location]);
       if (loaded.code !== 0) {
         // Unloaded as well as deleted, in case the refusal came after launchd had taken some
         // of it; that answer is not checked, since "not loaded" is the likely one and fine.
         await e.run('launchctl', ['bootout', target]);
+        // The run this was replacing is put back as it was, rather than lost along with the
+        // new one: a change of time that fails should leave the old time working.
+        if (before !== null) {
+          await writeFile(location, before, 'utf8');
+          if ((await e.run('launchctl', ['bootstrap', `gui/${e.uid}`, location])).code === 0) {
+            throw new Error(
+              `macOS would not start the daily run at the new time, so the one that was already set up is back as it was: ` +
+                `${said(loaded, 'launchctl')}.`,
+            );
+          }
+          await e.run('launchctl', ['bootout', target]);
+        }
         await rm(location, { force: true });
         await forgetReplaced();
         throw new Error(
-          `macOS would not start the daily run, so it was taken away again rather than left to start at the next login: ` +
+          `macOS would not start the daily run, so it was taken away again rather than left to start at the next login` +
+            `${before !== null ? ', and the daily run it was replacing could not be put back either, so there is none now' : ''}: ` +
             `${said(loaded, 'launchctl')}.`,
         );
       }
@@ -996,6 +1040,8 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
       location = timerPath(e);
       const timer = `${SYSTEMD_UNIT}.timer`;
       await mkdir(systemdDir(e), { recursive: true });
+      const beforeService = await readFile(servicePath(e), 'utf8').catch(() => null);
+      const beforeTimer = await readFile(location, 'utf8').catch(() => null);
       await writeFile(servicePath(e), systemdService(e), 'utf8');
       await writeFile(location, systemdTimer(time), 'utf8');
       // The reload is checked too: without it systemd would enable the timer it read before,
@@ -1007,11 +1053,31 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
         // that failed can leave a link that would start it at the next login: disabled
         // first, then the files, then the reload that makes systemd forget them.
         await e.run('systemctl', ['--user', 'disable', '--now', timer]);
+        // The run this was replacing is put back as it was, as for launchd above.
+        const hadBefore = beforeService !== null && beforeTimer !== null;
+        if (hadBefore) {
+          await writeFile(servicePath(e), beforeService, 'utf8');
+          await writeFile(location, beforeTimer, 'utf8');
+          const back =
+            (await e.run('systemctl', ['--user', 'daemon-reload'])).code === 0 &&
+            (await e.run('systemctl', ['--user', 'enable', '--now', timer])).code === 0;
+          if (back) {
+            throw new Error(
+              `systemd would not start the daily run at the new time, so the one that was already set up is back as it was: ` +
+                `${said(enabled, 'systemctl')}.`,
+            );
+          }
+          await e.run('systemctl', ['--user', 'disable', '--now', timer]);
+        }
         await rm(location, { force: true });
         await rm(servicePath(e), { force: true });
         await e.run('systemctl', ['--user', 'daemon-reload']);
         await forgetReplaced();
-        throw new Error(`systemd would not start the daily run, so its files were taken away again: ${said(enabled, 'systemctl')}.`);
+        throw new Error(
+          `systemd would not start the daily run, so its files were taken away again` +
+            `${hadBefore ? ', and the daily run it was replacing could not be put back either, so there is none now' : ''}: ` +
+            `${said(enabled, 'systemctl')}.`,
+        );
       }
       break;
     }
@@ -1100,12 +1166,13 @@ export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOp
 
   switch (mechanism) {
     case 'launchd': {
-      const target = `gui/${e.uid}/${LAUNCHD_LABEL}`;
-      const unloaded = await e.run('launchctl', ['bootout', target]);
-      // "No such process" (3) or "Could not find specified service" (113) is a job that was
-      // not loaded; `print` answering is one that still is.
-      if (unloaded.code !== 0 && (await e.run('launchctl', ['print', target])).code === 0) {
-        throw new Error(`macOS would not stop the daily run, so it is still set up and nothing was changed: ${said(unloaded, 'launchctl')}.`);
+      const unloaded = await unloadLaunchd(e, `gui/${e.uid}/${LAUNCHD_LABEL}`);
+      if (!unloaded.gone) {
+        throw new Error(
+          unloaded.stopping
+            ? 'macOS was still stopping the daily run a minute later, so it is still set up and nothing was changed. Try again in a minute.'
+            : `macOS would not stop the daily run, so it is still set up and nothing was changed: ${said(unloaded.answer, 'launchctl')}.`,
+        );
       }
       // Only once it is unloaded: a plist left behind would load it again at the next login.
       await rm(plistPath(e), { force: true });
@@ -1274,6 +1341,33 @@ async function currentCrontab(e: Resolved): Promise<string> {
   if (existing.code === 0) return existing.stdout;
   if (/no crontab for/i.test(existing.stderr)) return '';
   throw new Error(`Your crontab could not be read, so nothing was changed: ${said(existing, 'crontab')}.`);
+}
+
+/**
+ * Unload the LaunchAgent, and wait while launchd is still taking it down.
+ *
+ * `bootout` of a job whose run is in progress sends that run SIGTERM and answers 36
+ * (EINPROGRESS) at once, while the run takes up to ExitTimeOut to finish the photo it is on;
+ * `print` goes on finding the job until it has. Read as a refusal, that turned "turn it off"
+ * into "nothing was changed" whenever a run happened to be going — with the plist left to
+ * load it again at the next login — and made a change of time bootstrap into a job still
+ * stopping and lose the run altogether. So 36 is waited out, asking `print` once a second,
+ * for as long as launchd itself allows plus a margin (Homebrew's launchctl client does the
+ * same). "No such process" (3) or "Could not find specified service" (113) is a job that was
+ * not loaded, which `print` confirms without either number being trusted. Any other answer
+ * while `print` still finds the job is a refusal.
+ */
+async function unloadLaunchd(e: Resolved, target: string): Promise<{ gone: boolean; stopping: boolean; answer: CommandResult }> {
+  const answer = await e.run('launchctl', ['bootout', target]);
+  if (answer.code === 0) return { gone: true, stopping: false, answer };
+  const loaded = async (): Promise<boolean> => (await e.run('launchctl', ['print', target])).code === 0;
+  if (!(await loaded())) return { gone: true, stopping: false, answer };
+  if (answer.code !== LAUNCHD_STOPPING) return { gone: false, stopping: false, answer };
+  for (let waited = 0; waited < LAUNCHD_EXIT_TIMEOUT_S + 5; waited += 1) {
+    await e.pause(1000);
+    if (!(await loaded())) return { gone: true, stopping: false, answer };
+  }
+  return { gone: false, stopping: true, answer };
 }
 
 /** A scheduler's refusal in its own words, or its exit status when it gave none. */

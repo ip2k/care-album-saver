@@ -2529,8 +2529,10 @@ async function postSchedule(path, body) {
       const again = Object.assign({}, body || {}, { replace: true });
       d = await (await api(path, { method: 'POST', body: JSON.stringify(again) })).json();
     }
+    // A refusal still says what is set up now: a change the scheduler refused can leave the
+    // old run in place, or none at all, and the page must not go on showing the old one.
+    if (d.schedule) sched = d.schedule;
     if (!d.ok) return d.error || 'That could not be changed.';
-    sched = d.schedule;
     return null;
   } catch {
     return 'Could not reach the tool. Check it is still running in the window you started it from.';

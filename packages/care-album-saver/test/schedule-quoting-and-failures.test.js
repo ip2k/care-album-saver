@@ -199,13 +199,17 @@ function systemdReads(line) {
       throw new Error(`a variable systemd would substitute: $${s}`);
     });
   const expanded = words.map(specifiers);
+  // string_is_safe(), which systemd applies to the program and not to its arguments.
+  if (/[\x00-\x1f\x7f'"\\*?[]/.test(expanded[0])) throw new Error(`a program systemd would refuse to run: ${expanded[0]}`);
   return { path: expanded[0], args: expanded.slice(1).map(variables) };
 }
 
 test('systemd gives back the program and every argument exactly, however the folders are named', async () => {
   await freshConfigDir();
   const home = await freshHome();
-  const nodePath = `/opt/${AWKWARD}/bin/node`;
+  // The program may not hold a quote or a backslash at all (see the refusal below); its
+  // arguments may hold anything.
+  const nodePath = `/opt/${AWKWARD.replace(/['"\\]/g, '')}/bin/node`;
   const cliPath = `/srv/${AWKWARD}/dist/cli.js`;
   const env = { platform: 'linux', home, run: recorder().run, nodePath, cliPath, uid: 1000 };
   await schedule.install('19:00', env);
@@ -217,6 +221,18 @@ test('systemd gives back the program and every argument exactly, however the fol
   assert.deepEqual(read.args, [cliPath, 'run', '--scheduled'], 'and what it is given');
   // argv[0] is substituted where the path is not, so it is not asserted; Node finds itself
   // through the operating system, not through argv[0].
+});
+
+test('systemd is never handed a program it would refuse to run, and nothing is written', async () => {
+  for (const name of ["it's", 'say "hi"', 'back\\slash', 'star*', 'what?', 'a [1]']) {
+    await freshConfigDir();
+    const home = await freshHome();
+    const os = recorder();
+    const env = { platform: 'linux', home, run: os.run, nodePath: `/opt/${name}/bin/node`, cliPath: '/opt/bw/cli.js', uid: 1000 };
+    await assert.rejects(() => schedule.install('19:00', env), /nothing was changed: the path to Node has a quote, a backslash or one of/, name);
+    assert.equal(await exists(join(home, '.config', 'systemd', 'user', 'care-album-saver.service')), false, name);
+    assert.ok(!os.said().some((line) => line.includes('enable')), name);
+  }
 });
 
 test('an ordinary path still reads as an ordinary ExecStart line', () => {
@@ -402,20 +418,93 @@ test('a LaunchAgent macOS would not start is taken away, not left to start at th
   ]);
 });
 
-test('a change of time macOS refuses leaves no daily run, and the settings say so', async () => {
+test('a change of time macOS refuses, when the old run will not load again either, leaves no daily run and says so', async () => {
   await freshConfigDir();
   const home = await freshHome();
   await schedule.install('19:00', macEnv(home, recorder().run));
   assert.equal((await loadConfig()).schedule.time, '19:00');
 
-  // Writing the new plist and unloading the old job are what a change of time does first,
-  // so when launchd then refuses, the seven o'clock run is already gone too.
+  // Unloading the old job is what a change of time does first. When launchd then refuses
+  // the new one and the old one alike, there is no daily run, and the error says so.
   const refuses = recorder(({ args }) => (args[0] === 'bootstrap' ? { code: 37, stderr: 'Bootstrap failed: 37: Operation already in progress' } : {}));
-  await assert.rejects(() => schedule.install('20:00', macEnv(home, refuses.run)), /Operation already in progress/);
+  await assert.rejects(
+    () => schedule.install('20:00', macEnv(home, refuses.run)),
+    /the daily run it was replacing could not be put back either, so there is none now: Bootstrap failed: 37/,
+  );
   assert.equal(await exists(plistOf(home)), false);
   assert.equal((await loadConfig()).schedule, null, 'not a record of a seven o\'clock run that no longer exists');
   const state = await schedule.status(macEnv(home, recorder().run));
   assert.equal(state.installed, false);
+});
+
+/**
+ * A run in progress when the job is unloaded: `bootout` sends it SIGTERM and answers 36
+ * (EINPROGRESS) at once, and `print` goes on finding the job until the run has finished
+ * its photo. `stillThere` is how many times `print` still finds it.
+ */
+function stopping(stillThere, others = () => ({})) {
+  let seen = 0;
+  const loaded = () => seen < stillThere;
+  return recorder((call) => {
+    if (call.args[0] === 'bootout') return loaded() ? { code: 36, stderr: 'Boot-out failed: 36: Operation now in progress' } : { code: 3 };
+    if (call.args[0] === 'print') return loaded() && (seen += 1) ? { code: 0 } : { code: 113 };
+    return others(call);
+  });
+}
+const noWait = async () => {};
+
+test('a change of time while a run is stopping waits for it, and the new time is set', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', macEnv(home, recorder().run));
+
+  const os = stopping(3);
+  const state = await schedule.install('20:00', { ...macEnv(home, os.run), pause: noWait });
+  assert.equal(state.installed, true);
+  assert.equal((await loadConfig()).schedule.time, '20:00');
+  const said = os.said();
+  const first = said.slice(0, said.indexOf('launchctl bootstrap gui/501 ' + plistOf(home)));
+  assert.equal(first.filter((line) => line.startsWith('launchctl print')).length, 4, 'bootstrapped only once launchd had let the old job go');
+});
+
+test('turning it off while a run is stopping waits for it, and it is off', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', macEnv(home, recorder().run));
+
+  const state = await schedule.remove({ ...macEnv(home, stopping(5).run), pause: noWait });
+  assert.equal(state.installed, false);
+  assert.equal(await exists(plistOf(home)), false, 'no plist to load it again at the next login');
+  assert.equal((await loadConfig()).schedule, null);
+});
+
+test('a run that is still stopping after launchd\'s own minute is reported, and nothing is changed', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', macEnv(home, recorder().run));
+  const plist = await readFile(plistOf(home), 'utf8');
+
+  let pauses = 0;
+  const env = { ...macEnv(home, stopping(Infinity).run), pause: async () => { pauses += 1; } };
+  await assert.rejects(() => schedule.remove(env), /still stopping the daily run a minute later, so it is still set up and nothing was changed/);
+  await assert.rejects(() => schedule.install('20:00', env), /still stopping the daily run a minute later, so nothing was changed/);
+  assert.ok(pauses >= 60 && pauses <= 140, `waited about a minute each time, not for ever (${pauses} pauses)`);
+  assert.equal(await readFile(plistOf(home), 'utf8'), plist, 'the plist is the seven o\'clock one still');
+  assert.equal((await loadConfig()).schedule.time, '19:00');
+});
+
+test('a change of time macOS refuses puts the run it was replacing back', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', macEnv(home, recorder().run));
+  const plist = await readFile(plistOf(home), 'utf8');
+
+  let bootstraps = 0;
+  const once = recorder(({ args }) => (args[0] === 'bootstrap' && (bootstraps += 1) === 1 ? { code: 5, stderr: 'Bootstrap failed: 5: Input/output error' } : {}));
+  await assert.rejects(() => schedule.install('20:00', macEnv(home, once.run)), /at the new time, so the one that was already set up is back as it was: Bootstrap failed: 5/);
+  assert.equal(await readFile(plistOf(home), 'utf8'), plist, 'the seven o\'clock plist, loaded again');
+  assert.equal(bootstraps, 2);
+  assert.equal((await loadConfig()).schedule.time, '19:00', 'and the settings still say seven');
 });
 
 const unitDir = (home) => join(home, '.config', 'systemd', 'user');
@@ -446,6 +535,20 @@ test('a reload that fails stops the install, rather than enabling the timer syst
   assert.ok(!os.said().includes('systemctl --user enable --now care-album-saver.timer'), 'never enabled at a time it had not read');
   assert.equal(await exists(join(unitDir(home), 'care-album-saver.timer')), false);
   assert.equal((await loadConfig()).schedule, null, 'the seven o\'clock files were replaced, so its record goes too');
+});
+
+test('a change of time systemd refuses puts the timer it was replacing back', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', linuxEnv(home, recorder().run));
+  const timer = await readFile(join(unitDir(home), 'care-album-saver.timer'), 'utf8');
+
+  let reloads = 0;
+  const once = recorder(({ args }) => (args[1] === 'daemon-reload' && (reloads += 1) === 1 ? { code: 1, stderr: 'Failed to connect to bus: No medium found' } : {}));
+  await assert.rejects(() => schedule.install('06:00', linuxEnv(home, once.run)), /at the new time, so the one that was already set up is back as it was: Failed to connect to bus/);
+  assert.equal(await readFile(join(unitDir(home), 'care-album-saver.timer'), 'utf8'), timer);
+  assert.ok(once.said().includes('systemctl --user enable --now care-album-saver.timer'), 'the seven o\'clock timer is started again');
+  assert.equal((await loadConfig()).schedule.time, '19:00');
 });
 
 test('a crontab that refuses the new block keeps the old one, and the record that matches it', async () => {

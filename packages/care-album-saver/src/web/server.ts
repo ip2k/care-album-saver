@@ -287,6 +287,13 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     location: tildify(answer.location, options.schedule?.home ?? homedir(), options.schedule?.platform),
   });
 
+  /**
+   * What is set up now, sent with a refused change so the page repaints from the truth: a
+   * change of time the scheduler refused can leave the old run, or none, and the page must
+   * not go on showing what it showed before. Null when even that cannot be read.
+   */
+  const scheduleNow = () => schedule.status(options.schedule).then(shown, () => null);
+
   const readChildren = async (client: BrightwheelClient): Promise<Student[]> => {
     if (!children) {
       const me = await client.me();
@@ -1049,7 +1056,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             json(409, { ok: false, error: scrub(error.message), replaceable: !error.production });
             return;
           }
-          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)), schedule: await scheduleNow() });
         }
         return;
       }
@@ -1062,7 +1069,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             json(409, { ok: false, error: scrub(error.message), replaceable: false });
             return;
           }
-          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)) });
+          json(400, { ok: false, error: scrub(error instanceof Error ? error.message : String(error)), schedule: await scheduleNow() });
         }
         return;
       }
