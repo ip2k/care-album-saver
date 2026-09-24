@@ -1,23 +1,22 @@
 /**
- * media-ferry — resumable downloads, stable remote identity, content-addressed
- * deduplication, safe filenames and ISO-week foldering.
+ * src/ferry — the part of this tool that neither talks to Brightwheel nor knows its API:
+ * signed-URL identity, downloading to a `.part` file and renaming it into place only when
+ * complete, SHA-256 integrity checksums, safe filenames, ISO-week folders and the archive
+ * manifest.
  *
  * Zero runtime dependencies: everything here is Node standard library.
  *
- * The algorithms descend from Archive Ferry (a private Python project). They are
- * re-implemented here rather than bound, because a TypeScript package cannot be imported
- * by a Python worker. Keeping the two from drifting is an open intention, not a fact:
- * there is no shared fixture yet (see docs/QUESTIONS-FOR-FABLE.md, C2).
+ * Several of the algorithms descend from Archive Ferry (a private Python project), and say
+ * so where they do. That is provenance only: they are re-implemented here, not bound, and no
+ * behavioural pinning between the two is intended (docs/QUESTIONS-FOR-FABLE.md, C2).
  */
 
-export { hashFile, hashBytes } from './hash.js';
+export { hashFile } from './hash.js';
 export { transferIdentity, sameRemoteFile, signedUrlExpiry } from './url.js';
-export { safeStem, safeExtension, uniqueName, type SafeNameOptions } from './names.js';
+export { safeStem, safeExtension, uniqueName } from './names.js';
 export {
   isoWeek,
   weekFolder,
-  weekStart,
-  weekEnd,
   weekLabel,
   exifDateTime,
   exifOffset,
@@ -26,7 +25,6 @@ export {
 export {
   download,
   DownloadError,
-  redactUrl,
   type DownloadOptions,
   type DownloadResult,
   type RemoteValidators,
@@ -34,10 +32,6 @@ export {
 export {
   Manifest,
   ManifestUnusableError,
-  MANIFEST_SCHEMA,
   MANIFEST_FILENAME,
-  MANIFEST_FILE_MODE,
-  type ManifestData,
-  type ManifestOptions,
   type ManifestRecord,
 } from './manifest.js';
