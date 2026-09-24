@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { realpathSync, statSync } from 'node:fs';
+import { appendFile, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, platform as osPlatform, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir, readJsonFile, writeSecureFile } from './paths.js';
 import { scrub } from './secrets.js';
@@ -112,7 +113,7 @@ function resolveEnv(env: ScheduleEnvironment = {}): Resolved {
     platform: env.platform ?? osPlatform(),
     home: env.home ?? homedir(),
     run: env.run ?? defaultRunner,
-    nodePath: env.nodePath ?? process.execPath,
+    nodePath: durableNodePath(env.nodePath ?? process.execPath),
     // `cli.js` is this file's neighbour in `dist`, which is the one place it is certain to
     // be: resolving it through the package name would depend on how the tool was installed.
     cliPath: env.cliPath ?? fileURLToPath(new URL('./cli.js', import.meta.url)),
@@ -133,7 +134,71 @@ const RUN_ARGS = ['run', '--scheduled'];
  * a cache that is cleaned. Either way the job stays registered and silently does nothing —
  * the exact failure `status` cannot otherwise tell from "nothing new to save".
  */
-const EPHEMERAL = /[\/\\](?:\.nvm|\.volta|\.fnm|_npx|\.pnpm-store)[\/\\]|[\/\\]dlx-/i;
+const EPHEMERAL = new RegExp(
+  [
+    String.raw`[\/\\](?:\.nvm|\.volta|\.fnm|_npx|\.pnpm-store)[\/\\]`,
+    String.raw`[\/\\]dlx-`,
+    // asdf and mise keep one folder per version; so do nodenv, fnm's current default
+    // (…/fnm/node-versions/v22…/installation) and nvm under XDG (~/.config/nvm/versions).
+    String.raw`[\/\\](?:\.asdf|mise)[\/\\]installs[\/\\]`,
+    String.raw`[\/\\]\.nodenv[\/\\]versions[\/\\]`,
+    String.raw`[\/\\]fnm[\/\\]node-versions[\/\\]`,
+    String.raw`[\/\\]\.?nvm[\/\\]versions[\/\\]`,
+  ].join('|'),
+  'i',
+);
+
+/**
+ * A Homebrew keg: <prefix>/Cellar/<formula>/<version>/…, the shape durableNodePath parses.
+ * Case-sensitive and tested against the Node path only, so that a project in a folder that
+ * merely happens to be called "cellar" is not reported as fragile.
+ */
+const KEG = /[\/\\]Cellar[\/\\][^\/\\]+[\/\\][^\/\\]+[\/\\]/;
+
+/**
+ * The Node binary to write into the job, spelled so that it survives an upgrade.
+ *
+ * `process.execPath` is the binary after every symlink has been followed. Under Homebrew
+ * that is the versioned keg — /opt/homebrew/Cellar/node/26.9.0/bin/node — even though the
+ * shell found `node` at /opt/homebrew/bin/node. `brew upgrade` installs the next version
+ * beside it and its cleanup deletes the old one, after which a job pointing into it stays
+ * registered and never runs again, with nothing to say so. That was every Homebrew Node,
+ * which is how most Macs have Node at all.
+ *
+ * Homebrew keeps a link that follows upgrades: <prefix>/opt/<formula>, repointed at the
+ * current keg each time, and present even for a keg-only formula such as node@22 that is
+ * never linked into <prefix>/bin. So a keg path becomes the same file under opt/ — but only
+ * when that link exists and leads back into the same formula's own kegs, so a link that
+ * points somewhere unexpected is never trusted. Anything else is returned as it was, and
+ * EPHEMERAL, which knows about Cellar, is then what says so.
+ */
+export function durableNodePath(execPath: string): string {
+  const keg = /^(.*)[\/\\]Cellar[\/\\]([^\/\\]+)[\/\\][^\/\\]+[\/\\](.+)$/.exec(execPath);
+  if (!keg) return execPath;
+  const [, prefix, formula, inside] = keg as unknown as [string, string, string, string];
+  let kegs: string;
+  try {
+    kegs = realpathSync(join(prefix, 'Cellar', formula)) + sep;
+  } catch {
+    return execPath;
+  }
+  // Where opt/ can be, in the order Homebrew's own layouts make likely: beside the Cellar
+  // (every standard install); one level up, for the older Intel layout that keeps the
+  // Cellar inside the repository (/usr/local/Homebrew/Cellar, opt at /usr/local/opt); and
+  // HOMEBREW_PREFIX, which `brew shellenv` exports, for a Cellar symlinked onto another
+  // volume — execPath is the resolved path, so it names that volume, not the prefix.
+  const candidates = [join(prefix, 'opt', formula, inside), join(prefix, '..', 'opt', formula, inside)];
+  if (process.env.HOMEBREW_PREFIX) candidates.push(join(process.env.HOMEBREW_PREFIX, 'opt', formula, inside));
+  for (const stable of candidates) {
+    try {
+      const target = realpathSync(stable);
+      if (target.startsWith(kegs) && statSync(target).isFile()) return stable;
+    } catch {
+      // Not here: try the next place, and in the end keep the keg path, which works today.
+    }
+  }
+  return execPath;
+}
 
 /**
  * Tell the person something happened, using whatever the desktop already has.
@@ -354,6 +419,12 @@ export async function appendLog(line: string, env: ScheduleEnvironment = {}): Pr
     // Owner-only: these lines name a child and the folder their photographs are in, so the
     // log gets the session file's treatment rather than a world-readable default.
     await appendFile(logFile(env), `${scrub(line)}\n`, { encoding: 'utf8', mode: 0o600 });
+    // The create mode above only applies to a file this call creates. launchd creates the
+    // same file first, from the job's own output, at 0644 — so it is put right every time.
+    if (e.platform !== 'win32') {
+      await chmod(logFile(env), 0o600);
+      await chmod(logDir(e), 0o700);
+    }
   } catch {
     /* A missing log is not worth failing a run over. */
   }
@@ -457,6 +528,16 @@ export function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
     // the person is actually doing, which is right for an archive job.
     '  <key>ProcessType</key>',
     '  <string>Background</string>',
+    // Owner-only, for everything the job creates — the log above all. launchd opens
+    // StandardOutPath itself, before this tool runs, with its own default of 0644, and the
+    // run's output names each child. Umask 077 (63 in decimal, which is what launchd reads).
+    '  <key>Umask</key>',
+    '  <integer>63</integer>',
+    // Turning the daily run off, changing its time or reinstalling it stops a run in progress
+    // with SIGTERM. The run then finishes the photo it is on and writes down what it saved;
+    // launchd's default twenty seconds before SIGKILL can cut that short on a large video.
+    '  <key>ExitTimeOut</key>',
+    '  <integer>60</integer>',
     '  <key>StandardOutPath</key>',
     `  <string>${xml(log)}</string>`,
     '  <key>StandardErrorPath</key>',
@@ -708,7 +789,8 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}):
     mechanism,
     location,
     installedAt: new Date().toISOString(),
-    fragilePath: EPHEMERAL.test(e.nodePath) ? e.nodePath : EPHEMERAL.test(e.cliPath) ? e.cliPath : null,
+    fragilePath:
+      EPHEMERAL.test(e.nodePath) || KEG.test(e.nodePath) ? e.nodePath : EPHEMERAL.test(e.cliPath) ? e.cliPath : null,
   };
   const config = await loadConfig();
   await saveConfig({ ...config, schedule: record });
