@@ -270,6 +270,10 @@ and writes in the full paths to Node and to this tool, so there is no crontab li
 by hand and nothing for the scheduler to go looking for.
 [The guide has the details](docs/GUIDE.md#doing-it-automatically-every-day).
 
+A computer has one daily run, and it belongs to the copy of the tool that set it up. If you
+have two copies, the second one leaves it alone unless you say otherwise: the setup page asks
+whether to move it, and the terminal needs `schedule on --replace`.
+
 If you would rather run it in Docker, see [Running it in Docker](#running-it-in-docker).
 
 ### Stopping a run, and carrying on
@@ -468,6 +472,7 @@ tool is built. None of it is needed to save your photos.
 | `schedule` | Show whether new photos are being saved automatically, when the next run is, and how the last one went. |
 | `schedule on --at <HH:MM>` | Save new photos every day at that time, using your computer's own scheduler. Without `--at` it is 19:00. |
 | `schedule off` | Stop saving them automatically. |
+| `schedule on --replace` | Move the daily run to this copy when another copy of the tool set it up. Without it, this copy leaves the other one's alone. |
 | `children` | List the children on your account, with the id Brightwheel uses for each. |
 | `recheck` | Ask Brightwheel who is on the account now, compare that with the archive, and say if anyone is not being saved. |
 | `check` | Compare the photos folder with the tool's own list of it (`archive.json`). Changes nothing. |
@@ -486,6 +491,7 @@ tool is built. None of it is needed to save your photos.
 | `--child <id or name>` | every child | Only this child, for this one run. Repeat it for several. |
 | `--no-name-tag` | off | Do not write any name into the photo |
 | `--at <HH:MM>` | `19:00` | Time of day for the daily run, on the 24-hour clock. Used with `schedule on`. |
+| `--replace` | off | Let `schedule on` or `schedule off` change a daily run that another copy of the tool set up. |
 | `--port <n>` | chosen for you | Port for the setup assistant |
 | `--base-url <url>` | Brightwheel's own | Point at a different API. Used by the tests. |
 

@@ -236,6 +236,13 @@ care-album-saver schedule off
 Either way the tool writes in the full paths to Node and to itself, so there is nothing for
 the scheduler to go looking for.
 
+There is one daily run per computer, and it runs the copy of the tool that set it up. If you
+have another copy (a second clone, or a download you unpacked to look at), that copy does not
+take the daily run over without asking: its setup page says the daily run belongs to the other
+folder and asks whether to move it, and in the terminal `schedule on` says the same and needs
+`--replace`. Turning the daily run off from another copy is allowed, since that is the safe
+direction.
+
 ### By hand, if you would rather
 
 On a Mac or Linux, run `crontab -e`, add this line, then save and close. It runs at 7pm
