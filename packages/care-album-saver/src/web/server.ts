@@ -6,7 +6,7 @@ import { BrightwheelClient } from '../api/client.js';
 import type { Student } from '../api/schema.js';
 import { loadConfig, loadSession, saveConfig, saveSession, type Config } from '../config.js';
 import { Secret, scrub } from '../secrets.js';
-import { cleanPastedPath, inspectCookiePaste, PASTE_CLIENT_SOURCE } from '../paste.js';
+import { cleanPastedPath, inspectCookiePaste } from '../paste.js';
 import { sync, type SyncProgress } from '../sync.js';
 import { checkArchiveDir } from '../safety.js';
 import { chooseFolder, openFolder, type NativeOptions } from '../native.js';
@@ -18,7 +18,7 @@ import { addToPhotos, checkPhotosAccess, photosStatus, photosSupported, type Pho
 import { PAGE } from './page.js';
 import { acceptableUserAgent } from '../api/identity.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from '../environment.js';
-import { RELEASES_URL, UPDATING_DOC_URL, updateStatus, updateSteps } from '../updates.js';
+import { UPDATING_DOC_URL, updateStatus, updateSteps } from '../updates.js';
 import { productionSource, repositoryRoot, type InstallKind, type VersionInfo } from '../version.js';
 
 /**
@@ -42,13 +42,26 @@ import { productionSource, repositoryRoot, type InstallKind, type VersionInfo } 
  *     every account on the machine, and never set as a cookie. Other local accounts and
  *     other processes on a shared computer cannot reach the UI without it.
  *
- * Two of the routes below — /api/choose-folder and /api/open-folder — make a process start
- * on the parent's machine, which is a step up from reading and writing this tool's own
- * files. They are guarded by all four of the controls above and by two more of their own;
- * the reasoning is written out at the routes themselves.
+ * Several of the routes below make a process start on the parent's machine, which is a
+ * step up from reading and writing this tool's own files:
+ *
+ *  - /api/choose-folder and /api/open-folder: the folder chooser and the file manager
+ *    (src/native.ts).
+ *  - /api/open-logs: whatever the platform has for reading logs — Console, Task Scheduler
+ *    or xdg-open.
+ *  - POST /api/photos, when it turns adding to Photos on: osascript, to ask the Mac for
+ *    permission.
+ *  - POST /api/sync: ExifTool, when it is installed, and osascript when adding to Photos
+ *    is on.
+ *  - The three /api/schedule routes: launchctl, systemctl, schtasks or crontab, to ask
+ *    about the daily run, register it or remove it.
+ *
+ * Every one of them is guarded by all four of the controls above. The two folder routes,
+ * which name a place on disk, have two more of their own; the reasoning is written out at
+ * the routes themselves.
  */
 
-const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
 function hostAllowed(header: string | undefined): boolean {
   if (!header) return false;
@@ -124,7 +137,7 @@ export interface WebUiOptions {
    * real one from the machine it runs on. Nothing in the product passes anything here.
    */
   schedule?: schedule.ScheduleEnvironment;
-  /** A line shown across the top of the page. The demo labels itself with it; nothing else sets it. */
+  /** A line shown across the top of the page: the demo's label, and the warning a development copy shows when it is using real settings (cli.ts, setup). */
   banner?: string;
   /**
    * How GitHub is asked about new releases, and what this copy says it is. The demo passes a
@@ -135,9 +148,8 @@ export interface WebUiOptions {
     fetch?: (url: string, init: RequestInit) => Promise<Response>;
     version?: VersionInfo;
     install?: InstallKind;
-    /** Where the copy lives, and for production the checkout it is deployed from. */
+    /** Where the copy lives. */
     root?: string;
-    source?: string;
   };
 }
 
@@ -485,9 +497,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           recent: summary.recent,
           page: summary.page,
           pages: summary.pages,
-          pageSize: summary.pageSize,
           lastRunCount: summary.lastRunCount,
-          lastSavedAt: summary.lastSavedAt,
         });
         return;
       }
@@ -522,7 +532,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           progress = { phase: 'starting', message: 'Ready', saved: 0, skipped: 0, failed: 0 };
           lastResult = null;
         }
-        json(200, { ok: true, email: check.email, fingerprint: secret.fingerprint() });
+        json(200, { ok: true });
         return;
       }
 
@@ -540,7 +550,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       /**
        * Open the operating system's folder chooser and store what comes back.
        *
-       * This is the endpoint that makes a process start, so: what stops a website the
+       * This endpoint makes a process start, so: what stops a website the
        * parent happens to have open from reaching it?
        *
        *  - It is POST, so it cannot be triggered by an <img>, a <link>, a redirect or a
@@ -611,11 +621,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         // this endpoint can only ever open a folder the tool would agree to archive into.
         const verdict = checkArchiveDir(config.archiveDir);
         if (!verdict.ok) {
-          json(400, { ok: false, error: verdict.error, path: config.archiveDir });
+          json(400, { ok: false, error: verdict.error });
           return;
         }
         const opened = await openFolder(verdict.resolved, options.native);
-        json(200, opened.ok ? { ok: true, path: verdict.resolved } : { ok: false, error: scrub(opened.error), path: verdict.resolved });
+        json(200, opened.ok ? { ok: true, path: verdict.resolved } : { ok: false, error: scrub(opened.error) });
         return;
       }
 
@@ -634,16 +644,6 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         return;
       }
 
-      /**
-       * Adding to Apple Photos: on, off, and "the earlier ones too".
-       *
-       * Its own route rather than a field in /api/config, because turning it on is not a
-       * setting being stored. It is the one choice that can send a child's photos off this
-       * computer (to the parent's iCloud, when iCloud Photos is on), so it does two things
-       * a tick box elsewhere does not: it asks the Mac for permission while the parent is
-       * looking, and it decides from when — the server's clock, not the page's — so that
-       * turning it on never pours the whole archive into Photos unasked.
-       */
       // Whether a newer release exists (src/updates.ts). GET reports, and asks GitHub only when
       // the parent has said yes and a check is due. POST is the parent's answer to the
       // dashboard's question or the switch in Settings ({ enabled }), or "Check now" ({ check }).
@@ -682,14 +682,23 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           // person reads them.
           how: updateSteps(status.install, {
             root: tildify(u.root ?? repositoryRoot().replace(/[\\/]$/, ''), homedir()),
-            source: tildify(u.source ?? productionSource(), homedir()),
+            source: tildify(productionSource(), homedir()),
           }),
-          releasesUrl: RELEASES_URL,
           updatingDocUrl: UPDATING_DOC_URL,
         });
         return;
       }
 
+      /**
+       * Adding to Apple Photos: on, off, and "the earlier ones too".
+       *
+       * Its own route rather than a field in /api/config, because turning it on is not a
+       * setting being stored. It is the one choice that can send a child's photos off this
+       * computer (to the parent's iCloud, when iCloud Photos is on), so it does two things
+       * a tick box elsewhere does not: it asks the Mac for permission while the parent is
+       * looking, and it decides from when — the server's clock, not the page's — so that
+       * turning it on never pours the whole archive into Photos unasked.
+       */
       if (req.method === 'POST' && url.pathname === '/api/photos') {
         const body = JSON.parse(await readBody(req)) as { enabled?: unknown; earlier?: unknown };
         const photoOptions = { platform: options.native?.platform, spawn: options.native?.spawn };
