@@ -27,13 +27,24 @@ import { isProductionRoot } from './environment.js';
  *    same catch-up behaviour), and a crontab line where it is not.
  *  - Windows: schtasks.exe, the built-in Task Scheduler.
  *
- * Two rules hold everywhere in this file.
+ * Three rules hold everywhere in this file.
  *
- * Every command is run with `execFile` and an argument array — never a shell string, and
- * never `exec`. The paths that go into these commands come from the machine (`execPath`,
- * the home directory) rather than from anything a parent types, but an archive tool that
- * builds shell commands out of filesystem paths is one oddly-named home folder away from
- * running something it did not mean to, and the argument array makes that unrepresentable.
+ * Every command this tool runs itself is run with `execFile` and an argument array — never a
+ * shell string, and never `exec` — so a path handed to launchctl, systemctl, crontab or
+ * schtasks arrives as one argument, whatever the folder is called.
+ *
+ * The job the scheduler runs later is another matter, and an earlier version of this comment
+ * was wrong to say the argument array covered it. Three of the four schedulers take the job
+ * as text and read that text their own way: cron hands its line to /bin/sh, systemd applies
+ * its own quoting, `%` specifiers and `$` variables to ExecStart=, and Task Scheduler expands
+ * `%NAME%` in a task's command and arguments before the C runtime splits them. The paths in
+ * the job come from the machine (`execPath`, the home directory) rather than from anything a
+ * parent types, but a folder called `$(…)` did run as a command from the crontab (security
+ * review processes-1). So each path is spelled for the reader it is going to — cronWord,
+ * systemdWord and windowsArg below — and a path that none of them can carry, one with a line
+ * break or another control character in its name, is refused before anything is written.
+ * launchd is the one that needs nothing: its ProgramArguments is an array, and the only
+ * spelling in the plist is XML's.
  *
  * And nothing here goes near `npx`. A scheduled job cannot find a bare `npx` (its PATH is
  * almost empty), and on Windows it would need `npx.cmd`. Writing the entry itself, the tool
@@ -534,6 +545,106 @@ function xml(value: string): string {
   return value.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] as string);
 }
 
+/**
+ * One word for /bin/sh: single quotes, inside which nothing at all is special except the
+ * closing quote, so `$(…)`, backticks, `"` and `\` are only letters. A `'` in the path ends
+ * the quoted part, is written as `\'`, and starts another: `'\''`.
+ */
+function shellWord(value: string): string {
+  return `'${value.replace(/'/g, () => `'\\''`)}'`;
+}
+
+/**
+ * One word of a crontab line (security review processes-1).
+ *
+ * A crontab line is read by cron before the shell sees it, and cron has a meaning of its own
+ * for `%`: cronie and the Vixie cron Debian ships end the command at the first `%`, turn the
+ * rest into the job's input, and strip the backslash from `\%`; BusyBox's crond, which Alpine
+ * uses, passes both through untouched. No spelling of a literal `%` means the same to all of
+ * them, so none is written. Each `%` in a path is made by the shell instead, from printf's
+ * octal escape, outside the single quotes — and the line then holds no `%` for any cron to
+ * read. A path with no `%` in it, which is nearly every path, is just shellWord.
+ */
+function cronWord(value: string): string {
+  return value.split('%').map(shellWord).join(`"$(printf '\\045')"`);
+}
+
+/**
+ * One word of a systemd ExecStart= line (security review processes-1).
+ *
+ * systemd reads the word three times. Its own quoting first: inside double quotes it takes
+ * C escapes, so `\` and `"` are escaped. Then `%` specifiers (`%h` is the home folder), where
+ * `%%` is a percent sign — on the program's path and on every argument. Then `$` variables,
+ * where `$$` is a dollar sign — on the arguments only: systemd executes the path it parsed
+ * (find_executable_full on command->path in exec-invoke.c) and substitutes variables in argv
+ * alone, so doubling a `$` in the program's path would name a file that does not exist.
+ * argv[0] is substituted, but Node finds itself through the operating system rather than
+ * through argv[0], so a `$` there costs at most a line in the journal.
+ */
+function systemdWord(value: string, argument: boolean): string {
+  let word = value.replace(/[\\"]/g, (c) => `\\${c}`).replace(/%/g, () => '%%');
+  if (argument) word = word.replace(/\$/g, () => '$$');
+  return `"${word}"`;
+}
+
+/**
+ * One argument of a Windows command line, spelled so that the C runtime's parser, which is
+ * how node.exe reads its arguments, gives it back unchanged (security review processes-1).
+ *
+ * Inside double quotes a backslash is a letter unless backslashes run up to a `"`, where
+ * each pair becomes one; so a run of them is doubled before a quote and before the closing
+ * quote, and a quote in the value is escaped. Windows forbids `"` in a file name and this
+ * path ends in `cli.js`, so today this is always the path in quotes — which is the point:
+ * the day either stops being true, the argument still arrives whole.
+ */
+function windowsArg(value: string): string {
+  const escaped = value.replace(/(\\*)"/g, (_, slashes: string) => `${slashes}${slashes}\\"`);
+  return `"${escaped.replace(/(\\+)$/, (_, slashes: string) => `${slashes}${slashes}`)}"`;
+}
+
+/**
+ * Control characters: C0, DEL and C1. A line break ends a crontab line or a unit file's
+ * setting part-way through a path, and XML — the plist, the task — cannot carry most of the
+ * rest at all, so no scheduler here can be handed a path that holds one.
+ */
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
+
+/**
+ * Refuse, before anything is written, a path the chosen scheduler cannot be trusted to read
+ * back exactly (security review processes-1).
+ *
+ * The daily log's path is in the job only for launchd (StandardOutPath) and cron (the
+ * redirect); systemd sends the output to the journal and Task Scheduler keeps none.
+ *
+ * Task Scheduler reads the part of a command or its arguments between two `%` signs as the
+ * name of an environment variable and puts its value in its place, and has no escape for it.
+ * Which spans it would read that way depends on the variables of the moment, so a path with
+ * two `%` signs in it is refused outright; one `%` has nothing to pair with and is left alone.
+ */
+function assertSchedulable(e: Resolved, mechanism: ScheduleMechanism): void {
+  const paths: Array<[string, string]> = [
+    ['Node', e.nodePath],
+    ['this tool', e.cliPath],
+  ];
+  if (mechanism === 'launchd' || mechanism === 'cron') paths.push(['the daily log', join(logDir(e), 'daily.log')]);
+  for (const [what, path] of paths) {
+    if (CONTROL_CHARACTER.test(path)) {
+      throw new Error(
+        `The daily run cannot be set up, and nothing was changed: the path to ${what} has a line break or another ` +
+          `invisible character in it, which the scheduler would misread — ${JSON.stringify(path)}. ` +
+          'Rename that folder, or move it somewhere whose name has none, and turn the daily run on again.',
+      );
+    }
+    if (mechanism === 'schtasks' && what !== 'the daily log' && /%.*%/.test(path)) {
+      throw new Error(
+        `The daily run cannot be set up, and nothing was changed: the path to ${what} has two % signs in it, and ` +
+          'Task Scheduler would read the part between them as the name of a Windows setting and replace it — ' +
+          `${path}. Rename that folder, or move it somewhere whose name has at most one %, and turn the daily run on again.`,
+      );
+    }
+  }
+}
+
 function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
   const log = join(logDir(env), 'daily.log');
   const args = [env.nodePath, env.cliPath, ...RUN_ARGS].map((a) => `    <string>${xml(a)}</string>`).join('\n');
@@ -602,9 +713,9 @@ function systemdService(env: Resolved): string {
     '',
     '[Service]',
     'Type=oneshot',
-    // systemd honours double quotes in ExecStart, which is what carries a home directory
-    // with a space in it.
-    `ExecStart="${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')}`,
+    // Double quotes carry a home folder with a space in it; systemdWord escapes what systemd
+    // would otherwise read inside them (security review processes-1).
+    `ExecStart=${systemdWord(env.nodePath, false)} ${systemdWord(env.cliPath, true)} ${RUN_ARGS.join(' ')}`,
     '',
   ].join('\n');
 }
@@ -637,13 +748,21 @@ export function cronLines(env: Resolved, time: TimeOfDay): string[] {
 
 /** The catch-up line. `@reboot` is in every cron implementation this tool will meet. */
 function rebootLine(env: Resolved): string {
-  const log = join(logDir(env), 'daily.log');
-  return `@reboot "${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')} >> "${log}" 2>&1`;
+  return `@reboot ${cronCommand(env)}`;
 }
 
 function cronLine(env: Resolved, time: TimeOfDay): string {
+  return `${time.minute} ${time.hour} * * * ${cronCommand(env)}`;
+}
+
+/**
+ * What both lines run, as the shell will read it. Every path goes through cronWord, because
+ * cron hands this text to /bin/sh, and double quotes alone left `$(…)`, backticks, `"` and
+ * `%` live (security review processes-1).
+ */
+function cronCommand(env: Resolved): string {
   const log = join(logDir(env), 'daily.log');
-  return `${time.minute} ${time.hour} * * * "${env.nodePath}" "${env.cliPath}" ${RUN_ARGS.join(' ')} >> "${log}" 2>&1`;
+  return `${cronWord(env.nodePath)} ${cronWord(env.cliPath)} ${RUN_ARGS.join(' ')} >> ${cronWord(log)} 2>&1`;
 }
 
 /**
@@ -665,7 +784,10 @@ function cronLine(env: Resolved, time: TimeOfDay): string {
  *    somehow still going does not start a second one against the same folder.
  *
  * Nothing a parent types reaches this. The only substituted values are the two absolute
- * paths the machine gave us and the time, and each is XML-escaped on the way in.
+ * paths the machine gave us and the time, and each is XML-escaped on the way in. The tool's
+ * path is also an argument on a command line, so it is quoted for the C runtime that splits
+ * it (windowsArg), and a path in which Task Scheduler would expand a `%NAME%` never gets
+ * this far (assertSchedulable).
  */
 export function schtasksXml(env: Resolved, time: TimeOfDay): string {
   // Task Scheduler wants a start boundary; the date is only an anchor for a daily
@@ -701,7 +823,7 @@ export function schtasksXml(env: Resolved, time: TimeOfDay): string {
     '  <Actions Context="Author">',
     '    <Exec>',
     `      <Command>${xml(env.nodePath)}</Command>`,
-    `      <Arguments>${xml(`"${env.cliPath}" ${RUN_ARGS.join(' ')}`)}</Arguments>`,
+    `      <Arguments>${xml(`${windowsArg(env.cliPath)} ${RUN_ARGS.join(' ')}`)}</Arguments>`,
     '    </Exec>',
     '  </Actions>',
     '</Task>',
@@ -817,6 +939,17 @@ function assertMayChange(record: ScheduleRecord | null, e: Resolved, options: Ow
  * removed first. That is what makes "change the time" the same operation as "set it up",
  * which in turn is what stops a parent who changed their mind twice from having three
  * copies of the job running at three different times.
+ *
+ * And an install that fails leaves nothing installed (security review processes-4). Before
+ * this, a LaunchAgent that launchctl refused was left in ~/Library/LaunchAgents with
+ * RunAtLoad, while the settings recorded no daily run: it went live at the next login with
+ * no record of it anywhere a parent would look. Now the plist, or the unit files, are taken
+ * away again before the error is reported. Writing them had already replaced any daily run
+ * this mechanism held before, so its record goes too, and the settings say what is true: no
+ * daily run. `crontab -` replaces the whole file or none of it, so a refusal there leaves the
+ * previous block and its record as they were. A refused `schtasks /Create` is taken to have
+ * done the same, which could not be checked from a Mac; if it did not, status() asks Task
+ * Scheduler itself and reports the daily run as gone, never as working.
  */
 export async function install(timeInput: string, env: ScheduleEnvironment = {}, options: OwnershipOptions = {}): Promise<ScheduleStatus> {
   const time = parseTimeOfDay(timeInput);
@@ -824,40 +957,61 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
     throw new Error(`"${timeInput}" is not a time of day. Give it as HH:MM on a 24-hour clock, for example 19:00.`);
   }
   const e = resolveEnv(env);
-  assertMayChange((await loadConfig()).schedule, e, options, 'install');
+  const previous = (await loadConfig()).schedule;
+  assertMayChange(previous, e, options, 'install');
   const mechanism = await chooseMechanism(env);
+  assertSchedulable(e, mechanism);
   await mkdir(logDir(e), { recursive: true });
+
+  /** After a refusal that took this mechanism's previous job down with it: see above. */
+  const forgetReplaced = async (): Promise<void> => {
+    if (previous?.mechanism === mechanism) await saveConfig({ ...(await loadConfig()), schedule: null });
+  };
 
   let location: string;
   switch (mechanism) {
     case 'launchd': {
       location = plistPath(e);
+      const target = `gui/${e.uid}/${LAUNCHD_LABEL}`;
       await mkdir(join(e.home, 'Library', 'LaunchAgents'), { recursive: true });
       await writeFile(location, launchAgentPlist(e, time), 'utf8');
       // Unload first: launchd refuses to bootstrap a label it already has, so without this
       // a change of time would write a new plist that nothing ever read.
-      await e.run('launchctl', ['bootout', `gui/${e.uid}/${LAUNCHD_LABEL}`]);
+      await e.run('launchctl', ['bootout', target]);
       const loaded = await e.run('launchctl', ['bootstrap', `gui/${e.uid}`, location]);
       if (loaded.code !== 0) {
+        // Unloaded as well as deleted, in case the refusal came after launchd had taken some
+        // of it; that answer is not checked, since "not loaded" is the likely one and fine.
+        await e.run('launchctl', ['bootout', target]);
+        await rm(location, { force: true });
+        await forgetReplaced();
         throw new Error(
-          `The daily run was written to ${location} but macOS would not start it: ` +
-            `${loaded.stderr.trim() || `launchctl exited with ${loaded.code}`}.`,
+          `macOS would not start the daily run, so it was taken away again rather than left to start at the next login: ` +
+            `${said(loaded, 'launchctl')}.`,
         );
       }
       break;
     }
     case 'systemd': {
       location = timerPath(e);
+      const timer = `${SYSTEMD_UNIT}.timer`;
       await mkdir(systemdDir(e), { recursive: true });
       await writeFile(servicePath(e), systemdService(e), 'utf8');
       await writeFile(location, systemdTimer(time), 'utf8');
-      await e.run('systemctl', ['--user', 'daemon-reload']);
-      const enabled = await e.run('systemctl', ['--user', 'enable', '--now', `${SYSTEMD_UNIT}.timer`]);
+      // The reload is checked too: without it systemd would enable the timer it read before,
+      // at the old time and running the old paths, while this tool recorded the new ones.
+      const reloaded = await e.run('systemctl', ['--user', 'daemon-reload']);
+      const enabled = reloaded.code === 0 ? await e.run('systemctl', ['--user', 'enable', '--now', timer]) : reloaded;
       if (enabled.code !== 0) {
-        throw new Error(
-          `The daily run was written to ${location} but systemd would not start it: ` +
-            `${enabled.stderr.trim() || `systemctl exited with ${enabled.code}`}.`,
-        );
+        // `enable --now` links the timer into timers.target before starting it, so a start
+        // that failed can leave a link that would start it at the next login: disabled
+        // first, then the files, then the reload that makes systemd forget them.
+        await e.run('systemctl', ['--user', 'disable', '--now', timer]);
+        await rm(location, { force: true });
+        await rm(servicePath(e), { force: true });
+        await e.run('systemctl', ['--user', 'daemon-reload']);
+        await forgetReplaced();
+        throw new Error(`systemd would not start the daily run, so its files were taken away again: ${said(enabled, 'systemctl')}.`);
       }
       break;
     }
@@ -865,9 +1019,10 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
       location = 'your crontab (see "crontab -l")';
       const kept = stripCronBlock(await currentCrontab(e));
       const written = `${[...kept, CRON_MARKER, ...cronLines(e, time), CRON_END].join('\n')}\n`;
+      // `crontab -` installs the whole new file or none of it, so a refusal changes nothing.
       const applied = await e.run('crontab', ['-'], written);
       if (applied.code !== 0) {
-        throw new Error(`The daily run could not be added to your crontab: ${applied.stderr.trim() || `crontab exited with ${applied.code}`}.`);
+        throw new Error(`The daily run could not be added to your crontab, so nothing was changed: ${said(applied, 'crontab')}.`);
       }
       break;
     }
@@ -890,7 +1045,7 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
         await rm(xmlPath, { force: true }).catch(() => {});
       }
       if (created.code !== 0) {
-        throw new Error(`Windows Task Scheduler refused the daily run: ${created.stderr.trim() || `schtasks exited with ${created.code}`}.`);
+        throw new Error(`Windows Task Scheduler refused the daily run: ${said(created, 'schtasks')}.`);
       }
       break;
     }
@@ -913,6 +1068,16 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
 /**
  * Take the daily run away. Idempotent: removing one that is not there is not an error, and
  * says so plainly rather than reporting a failure a parent would have to interpret.
+ *
+ * Every remover's answer is read (security review missed-processes). Before, only the
+ * crontab's was: a `schtasks /Delete` or a `launchctl bootout` that failed left the job in
+ * place while the settings recorded it gone, and the page told the parent the daily run was
+ * off. A scheduler that answers "there is no such job" has done what was asked. Any other
+ * refusal is reported in the scheduler's own words, and nothing else is touched — not the
+ * plist or the unit files, and not the record — so the settings go on saying what is still
+ * there. "No such job" is not recognised from the wording, which Windows translates: the
+ * scheduler is asked again the way status() asks it, or for systemd, whose manager may be the
+ * very thing that could not be reached, the unit file is looked for on disk.
  */
 export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOptions = {}): Promise<ScheduleStatus> {
   const e = resolveEnv(env);
@@ -934,28 +1099,51 @@ export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOp
   const mechanism = config?.schedule?.mechanism ?? (await chooseMechanism(env));
 
   switch (mechanism) {
-    case 'launchd':
-      await e.run('launchctl', ['bootout', `gui/${e.uid}/${LAUNCHD_LABEL}`]);
+    case 'launchd': {
+      const target = `gui/${e.uid}/${LAUNCHD_LABEL}`;
+      const unloaded = await e.run('launchctl', ['bootout', target]);
+      // "No such process" (3) or "Could not find specified service" (113) is a job that was
+      // not loaded; `print` answering is one that still is.
+      if (unloaded.code !== 0 && (await e.run('launchctl', ['print', target])).code === 0) {
+        throw new Error(`macOS would not stop the daily run, so it is still set up and nothing was changed: ${said(unloaded, 'launchctl')}.`);
+      }
+      // Only once it is unloaded: a plist left behind would load it again at the next login.
       await rm(plistPath(e), { force: true });
       break;
-    case 'systemd':
-      await e.run('systemctl', ['--user', 'disable', '--now', `${SYSTEMD_UNIT}.timer`]);
+    }
+    case 'systemd': {
+      const disabled = await e.run('systemctl', ['--user', 'disable', '--now', `${SYSTEMD_UNIT}.timer`]);
+      // A timer file that is not on disk is one systemd cannot load: its "does not exist" is
+      // the job already gone. With the file there, the refusal is real — most often a session
+      // with no user manager to reach, in which the timer is still enabled for the next one.
+      if (disabled.code !== 0 && existsSync(timerPath(e))) {
+        throw new Error(`systemd would not turn the daily run off, so it is still set up and nothing was changed: ${said(disabled, 'systemctl')}.`);
+      }
       await rm(timerPath(e), { force: true });
       await rm(servicePath(e), { force: true });
+      // Not checked: the timer is disabled and its files are gone, so a reload that failed
+      // leaves only a stopped unit in the running manager's memory, forgotten at its next start.
       await e.run('systemctl', ['--user', 'daemon-reload']);
       break;
+    }
     case 'cron': {
       const kept = stripCronBlock(await currentCrontab(e));
       // Their own lines go back exactly as they were; only ours are gone.
       const cleared = await e.run('crontab', ['-'], kept.length > 0 ? `${kept.join('\n')}\n` : '');
       if (cleared.code !== 0) {
-        throw new Error(`The daily run could not be removed from your crontab, so nothing was changed: ${cleared.stderr.trim() || `crontab exited with ${cleared.code}`}.`);
+        throw new Error(`The daily run could not be removed from your crontab, so nothing was changed: ${said(cleared, 'crontab')}.`);
       }
       break;
     }
-    case 'schtasks':
-      await e.run('schtasks', ['/Delete', '/TN', SCHTASKS_NAME, '/F']);
+    case 'schtasks': {
+      const deleted = await e.run('schtasks', ['/Delete', '/TN', SCHTASKS_NAME, '/F']);
+      // schtasks exits 1 for "cannot find the file specified" and for "access is denied"
+      // alike, in the language Windows is set to; /Query finding the task tells them apart.
+      if (deleted.code !== 0 && (await e.run('schtasks', ['/Query', '/TN', SCHTASKS_NAME])).code === 0) {
+        throw new Error(`Windows Task Scheduler would not remove the daily run, so it is still set up and nothing was changed: ${said(deleted, 'schtasks')}.`);
+      }
       break;
+    }
   }
 
   if (!config) {
@@ -1085,7 +1273,12 @@ async function currentCrontab(e: Resolved): Promise<string> {
   const existing = await e.run('crontab', ['-l']);
   if (existing.code === 0) return existing.stdout;
   if (/no crontab for/i.test(existing.stderr)) return '';
-  throw new Error(`Your crontab could not be read, so nothing was changed: ${existing.stderr.trim() || `crontab exited with ${existing.code}`}.`);
+  throw new Error(`Your crontab could not be read, so nothing was changed: ${said(existing, 'crontab')}.`);
+}
+
+/** A scheduler's refusal in its own words, or its exit status when it gave none. */
+function said(result: CommandResult, program: string): string {
+  return result.stderr.trim() || `${program} exited with ${result.code}`;
 }
 
 /**

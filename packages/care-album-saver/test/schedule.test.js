@@ -256,7 +256,9 @@ test('on Linux without systemd it falls back to cron, and keeps the crontab that
   const state = await schedule.install('19:45', env);
   assert.equal(state.mechanism, 'cron');
   assert.ok(crontab.includes(theirs.trim()), 'their own job must survive untouched');
-  assert.match(crontab, /^45 19 \* \* \* "\/usr\/bin\/node" "\/opt\/bw\/cli\.js" run --scheduled >> ".*daily\.log" 2>&1$/m);
+  // Single quotes, since cron hands the line to /bin/sh (security review processes-1; the
+  // awkward paths are in schedule-quoting-and-failures.test.js).
+  assert.match(crontab, /^45 19 \* \* \* '\/usr\/bin\/node' '\/opt\/bw\/cli\.js' run --scheduled >> '.*daily\.log' 2>&1$/m);
   assert.equal(crontab.match(/care-album-saver: the daily run/g).length, 1);
 
   // Changing the time rewrites the one block rather than adding a second.
