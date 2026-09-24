@@ -471,3 +471,105 @@ test('a crontab that refuses the new block keeps the old one, and the record tha
   assert.equal(crontab, before, 'the seven o\'clock block is still there');
   assert.equal((await loadConfig()).schedule.time, '19:00', 'and so is its record');
 });
+
+// ---------------------------------------------------------------- missed-processes: removing
+
+test('launchd: a job that will not unload is reported, and its plist and record are kept', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', macEnv(home, recorder().run));
+
+  const os = recorder(({ args }) => (args[0] === 'bootout' ? { code: 5, stderr: 'Boot-out failed: 5: Input/output error' } : {}));
+  await assert.rejects(
+    () => schedule.remove(macEnv(home, os.run)),
+    /macOS would not stop the daily run, so it is still set up and nothing was changed: Boot-out failed: 5: Input\/output error\./,
+  );
+  assert.ok(await exists(plistOf(home)), 'the plist is still there, as the job is');
+  assert.equal((await loadConfig()).schedule.time, '19:00', 'and the settings still say so');
+  assert.deepEqual(os.said(), ['launchctl bootout gui/501/com.care-album-saver.daily', 'launchctl print gui/501/com.care-album-saver.daily']);
+});
+
+test('launchd: a job that was not loaded is already off, and its plist still goes', async () => {
+  for (const [code, stderr] of [[3, 'Boot-out failed: 3: No such process'], [113, 'Could not find specified service']]) {
+    await freshConfigDir();
+    const home = await freshHome();
+    await schedule.install('19:00', macEnv(home, recorder().run));
+    const os = recorder(({ args }) => (args[0] === 'bootout' ? { code, stderr } : args[0] === 'print' ? { code: 113 } : {}));
+    const state = await schedule.remove(macEnv(home, os.run));
+    assert.equal(state.installed, false, stderr);
+    assert.equal(await exists(plistOf(home)), false, 'a plist left behind would load it at the next login');
+    assert.equal((await loadConfig()).schedule, null);
+  }
+});
+
+test('launchd: with the settings unreadable, a refusal still leaves them exactly as they were', async () => {
+  const dir = await freshConfigDir();
+  const home = await freshHome();
+  await writeFile(configPath(), '{ this is not json');
+  const os = recorder(({ args }) => (args[0] === 'bootout' ? { code: 1, stderr: 'Boot-out failed: 1: Operation not permitted' } : {}));
+  await assert.rejects(() => schedule.remove(macEnv(home, os.run)), /Operation not permitted/);
+  assert.equal(await readFile(join(dir, 'config.json'), 'utf8'), '{ this is not json');
+});
+
+test('systemd: a timer that will not disable is reported, and its files and record are kept', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', linuxEnv(home, recorder().run));
+
+  const os = recorder(({ args }) => (args[1] === 'disable' ? { code: 1, stderr: 'Failed to connect to bus: No medium found' } : {}));
+  await assert.rejects(
+    () => schedule.remove(linuxEnv(home, os.run)),
+    /systemd would not turn the daily run off, so it is still set up and nothing was changed: Failed to connect to bus: No medium found\./,
+  );
+  assert.ok(await exists(join(unitDir(home), 'care-album-saver.timer')));
+  assert.ok(await exists(join(unitDir(home), 'care-album-saver.service')));
+  assert.equal((await loadConfig()).schedule.time, '19:00');
+  assert.ok(!os.said().includes('systemctl --user daemon-reload'), 'nothing after the refusal');
+});
+
+test('systemd: a timer whose file is already gone is already off', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', linuxEnv(home, recorder().run));
+  await rm(join(unitDir(home), 'care-album-saver.timer'));
+
+  const os = recorder(({ args }) => (args[1] === 'disable' ? { code: 1, stderr: 'Failed to disable unit: Unit file care-album-saver.timer does not exist.' } : {}));
+  assert.equal((await schedule.remove(linuxEnv(home, os.run))).installed, false);
+  assert.equal(await exists(join(unitDir(home), 'care-album-saver.service')), false, 'the service goes with it');
+  assert.equal((await loadConfig()).schedule, null);
+});
+
+const winEnv = (home, runner) => ({
+  platform: 'win32',
+  home,
+  run: runner,
+  nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+  cliPath: 'C:\\Users\\alex\\bw\\cli.js',
+  uid: 0,
+});
+
+test('Task Scheduler: a task that will not delete is reported, and its record is kept', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', winEnv(home, recorder().run));
+
+  const os = recorder(({ args }) => (args[0] === '/Delete' ? { code: 1, stderr: 'ERROR: Access is denied.\r\n' } : {}));
+  await assert.rejects(
+    () => schedule.remove(winEnv(home, os.run)),
+    /Windows Task Scheduler would not remove the daily run, so it is still set up and nothing was changed: ERROR: Access is denied\./,
+  );
+  assert.equal((await loadConfig()).schedule.time, '19:00');
+  assert.deepEqual(os.said(), ['schtasks /Delete /TN Care Album Saver daily /F', 'schtasks /Query /TN Care Album Saver daily']);
+});
+
+test('Task Scheduler: a task that is not there is already off, in any language', async () => {
+  await freshConfigDir();
+  const home = await freshHome();
+  await schedule.install('19:00', winEnv(home, recorder().run));
+
+  // Exit 1 and a translated message, exactly as for "access is denied": /Query tells them apart.
+  const gone = { code: 1, stderr: 'FEHLER: Das System kann die angegebene Datei nicht finden.' };
+  const os = recorder(({ args }) => (args[0] === '/Delete' || args[0] === '/Query' ? gone : {}));
+  assert.equal((await schedule.remove(winEnv(home, os.run))).installed, false);
+  assert.equal((await loadConfig()).schedule, null);
+});

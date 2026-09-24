@@ -1068,6 +1068,16 @@ export async function install(timeInput: string, env: ScheduleEnvironment = {}, 
 /**
  * Take the daily run away. Idempotent: removing one that is not there is not an error, and
  * says so plainly rather than reporting a failure a parent would have to interpret.
+ *
+ * Every remover's answer is read (security review missed-processes). Before, only the
+ * crontab's was: a `schtasks /Delete` or a `launchctl bootout` that failed left the job in
+ * place while the settings recorded it gone, and the page told the parent the daily run was
+ * off. A scheduler that answers "there is no such job" has done what was asked. Any other
+ * refusal is reported in the scheduler's own words, and nothing else is touched — not the
+ * plist or the unit files, and not the record — so the settings go on saying what is still
+ * there. "No such job" is not recognised from the wording, which Windows translates: the
+ * scheduler is asked again the way status() asks it, or for systemd, whose manager may be the
+ * very thing that could not be reached, the unit file is looked for on disk.
  */
 export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOptions = {}): Promise<ScheduleStatus> {
   const e = resolveEnv(env);
@@ -1089,28 +1099,51 @@ export async function remove(env: ScheduleEnvironment = {}, options: OwnershipOp
   const mechanism = config?.schedule?.mechanism ?? (await chooseMechanism(env));
 
   switch (mechanism) {
-    case 'launchd':
-      await e.run('launchctl', ['bootout', `gui/${e.uid}/${LAUNCHD_LABEL}`]);
+    case 'launchd': {
+      const target = `gui/${e.uid}/${LAUNCHD_LABEL}`;
+      const unloaded = await e.run('launchctl', ['bootout', target]);
+      // "No such process" (3) or "Could not find specified service" (113) is a job that was
+      // not loaded; `print` answering is one that still is.
+      if (unloaded.code !== 0 && (await e.run('launchctl', ['print', target])).code === 0) {
+        throw new Error(`macOS would not stop the daily run, so it is still set up and nothing was changed: ${said(unloaded, 'launchctl')}.`);
+      }
+      // Only once it is unloaded: a plist left behind would load it again at the next login.
       await rm(plistPath(e), { force: true });
       break;
-    case 'systemd':
-      await e.run('systemctl', ['--user', 'disable', '--now', `${SYSTEMD_UNIT}.timer`]);
+    }
+    case 'systemd': {
+      const disabled = await e.run('systemctl', ['--user', 'disable', '--now', `${SYSTEMD_UNIT}.timer`]);
+      // A timer file that is not on disk is one systemd cannot load: its "does not exist" is
+      // the job already gone. With the file there, the refusal is real — most often a session
+      // with no user manager to reach, in which the timer is still enabled for the next one.
+      if (disabled.code !== 0 && existsSync(timerPath(e))) {
+        throw new Error(`systemd would not turn the daily run off, so it is still set up and nothing was changed: ${said(disabled, 'systemctl')}.`);
+      }
       await rm(timerPath(e), { force: true });
       await rm(servicePath(e), { force: true });
+      // Not checked: the timer is disabled and its files are gone, so a reload that failed
+      // leaves only a stopped unit in the running manager's memory, forgotten at its next start.
       await e.run('systemctl', ['--user', 'daemon-reload']);
       break;
+    }
     case 'cron': {
       const kept = stripCronBlock(await currentCrontab(e));
       // Their own lines go back exactly as they were; only ours are gone.
       const cleared = await e.run('crontab', ['-'], kept.length > 0 ? `${kept.join('\n')}\n` : '');
       if (cleared.code !== 0) {
-        throw new Error(`The daily run could not be removed from your crontab, so nothing was changed: ${cleared.stderr.trim() || `crontab exited with ${cleared.code}`}.`);
+        throw new Error(`The daily run could not be removed from your crontab, so nothing was changed: ${said(cleared, 'crontab')}.`);
       }
       break;
     }
-    case 'schtasks':
-      await e.run('schtasks', ['/Delete', '/TN', SCHTASKS_NAME, '/F']);
+    case 'schtasks': {
+      const deleted = await e.run('schtasks', ['/Delete', '/TN', SCHTASKS_NAME, '/F']);
+      // schtasks exits 1 for "cannot find the file specified" and for "access is denied"
+      // alike, in the language Windows is set to; /Query finding the task tells them apart.
+      if (deleted.code !== 0 && (await e.run('schtasks', ['/Query', '/TN', SCHTASKS_NAME])).code === 0) {
+        throw new Error(`Windows Task Scheduler would not remove the daily run, so it is still set up and nothing was changed: ${said(deleted, 'schtasks')}.`);
+      }
       break;
+    }
   }
 
   if (!config) {
