@@ -13,6 +13,7 @@ import { startWebUi } from './web/server.js';
 import { formatReport, verify } from './verify.js';
 import { auditArchive, checkChildren, findDuplicates, removeDuplicates, repairManifest } from './maintenance.js';
 import * as schedule from './schedule.js';
+import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from './environment.js';
 import { addToPhotos, photosStatus, photosSupported, PHOTOS_FOLDER } from './photos.js';
 import type { Config } from './config.js';
 
@@ -107,6 +108,7 @@ async function main(): Promise<number> {
       'no-name-tag': { type: 'boolean' },
       child: { type: 'string', multiple: true },
       port: { type: 'string' },
+      'from-dev': { type: 'boolean', default: false },
       'base-url': { type: 'string' },
       deep: { type: 'boolean' },
       at: { type: 'string' },
@@ -144,6 +146,10 @@ async function main(): Promise<number> {
     case 'schedule': {
       const what = positionals[1];
       if (what === 'on') {
+        if (environment() === 'development' && !values['from-dev']) {
+          stdout.write(`  ${DEVELOPMENT_SCHEDULE_REFUSAL}\n  (To use this copy anyway, add --from-dev.)\n`);
+          return 1;
+        }
         // The default is the evening: the nursery day is over, the photos for the day are
         // posted, and the computer is more likely to be on than at three in the morning.
         const result = await schedule.install(values.at ?? '19:00');
@@ -242,7 +248,13 @@ async function main(): Promise<number> {
     }
 
     case 'setup': {
-      const ui = await startWebUi({ port: values.port ? Number(values.port) : 0, baseUrl });
+      // A development copy says so across the top of the page when it is pointed at real
+      // settings and photos, so it is never mistaken for production.
+      const banner =
+        environment() === 'development' && !baseUrl
+          ? 'Development copy — this page is using your real settings, session and photos. Production is the copy scripts/deploy.js installs.'
+          : undefined;
+      const ui = await startWebUi({ port: values.port ? Number(values.port) : 0, baseUrl, banner });
       stdout.write(
         `\n  Setup assistant is ready.\n\n  Open this link in your browser:\n\n    ${ui.url}\n\n` +
           `  This page is only reachable from this computer.\n  Press Ctrl+C when you are finished.\n\n`,
