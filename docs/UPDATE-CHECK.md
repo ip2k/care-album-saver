@@ -74,6 +74,12 @@ built each version (provenance). Before the first automated release:
 1. A trusted publisher is configured per package, so the package must exist first: publish
    the first version by hand (`pnpm build`, copy `README.md` into
    `packages/care-album-saver/`, then `npm publish --access public` there).
+   **Before you do, set your npm account's email to one you are content to publish.** npm
+   writes the publishing account's email into that version's public record (`_npmUser`), and
+   writes every owner's email into every version's `maintainers` — the automated releases'
+   too — and a version's record cannot be edited, only unpublished, within 72 hours. Publish
+   the hand-made version as a pre-release (for example `0.0.0-bootstrap.0`) so that it can be
+   unpublished once an automated release exists.
 2. On npmjs.com, the package's **Settings → Trusted Publisher → GitHub Actions**:
    organization or user `ip2k`, repository `care-album-saver`, workflow `release.yml`,
    environment `npm`.
