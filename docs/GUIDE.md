@@ -89,7 +89,8 @@ If it worked, the step turns green and your children appear, each with a tick bo
 > only back to Brightwheel. It is not your password, and it expires.
 >
 > **If you ever think it has leaked**, sign out of Brightwheel everywhere from their
-> website. That makes the old value useless immediately.
+> website, and change your password. That should end the old value; Brightwheel does not
+> document how quickly.
 
 ---
 
