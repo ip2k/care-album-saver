@@ -1,6 +1,7 @@
 import { Secret } from './secrets.js';
 import { inspectCookiePaste } from './paste.js';
 import { acceptableUserAgent } from './api/identity.js';
+import { DEFAULT_BASE_URL } from './api/client.js';
 
 /** RFC 6265 cookie-octet: what a cookie value may contain, and all a saved one may hold. */
 const COOKIE_OCTETS = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/;
@@ -186,9 +187,14 @@ export async function loadSession(): Promise<{
     // environment variables leak into process listings, shell history and crash dumps.
     // BRIGHTWHEEL_SESSION is the pre-rename spelling, still read so that an existing
     // container or CI job does not stop working on an upgrade.
-    const value = process.env.CARE_ALBUM_SESSION || process.env.BRIGHTWHEEL_SESSION || '';
-    if (!COOKIE_OCTETS.test(value)) return null;
-    return { session: new Secret(value), savedAt: new Date(), email: null, userAgent: null };
+    //
+    // Read the way the paste box reads a paste (security review, outbound's verifier): the
+    // variable was taken as the bare value, so `_brightwheel_v2=…`, the form a person copies
+    // from a Cookie header, went out as `_brightwheel_v2=_brightwheel_v2=…` and was refused.
+    // Whatever inspectCookiePaste would not accept is no session, as before.
+    const session = normaliseCookieInput(process.env.CARE_ALBUM_SESSION || process.env.BRIGHTWHEEL_SESSION || '');
+    if (!session) return null;
+    return { session, savedAt: new Date(), email: null, userAgent: null };
   }
   let stored: StoredSession | null;
   try {
@@ -252,5 +258,59 @@ export async function saveSession(cookie: Secret, email: string | null, userAgen
 export function normaliseCookieInput(input: string): Secret | null {
   const verdict = inspectCookiePaste(input);
   return verdict.ok ? new Secret(verdict.value) : null;
+}
+
+/** 127.0.0.0/8, ::1 and localhost: this computer, which a session sent in the clear never leaves. */
+function isLoopback(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '[::1]' || /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(hostname);
+}
+
+/**
+ * Refuse an API address the saved session must not be sent to (security review outbound-13).
+ *
+ * `--base-url` points the tool at another API, and the session cookie — an account-takeover
+ * credential — goes with every request. It went to whatever was named: another origin, or
+ * plain `http://`, where anyone on the network between reads it. So it must be `https:`, or
+ * `http:` to this computer itself, which is what the tests' mock server is. Another https
+ * address is still allowed — naming one is a deliberate act, and --help says what it sends.
+ * Returns the address unchanged.
+ */
+export function checkBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    // Not echoed: what was typed there could be anything, a pasted session included.
+    throw new Error('That API address is not a web address, so nothing was sent to it.');
+  }
+  if (url.protocol === 'https:' || (url.protocol === 'http:' && isLoopback(url.hostname))) return value;
+  throw new Error(
+    `Your Brightwheel session is sent only over https, or to this computer itself, and ${url.protocol}//${url.host} is ` +
+      'neither, so nothing was sent to it.',
+  );
+}
+
+/**
+ * Under test, refuse to send anything to the real Brightwheel API (the review's docs-14).
+ *
+ * scripts/test-env.js sets CARE_ALBUM_NO_LIVE_API, and every test that reaches an API names
+ * the mock with --base-url or baseUrl. One that forgot would otherwise send a session — a
+ * mock's, or with a stray CARE_ALBUM_SESSION a real one — to the live service. The variable
+ * can only stop a request, never redirect one, which is why it is a refusal and not a default
+ * address.
+ */
+export function refuseLiveApiUnderTest(baseUrl: string | undefined): void {
+  if (!process.env.CARE_ALBUM_NO_LIVE_API) return;
+  let host: string;
+  try {
+    host = new URL(baseUrl ?? DEFAULT_BASE_URL).hostname;
+  } catch {
+    return;
+  }
+  if (host === new URL(DEFAULT_BASE_URL).hostname) {
+    throw new Error(
+      'CARE_ALBUM_NO_LIVE_API is set — this is a test — and nothing named another API (--base-url), so Brightwheel itself was not contacted.',
+    );
+  }
 }
 

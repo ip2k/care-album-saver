@@ -59,6 +59,14 @@ process.env.CARE_ALBUM_NO_UPDATE_CHECK = '1';
 // the real notifier while this is set, and a test of notify itself passes its own runner.
 process.env.CARE_ALBUM_NO_NOTIFY = '1';
 
+// Every test that reaches an API names the mock (--base-url, or baseUrl). One that forgot
+// would send a session to the real Brightwheel — the mock's, or with a stray
+// CARE_ALBUM_SESSION in the shell a real one. While this is set, the command line and
+// `verify` refuse to send anything to Brightwheel's own address (refuseLiveApiUnderTest in
+// src/config.ts). It can only stop a request, never send one elsewhere. Spawned commands
+// inherit it with the rest of the environment.
+process.env.CARE_ALBUM_NO_LIVE_API = '1';
+
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
  *

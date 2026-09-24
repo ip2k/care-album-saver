@@ -5,7 +5,17 @@ import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { stdin, stdout } from 'node:process';
 import { BrightwheelClient } from './api/client.js';
-import { ConfigUnusableError, DEFAULT_CONFIG, loadConfig, loadSession, saveConfig, saveSession, SessionUnusableError } from './config.js';
+import {
+  checkBaseUrl,
+  ConfigUnusableError,
+  DEFAULT_CONFIG,
+  loadConfig,
+  loadSession,
+  refuseLiveApiUnderTest,
+  saveConfig,
+  saveSession,
+  SessionUnusableError,
+} from './config.js';
 import { configDir, legacyConfigDir, configPath, sessionPath } from './paths.js';
 import { Secret, scrub } from './secrets.js';
 import { inspectCookiePaste } from './paste.js';
@@ -53,7 +63,9 @@ Options
                      settings are not changed)
   --at <HH:MM>       Time of day for the daily run (24-hour clock)
   --port <number>    Port for the setup assistant
-  --base-url <url>   Point at a different API (used by the tests)
+  --base-url <url>   Talk to this API instead of Brightwheel's (the tests' mock). Your
+                     saved session is sent to it, so it must be https, or http to
+                     this computer itself
   --help             Show this message
 
 Your session is stored in your user config folder, never in this project folder:
@@ -159,6 +171,24 @@ async function main(): Promise<number> {
   }
 
   const baseUrl = values['base-url'];
+  // Refused before anything is read, let alone sent (security review outbound-13).
+  if (baseUrl !== undefined) {
+    try {
+      checkBaseUrl(baseUrl);
+    } catch (error) {
+      stdout.write(`  ${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+  }
+  /**
+   * The API to hand a client: --base-url, or Brightwheel's own — except in a test, which
+   * must name one (scripts/test-env.js; the review's docs-14). Asked where a client is made,
+   * so that the commands a test runs without touching the API are unaffected.
+   */
+  const api = (): string | undefined => {
+    refuseLiveApiUnderTest(baseUrl);
+    return baseUrl;
+  };
   let config: Config;
   // Why the settings could not be read, for the three commands that still run without them.
   let configProblem: string | null = null;
@@ -268,7 +298,7 @@ async function main(): Promise<number> {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
-      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
+      const client = new BrightwheelClient({ session: session.session, baseUrl: api(), userAgent: session.userAgent });
       const check = await checkChildren(client, config);
       stdout.write(`\n  ${check.summary}\n`);
       if (check.notIncluded.length > 0) {
@@ -353,7 +383,7 @@ async function main(): Promise<number> {
         environment() === 'development' && !baseUrl
           ? 'Development copy — this page is using your real settings, session and photos. Production is the copy scripts/deploy.js installs.'
           : undefined;
-      const ui = await startWebUi({ port: values.port ? Number(values.port) : 0, baseUrl, banner });
+      const ui = await startWebUi({ port: values.port ? Number(values.port) : 0, baseUrl: api(), banner });
       stdout.write(
         `\n  Setup assistant is ready.\n\n  Open this link in your browser:\n\n    ${ui.url}\n\n` +
           `  This page is only reachable from this computer.\n  Press Ctrl+C when you are finished.\n\n`,
@@ -408,7 +438,7 @@ async function main(): Promise<number> {
       for (const note of verdict.notes) stdout.write(`  (${note})\n`);
       if (verdict.level === 'warn') stdout.write(`  ${verdict.message}\n`);
       const secret = new Secret(verdict.value);
-      const client = new BrightwheelClient({ session: secret, baseUrl });
+      const client = new BrightwheelClient({ session: secret, baseUrl: api() });
       const check = await client.verifySession();
       if (!check.ok) {
         stdout.write(`\n  Could not sign in: ${scrub(check.reason)}\n`);
@@ -430,7 +460,7 @@ async function main(): Promise<number> {
         stdout.write('  Not signed in. Run: care-album-saver login\n');
         return 1;
       }
-      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
+      const client = new BrightwheelClient({ session: session.session, baseUrl: api(), userAgent: session.userAgent });
       const me = await client.me();
       const children = await client.students(me.id);
       const width = Math.max(...children.map((c) => c.fullName.length));
@@ -467,7 +497,7 @@ async function main(): Promise<number> {
       // The shape and length only — enough to tell "wrong row" from "expired", never the value.
       const shape = inspectCookiePaste(session.session.expose());
       stdout.write(`  Session shape: ${shape.kind} (${session.session.length} characters)\n`);
-      const client = new BrightwheelClient({ session: session.session, baseUrl, userAgent: session.userAgent });
+      const client = new BrightwheelClient({ session: session.session, baseUrl: api(), userAgent: session.userAgent });
       const check = await client.verifySession();
       stdout.write(`  Session works: ${check.ok ? 'yes' : `no — ${scrub(check.reason)}`}\n`);
       let exif = 'no (dates are saved in .json files next to each photo)';
@@ -502,7 +532,7 @@ async function main(): Promise<number> {
         return 1;
       }
       try {
-        const report = await verify(session.session, { baseUrl, deep: values.deep, userAgent: session.userAgent });
+        const report = await verify(session.session, { baseUrl: api(), deep: values.deep, userAgent: session.userAgent });
         stdout.write(formatReport(report));
         stdout.write('  This output is safe to share.\n\n');
         return report.sessionValid ? 0 : 1;
@@ -554,7 +584,7 @@ async function main(): Promise<number> {
       const client = new BrightwheelClient({
         session: session.session,
         userAgent: session.userAgent,
-        baseUrl,
+        baseUrl: api(),
         delayMs: config.delayMs,
       });
       if (values.child?.length) {
