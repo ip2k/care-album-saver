@@ -103,15 +103,18 @@ function crossSite(req: IncomingMessage, port: number): boolean {
  *
  * The x-setup-token header whenever there is one, which is every request the page makes with
  * fetch. The address only where a header cannot be sent: the page itself, opened from the link
- * the terminal printed, and /photo, which an <img> or a <video> asks for. Never on /api/*,
- * where a token in the address would be one more copy of it in history and logs for nothing:
- * such a request is refused as if it carried no token at all.
+ * the terminal printed, and /photo, which an <img> or a <video> asks for, and only for a GET
+ * of exactly those two paths. Never anywhere else, /api/* included, where a token in the
+ * address would be one more copy of it in history and logs for nothing: such a request is
+ * refused as if it carried no token at all.
  */
 function providedToken(req: IncomingMessage, url: URL): string {
   const header = req.headers['x-setup-token'];
   if (typeof header === 'string') return header;
-  if (url.pathname.startsWith('/api/')) return '';
-  return url.searchParams.get('token') ?? '';
+  // An allowlist, not a blocklist of /api/: a route added later, outside /api/, must not start
+  // taking the token from the address without anyone deciding it should.
+  const addressAllowed = req.method === 'GET' && (url.pathname === '/' || url.pathname === '/photo');
+  return addressAllowed ? (url.searchParams.get('token') ?? '') : '';
 }
 
 /**
@@ -494,6 +497,11 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     'The archive is being checked or tidied up on the Maintenance page right now. Nothing was started. ' +
     'Wait for that to finish, then try again.';
 
+  // The port this server listens on, set once listen() has bound it, before any request can
+  // arrive. Read from here rather than from server.address(), which is null once close() has
+  // begun, while a request already on an open connection can still reach the handler.
+  let port = 0;
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Nothing here may ever be cached: the pages list children's names and photos.
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -503,21 +511,29 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
     // No script may run in anything but the page, which sets its own below.
     res.setHeader('Content-Security-Policy', contentSecurityPolicy());
 
-    const port = (server.address() as AddressInfo).port;
-    if (!hostAllowed(req.headers.host, port)) {
-      res.writeHead(403, { 'content-type': 'text/plain' });
-      res.end('Blocked: unexpected Host header. This page is only reachable from this computer.');
-      return;
-    }
-    if (crossSite(req, port)) {
-      res.writeHead(403, { 'content-type': 'text/plain' }).end('Blocked: cross-site request.');
-      return;
-    }
+    // The gate, in its own try: this handler is async, so anything it throws outside a try is
+    // an unhandled rejection, which ends the process.
+    let url: URL;
+    try {
+      if (!hostAllowed(req.headers.host, port)) {
+        res.writeHead(403, { 'content-type': 'text/plain' });
+        res.end('Blocked: unexpected Host header. This page is only reachable from this computer.');
+        return;
+      }
+      if (crossSite(req, port)) {
+        res.writeHead(403, { 'content-type': 'text/plain' }).end('Blocked: cross-site request.');
+        return;
+      }
 
-    const url = new URL(req.url ?? '/', `http://127.0.0.1`);
-    if (!tokenMatches(providedToken(req, url), token)) {
-      res.writeHead(403, { 'content-type': 'text/html' });
-      res.end('<h1>Wrong or missing setup link</h1><p>Use the exact link printed in your terminal.</p>');
+      url = new URL(req.url ?? '/', `http://127.0.0.1`);
+      if (!tokenMatches(providedToken(req, url), token)) {
+        res.writeHead(403, { 'content-type': 'text/html' });
+        res.end('<h1>Wrong or missing setup link</h1><p>Use the exact link printed in your terminal.</p>');
+        return;
+      }
+    } catch {
+      if (!res.headersSent) res.writeHead(400, { 'content-type': 'text/plain' });
+      res.end('Bad request.');
       return;
     }
 
@@ -1219,8 +1235,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
   });
 
   await new Promise<void>((resolve) => server.listen(options.port ?? 0, '127.0.0.1', resolve));
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
+  port = (server.address() as AddressInfo).port;
 
   const stop = async (): Promise<void> => {
     if (!current) return;
