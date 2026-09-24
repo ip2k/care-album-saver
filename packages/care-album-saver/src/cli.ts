@@ -40,11 +40,11 @@ Looking after the archive
     --remove                       ...and offer to delete the extra copies
   care-album-saver doctor       Check that everything is working
   care-album-saver verify       Check the Brightwheel API shape (read-only, no photos)
-    --deep                         ...and read three photos to find the real capture time
+    --deep                         ...and read three photos to see whether they carry their own capture time
   care-album-saver where        Show where files are kept
 
 Options
-  --dir <path>       Where to save photos (default: ~/Brightwheel Photos)
+  --dir <path>       Where to save photos (default: ~/Care Album Photos)
   --all              Re-check every photo, not just new ones
   --no-name-tag      Do not write any name into the photo metadata
   --child <id|name>  Only this child, for this run (repeat for several; your saved

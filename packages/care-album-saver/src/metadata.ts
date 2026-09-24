@@ -78,9 +78,10 @@ function quickTimeUtc(when: Date): string {
  *   IPTC DateCreated        - the legacy pair that older galleries still read first
  *   XMP-photoshop:DateCreated - what Immich and several web galleries prefer
  *
- * Every date is the *local* capture time; the XMP and IPTC forms carry the offset too. A
- * value in UTC would be equally correct for an application that reads the zone and off by
- * hours — sometimes a day — for the many that do not.
+ * Every date is the *local* time the photo was posted, the only date there is; the XMP and
+ * IPTC forms carry the offset too. A value in UTC would be equally correct for an
+ * application that reads the zone and off by hours — sometimes a day — for the many that
+ * do not.
  *
  * For the child's name:
  *   XMP-iptcExt:PersonInImage - the standards-track "who is in this picture" field
@@ -219,8 +220,11 @@ export function buildTags(input: MetadataInput): TagSet {
   return input.activity.kind === 'video' ? videoTags(input) : imageTags(input);
 }
 
-/** The JSON sidecar. Always written — it needs no external tool and never fails. */
-export async function writeJsonSidecar(input: MetadataInput): Promise<void> {
+/**
+ * The JSON sidecar. Always written; it needs no external tool, and a write error fails the
+ * item like any other.
+ */
+async function writeJsonSidecar(input: MetadataInput): Promise<void> {
   const { activity, student } = input;
   const sidecar = {
     source: 'brightwheel',

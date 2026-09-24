@@ -12,14 +12,17 @@ COPY packages ./packages
 RUN pnpm build && pnpm prune --prod
 
 FROM node:22-slim AS runtime
-# ExifTool from the distro: smaller than the vendored npm package, patched by the distro's
-# security updates, and no native postinstall step.
+# This line is here for Perl, not for the distro's ExifTool. metadata.ts and verify.ts only
+# ever import `exiftool-vendored`, whose bundled ExifTool is a Perl script that it runs with
+# /usr/bin/perl — so the package's own /usr/bin/exiftool is never run. But node:22-slim
+# ships only perl-base, which has no Time::Local, and without that module ExifTool skips
+# the QuickTime movie, track and media dates of every video: it prints a warning, reports
+# the file as updated and exits 0, so the tool believes the dates are in when the container
+# still carries the encoder's. libimage-exiftool-perl pulls in full perl, which has it.
 #
-# It is NOT currently reached: metadata.ts imports the `exiftool-vendored` package, which
-# carries its own binary, so a run in this image embeds metadata only if that optional
-# dependency installed. Kept because the alternative — dropping it — would leave the image
-# with no ExifTool at all if the vendored package is ever made non-optional or fails to
-# install, and because a system-ExifTool path is the obvious way to slim this image later.
+# A slimmer alternative is `perl` alone (perl-modules-5.36 is what carries Time::Local). If
+# that is ever tried, write the QuickTime dates into an MP4 inside the built image and read
+# them back before trusting it; a run that merely succeeds proves nothing here.
 RUN apt-get update && apt-get install -y --no-install-recommends libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

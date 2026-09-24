@@ -86,7 +86,7 @@ export const PAGE = String.raw`<!doctype html>
     --backdrop: color-mix(in srgb, var(--rp-text) 45%, transparent);
     --radius: 12px;
     --radius-sm: 8px;
-    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
     --shadow: 0 1px 2px color-mix(in srgb, var(--rp-text) 8%, transparent);
 
     /* The photo viewer is dark in both modes, so it takes main Rosé Pine's values whatever
@@ -404,7 +404,7 @@ export const PAGE = String.raw`<!doctype html>
   .field-hint { color: var(--text-muted); font-size: .875rem; margin: var(--s2) 0 0; }
   .field-title { margin: 0; font-size: 1rem; }
 
-  textarea, input[type=text], input[type=email], input[type=password], select {
+  textarea, input[type=text], select {
     width: 100%; padding: .6875rem .8125rem;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
@@ -443,8 +443,9 @@ export const PAGE = String.raw`<!doctype html>
   /* What the hidden attribute means, everywhere. Without this, any rule that sets display —
      .run-actions is flex — quietly beats it, and a control the script hid stays on screen. */
   [hidden] { display: none !important; }
-  /* Only ever shown by scripts/demo.js, so that a page full of invented children is never
-     mistaken for the real thing. */
+  /* Shown across the top by scripts/demo.js, whose children are invented, and by a
+     development copy of the CLI pointed at real settings (cli.ts), so that neither is ever
+     mistaken for the production page. */
   .demo-ribbon {
     background: var(--warn-tint); color: var(--warn-ink); border-bottom: 1px solid var(--warn);
     padding: var(--s2) var(--s4); text-align: center; font-weight: 600; font-size: .875rem;
@@ -536,8 +537,6 @@ export const PAGE = String.raw`<!doctype html>
   }
   button.linkish:hover:not(:disabled) { background: none; color: var(--accent-hover); }
   .photos-links { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s2); margin: var(--s4) 0 0; }
-  /* The Photos card has no step number, so nothing to indent under. */
-  #card-photos .hint, #card-photos .body { margin-left: 0; }
   .warn-text { color: var(--warn-ink); font-weight: 600; }
 
   .msg { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--radius-sm); font-size: .9375rem; border: 1px solid transparent; }
@@ -622,14 +621,6 @@ export const PAGE = String.raw`<!doctype html>
   .stat .n { font-size: 1.625rem; font-weight: 650; letter-spacing: -.02em; display: block; margin-bottom: var(--s2); }
   .stat .l { font-size: .875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
 
-  .privacy {
-    background: var(--surface); border: 1px solid var(--border);
-    border-left: 4px solid var(--ok);
-    border-radius: var(--radius); padding: var(--s5); margin-top: var(--s5);
-  }
-  .privacy h2 { font-size: 1rem; margin: 0 0 var(--s2); }
-  .privacy p { margin: 0 0 var(--s2); font-size: .9375rem; color: var(--text-muted); }
-  .privacy p:last-child { margin-bottom: 0; }
   .path {
     font-family: ui-monospace, Menlo, monospace; font-size: .875rem;
     background: var(--surface-sunken); padding: .125rem .4rem; border-radius: 5px;
@@ -651,7 +642,7 @@ ${COOKIE_HELP_CSS}
 </head>
 <body>
 <!--__BANNER__-->
-<a class="skip" href="#main">Skip to the setup steps</a>
+<a class="skip" href="#main">Skip to the main content</a>
 <div class="wrap">
   <header>
     <h1>Care Album Saver</h1>
@@ -712,8 +703,6 @@ ${COOKIE_HELP_CSS}
         <button class="linkish" id="btn-updates-yes" type="button">Yes, check daily</button> <span aria-hidden="true">&middot;</span>
         <button class="linkish" id="btn-updates-no" type="button">No, thanks</button></li>
     </ul>
-    </div>
-    <div id="dash-msg" role="status" aria-live="polite"></div>
   </section>
 
   <div id="setup-flow">
@@ -726,7 +715,7 @@ ${COOKIE_HELP_CSS}
         </div>
         <p class="hint" id="connect-hint">This tool never sees your password. You sign in on Brightwheel&rsquo;s own website, then copy one value across.</p>
         <div class="body">
-          <p class="sr-only" id="connect-state">Step 1 of 3. Not started.</p>
+          <p class="sr-only" id="connect-state">Step 1 of 4. Not started.</p>
           <ol class="howto" id="howto"></ol>
           ${COOKIE_HELP}
           <p class="why-ask first-run">
@@ -754,7 +743,7 @@ ${COOKIE_HELP_CSS}
         </div>
         <p class="hint">Tick the children whose photos you want. Brightwheel only ever shows this tool the children on your own account. Each setting here is saved the moment you change it.</p>
         <div class="body">
-          <p class="sr-only" id="children-state">Step 2 of 3. Waiting for step 1.</p>
+          <p class="sr-only" id="children-state">Step 2 of 4. Waiting for step 1.</p>
           <fieldset class="kids-set">
             <legend>Save photos for</legend>
             <ul class="kids" id="kids"><li class="kids-empty">Connect first to see your children here.</li></ul>
@@ -944,7 +933,7 @@ ${COOKIE_HELP_CSS}
         <p class="hint photos-links">
           <button class="linkish" id="btn-photos-faq" type="button">How this works</button>
           <span aria-hidden="true">&middot;</span>
-          <a class="ext" id="photos-script" href="${PHOTOS_SCRIPT_URL}" target="_blank" rel="noopener noreferrer">Read the script it runs <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a>
+          <a class="ext" href="${PHOTOS_SCRIPT_URL}" target="_blank" rel="noopener noreferrer">Read the script it runs <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a>
         </p>
       </div>
     </section>
@@ -968,8 +957,8 @@ ${COOKIE_HELP_CSS}
         <p class="field-hint">A run that was force-quit can fetch the same photo again under a new name. This finds copies that are identical down to the last byte. It only ever shows them &mdash; nothing is deleted unless you say so.</p>
         <div id="m-dupes-out" role="status" aria-live="polite"></div>
       </div>
-      <div class="field" id="updates-field">
-        <h3 class="field-title" id="h-updates">Updates</h3>
+      <div class="field">
+        <h3 class="field-title">Updates</h3>
         <p class="field-hint" id="version-line">This is Care Album Saver.</p>
         <div class="opt">
           <input type="checkbox" id="checkForUpdates" aria-describedby="updates-why updates-status">
@@ -1014,7 +1003,7 @@ ${COOKIE_HELP_CSS}
     <p>The run happens the next time it is on. Each operating system has its own way of catching up on a job it missed, and this uses that rather than a timer of its own.</p>
 
     <h3 id="faq-photos" tabindex="-1">Can it add them to Apple Photos or iCloud Photos?</h3>
-    <p>Yes, on a Mac, if you turn it on under <b>Settings and Maintenance</b>. It is off unless you do. After each run, the new photos are added to the Photos app in a folder called <b>Brightwheel</b>, with the same folders and weekly albums as on disk &mdash; for example <span class="nowrap">Brightwheel &rsaquo; Robin Maple &rsaquo; 2026-W38</span>.</p>
+    <p>Yes, on a Mac, if you turn it on under <b>Settings and Maintenance</b>. It is off unless you do. After each run, the new photos are added to the Photos app in a folder called <b>Brightwheel</b>, with the same folders and weekly albums as on disk &mdash; for example <span class="nowrap">Brightwheel &rsaquo; Robin-Maple &rsaquo; 2026-W38</span>.</p>
     <p><b>If iCloud Photos is on, Photos uploads them to your iCloud account</b>, and from there to your iPhone and anything else signed in to it. That is Apple&rsquo;s service rather than this tool&rsquo;s, and it counts against your iCloud storage. The copies in your own folder stay where they are either way, and turning this off again stops new ones being added without removing any.</p>
     <p>Turning it on covers photos saved from then on. The ones already in your folder are only added if you press <b>Add the ones saved before you turned this on</b>, because you may have put some of them into Photos yourself already, and those would then appear twice.</p>
     <p>It works by running one short AppleScript, and that is all it ever asks Photos to do. You can read it before you turn this on:
@@ -1078,7 +1067,7 @@ ${COOKIE_HELP_CSS}
 <!-- The photo viewer. Arrow keys and the edge buttons step through the last run's photos;
      Escape, the close button, or a click anywhere on the dark area around the photo close it. -->
 <dialog id="viewer" class="viewer" aria-label="Photo viewer">
-  <div class="viewer-stage" id="viewer-stage">
+  <div class="viewer-stage">
     <img class="viewer-media" id="viewer-img" alt="">
     <video class="viewer-media" id="viewer-video" controls playsinline preload="metadata" hidden></video>
     <p class="viewer-cap" id="viewer-cap" aria-live="polite"></p>
@@ -1121,14 +1110,10 @@ function howToSteps() {
   const isSafari = /Safari\//.test(ua) && !/Chrome|Chromium|Edg\//.test(ua);
   const open = isSafari
     ? 'Turn on the developer menu first: Safari menu &rarr; <b>Settings</b> &rarr; <b>Advanced</b> &rarr; tick <b>Show features for web developers</b>. Then press <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd>.'
-    : isFirefox
-      ? 'Press <kbd>F12</kbd> (or <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd> on a Mac).'
-      : 'Press <kbd>F12</kbd> (or <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd> on a Mac).';
-  const where = isFirefox
+    : 'Press <kbd>F12</kbd> (or <kbd>Option</kbd>+<kbd>Cmd</kbd>+<kbd>I</kbd> on a Mac).';
+  const where = isFirefox || isSafari
     ? 'Click <b>Storage</b> along the top, then <b>Cookies</b> on the left.'
-    : isSafari
-      ? 'Click <b>Storage</b> along the top, then <b>Cookies</b> on the left.'
-      : 'Click <b>Application</b> along the top, then <b>Cookies</b> on the left.';
+    : 'Click <b>Application</b> along the top, then <b>Cookies</b> on the left.';
   return [
     'Open <a class="ext" href="https://schools.mybrightwheel.com/" target="_blank" rel="noopener noreferrer"><b>schools.mybrightwheel.com</b> <span class="new-tab">(opens in a new tab)</span><span class="mark" aria-hidden="true">&#8599;</span></a> and sign in as you normally would.',
     open,
@@ -1159,7 +1144,6 @@ let isRunning = false;
 let kids = [];
 /** The folder as last accepted by the tool, so re-saving the same value costs nothing. */
 let savedDir = '';
-/** Whether a refused folder is still marked and explained on screen. */
 // The folder refusal's own words, or null. Held as text rather than read back out of the
 // message box, because any other error — a failed save, the tool having stopped — lands in
 // that same box, and restoring one of those would leave a stale complaint on screen that
@@ -1348,12 +1332,8 @@ function lockSettings(locked) {
 function needsSetup(s) {
   // No session at all: the first thing to do is the first step.
   if (!s.hasSession) return true;
-  // A session that has stopped working. This is the case that matters most, because an
-  // expired cookie is the single reason a working archive quietly stops, and a parent who
-  // comes back to a dashboard reading "12 photos, three weeks ago" has been told nothing
-  // about what to do next.
-  const failed = (s.lastResult && s.lastResult.sessionExpired) ||
-    (s.progress && s.progress.phase === 'error' && /sign in|session|expired/i.test(s.progress.message || ''));
+  // A session that has stopped working, which the server reports as a run refused for it.
+  const failed = s.progress && s.progress.phase === 'error' && /sign in|session|expired/i.test(s.progress.message || '');
   if (failed) return true;
   // Connected, but nothing has ever been saved. There is no gallery to show and the steps
   // are not finished — choosing a folder and pressing the button are still ahead. Showing a
@@ -1361,14 +1341,6 @@ function needsSetup(s) {
   return !s.archive || s.archive.totalFiles === 0;
 }
 
-/**
- * Put the setup flow where it belongs for the current view.
- *
- * MOVED between the page and the Settings dialog, never copied. Every control keeps its
- * id and its handler, so there is one archive-folder field in the document and one set of
- * tick boxes, whichever view is showing — which is the only way this could be done without
- * two of everything quietly drifting apart.
- */
 /**
  * What moves into which section of Settings once setup is done. Each piece keeps a marker at
  * its place in the steps, so going back to setup — a session that expired — puts every one
@@ -1420,6 +1392,14 @@ document.addEventListener('click', (e) => {
   if (to) showSection(to.dataset.section);
 });
 
+/**
+ * Put the setup flow where it belongs for the current view.
+ *
+ * MOVED between the page and the Settings dialog, never copied. Every control keeps its
+ * id and its handler, so there is one archive-folder field in the document and one set of
+ * tick boxes, whichever view is showing — which is the only way this could be done without
+ * two of everything quietly drifting apart.
+ */
 function placeSetupFlow(inSettings) {
   for (const m of MOVED) {
     const target = m.panel ? panelFor(m.panel) : $('settings-status');
@@ -1769,8 +1749,8 @@ function checkCookieField(rewrite) {
 }
 /* ------------------------------------------------------- the two ways out of this view */
 
-const openDialog = (id) => { const d = $(id); if (d.showModal) d.showModal(); else d.setAttribute('open', ''); };
-const closeDialog = (id) => { const d = $(id); if (d.close) d.close(); else d.removeAttribute('open'); };
+const openDialog = (id) => $(id).showModal();
+const closeDialog = (id) => $(id).close();
 
 $('btn-settings').onclick = () => openSettings();
 $('btn-settings-close').onclick = () => closeDialog('dlg-settings');
@@ -2122,7 +2102,7 @@ function paint(p, running, result) {
   const fill = $('bar-fill');
   const stopped = p.phase === 'stopped';
   bar.dataset.stopped = stopped ? 'true' : 'false';
-  if ((running || stopped) && !p.total) {
+  if (running || stopped) {
     // We do not know how many photos there are until the feed has been walked. Showing a
     // percentage here would be an invention, so show motion without a number instead.
     bar.dataset.indeterminate = 'true';
@@ -2130,7 +2110,7 @@ function paint(p, running, result) {
     fill.style.width = '';
   } else {
     bar.dataset.indeterminate = 'false';
-    const done = p.total ? Math.round(((p.saved + p.skipped + p.failed) / p.total) * 100) : (p.phase === 'done' ? 100 : 0);
+    const done = p.phase === 'done' ? 100 : 0;
     bar.setAttribute('aria-valuenow', String(done));
     fill.style.width = done + '%';
   }
@@ -2223,15 +2203,6 @@ let proposed = null;
 /** The duplicate report the delete button is allowed to act on, and nothing else. */
 let dupes = null;
 
-// Steps 1 and 2 announce their position in the markup, which was written when there were
-// three of them. Corrected here rather than there, because a screen reader must not be told
-// there are three steps when the fourth is the one that makes the tool worth having.
-for (const id of ['connect-state', 'children-state']) {
-  const el = $(id);
-  if (el) el.textContent = el.textContent.replace('of 3', 'of 4');
-}
-
-const smooth = () => (window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 /** A time of day on this computer's clock, in its own style: "7:00 PM", or "19:00". */
 const clockTime = (hhmm) => {
   const [h, m] = String(hhmm).split(':').map(Number);

@@ -22,13 +22,11 @@ import { formatBytes } from './units.js';
 export interface GalleryItem {
   /** Index into the manifest's records. The only handle the page is given — see `photoAt`. */
   id: number;
-  /** The child's folder and the file, for a caption. Not an absolute path. */
+  /** The file's name, for the thumbnail's tooltip. Not a path. */
   label: string;
   /** ISO 8601, the posted time. */
   postedAt: string | null;
-  note: string | null;
   child: string | null;
-  bytes: number;
   kind: 'image' | 'video';
 }
 
@@ -120,7 +118,7 @@ async function sizeOnDisk(root: string): Promise<number> {
  */
 export async function summarise(
   config: Config,
-  options: { page?: number; pageSize?: number; platform?: NodeJS.Platform } = {},
+  options: { page?: number } = {},
 ): Promise<ArchiveSummary> {
   const all = await records(config);
   const totalBytes = all.length === 0 ? 0 : await sizeOnDisk(config.archiveDir);
@@ -134,7 +132,7 @@ export async function summarise(
   while (runLength < withTime.length && withTime[runLength - 1]!.at - withTime[runLength]!.at <= RUN_GAP) runLength++;
   const sameRun = withTime.slice(0, runLength);
 
-  const pageSize = Math.max(1, Math.floor(options.pageSize ?? GALLERY_PAGE_SIZE));
+  const pageSize = GALLERY_PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(sameRun.length / pageSize));
   const asked = Math.floor(Number(options.page ?? 0));
   const page = Number.isFinite(asked) ? Math.min(Math.max(asked, 0), pages - 1) : 0;
@@ -147,7 +145,7 @@ export async function summarise(
   return {
     totalFiles: all.length,
     totalBytes,
-    totalSize: formatBytes(totalBytes, options.platform),
+    totalSize: formatBytes(totalBytes),
     newestPostedAt: postedTimes.at(-1) ?? null,
     lastRunCount: sameRun.length,
     lastSavedAt: lastSavedAt === null ? null : new Date(lastSavedAt).toISOString(),
@@ -155,15 +153,13 @@ export async function summarise(
     pages,
     pageSize,
     recent: sameRun.slice(page * pageSize, (page + 1) * pageSize).map((x) => {
-      const p = (x.r.provenance ?? {}) as { postedAt?: string; note?: string; studentName?: string; kind?: string };
+      const p = (x.r.provenance ?? {}) as { postedAt?: string; studentName?: string; kind?: string };
       const parts = x.r.path.split(posix.sep);
       return {
         id: x.index,
         label: parts.at(-1) ?? x.r.path,
         postedAt: p.postedAt ?? null,
-        note: p.note ?? null,
         child: p.studentName ?? parts[0] ?? null,
-        bytes: x.r.bytes ?? 0,
         kind: p.kind === 'video' || VIDEO.test(x.r.path) ? 'video' : 'image',
       };
     }),
@@ -182,8 +178,8 @@ export async function summarise(
  * The `startsWith` check is belt to that braces: a manifest edited by hand, or written by
  * a future bug, does not get to make this serve `/etc/passwd`.
  */
-export async function photoAt(config: Config, id: unknown): Promise<{ path: string; bytes: number; type: string } | null> {
-  const index = typeof id === 'string' ? Number(id) : typeof id === 'number' ? id : NaN;
+export async function photoAt(config: Config, id: string | null): Promise<{ path: string; bytes: number; type: string } | null> {
+  const index = typeof id === 'string' ? Number(id) : NaN;
   if (!Number.isInteger(index) || index < 0) return null;
 
   const all = await records(config);

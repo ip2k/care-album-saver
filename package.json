@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc --build",
     "test": "node --test --import ./scripts/test-env.js packages/care-album-saver/test",
-    "clean": "tsc --build --clean"
+    "clean": "tsc --build --clean && node -e \"require('node:fs').rmSync('packages/care-album-saver/dist', { recursive: true, force: true })\""
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

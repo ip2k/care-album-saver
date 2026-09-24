@@ -1,6 +1,4 @@
-import { execFile } from 'node:child_process';
 import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { platform as osPlatform } from 'node:os';
 import { join, posix, relative, sep } from 'node:path';
 import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from './ferry/index.js';
 import type { BrightwheelClient } from './api/client.js';
@@ -110,7 +108,7 @@ export function humanBytes(bytes: number, platform?: NodeJS.Platform): string {
  * would be a second opinion that could disagree with the run's.
  */
 async function readManifestJson(archiveDir: string): Promise<{ data: Record<string, unknown>; records: ManifestRecord[] }> {
-  await Manifest.open(archiveDir, 'brightwheel', { fileMode: 0o600 });
+  await Manifest.open(archiveDir, 'brightwheel');
   const file = join(archiveDir, MANIFEST_FILENAME);
   let raw: string;
   try {
@@ -563,6 +561,3 @@ export async function removeDuplicates(config: Config, options: { confirm: strin
             : 'The photos they were copies of are still here.'),
   };
 }
-
-// ------------------------------------------------------------------ opening the folder
-

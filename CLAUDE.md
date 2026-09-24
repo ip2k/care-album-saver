@@ -120,20 +120,24 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Repository hygiene
 
-Last audited for dead code: 2026-09-21, at the initial commit (26f8b5b), where the counting
-method below gives **2,593** source lines. (The original note said "~2,400"; see the method
-paragraph for why the two differ.)
+Last audited for dead code: **2026-09-23**, on `main` after the audit merge, at **12,721**
+source lines (the counting method is below). The audit read every file: seven readers, one per
+group of files, each followed by an adversarial verifier that tried to find a use for every
+candidate; 152 verdicts, of which 56 removals, 4 un-exports, 43 comment or doc corrections, 21
+referred to the owner (see the audit merge commit and CHANGELOG), 10 kept. The mark before
+this was the initial commit (26f8b5b) at 2,593 lines.
 
 The global rule is an audit every ~10,000 lines added since the last mark, so the next one
-is due at roughly **12,600** lines. An earlier edit here wrote 15,000, which did not follow
-from any recorded mark; 2,593 + 10,000 is where it actually falls.
+is due at roughly **22,721** lines.
 
-At 6527f06, with the four `ux/*` branches merged, the tree was **8,843** source lines;
-with the Apple Photos option merged, **10,850**. On 2026-09-23 at 3a44cbe it is
-**12,891** — 10,298 added since the mark, so **the dead-code audit is now due**. The
-2026-09-22 review (docs/DIRECTIONS-FOR-OPUS.md) already lists things to remove when it
-comes: the `openBrowser` option, `dist/api/login.*`, fourteen unused `media-ferry` exports
-(now under src/ferry since the fold).
+Referred to the owner and still open after the audit, each a product decision rather than
+dead code: the pre-rename fallbacks (`BRIGHTWHEEL_*` env vars, the old config folder, the
+old default archive folder, the `capturedAt` sidecar key) — all still load-bearing for the
+owner's own install until that folder is migrated; the unused server-side filter options in
+`src/api/client.ts` (planned item B4-7); the parser fallbacks for API shapes no live account
+has shown; the nine npm-based install routes in `src/version.ts` (moot until the package is
+published); the `?token=` on `/api/*` requests (DIRECTIONS item 14, for Fable's review); and
+whether `src/index.ts` is a library surface at all.
 
 Counting method, since the original figure does not say: `wc -l` over every `.ts` file
 under `packages/*/src`, excluding tests, scripts and the generated `dist/`. That method

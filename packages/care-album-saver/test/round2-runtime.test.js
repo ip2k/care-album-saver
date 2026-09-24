@@ -417,7 +417,7 @@ test('a run that fails on every photo prints its refusals with the signature alr
   //
   // The title used to say "still prints no credential" and the comment claimed this pinned
   // the progress printer's scrub(). It did not, and saying so was the problem: in this
-  // scenario the credential never reaches the printer. media-ferry's redactUrl() rewrites
+  // scenario the credential never reaches the printer. src/ferry's redactUrl() rewrites
   // the URL as it builds the DownloadError, so what the CLI is handed is redacted before it
   // is printed, and removing scrub() from the printer leaves this test green. A test cited
   // as proof of a layer it does not touch is worse than no test.
