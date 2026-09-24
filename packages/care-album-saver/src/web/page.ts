@@ -278,6 +278,8 @@ export const PAGE = String.raw`<!doctype html>
   a.ext .new-tab { font-size: .875rem; }
   a.ext .mark { margin-left: .25em; text-decoration: none; }
 
+  kbd { margin-inline: .15em; }
+  .msg li { line-height: 1.9; }
   kbd, code {
     background: var(--surface-sunken); padding: .125rem .4rem; border-radius: 5px;
     font-size: .875rem; color: var(--text);
@@ -365,9 +367,18 @@ export const PAGE = String.raw`<!doctype html>
   .dash-facts li { margin: 0 0 var(--s2); }
   .dash-facts li:empty { display: none; }
 
-  /* Settings: a column of sections on the left, one section showing on the right. */
+  /* Settings: a column of sections on the left, one section showing on the right. The dialog
+     has one height, pinned near the top, whichever section shows: re-centring it for each
+     section moved the column under the pointer, and a fixed height is also every pixel the
+     screen has for the section — the fit rule's whole budget. */
   #dlg-settings { max-width: 64rem; }
-  .settings-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); }
+  #dlg-settings[open] {
+    display: flex; flex-direction: column;
+    height: calc(100vh - 2rem); max-height: calc(100vh - 2rem); margin-top: 1rem; margin-bottom: auto;
+  }
+  .settings-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); flex: 1; min-height: 0; }
+  #dlg-settings #settings-body { max-height: none; min-height: 0; overflow: auto; overflow-wrap: anywhere; }
+  #dlg-settings .hint { max-width: none; }
   .settings-nav {
     display: flex; flex-direction: column; gap: var(--s1);
     padding: var(--s4) var(--s3); border-right: 1px solid var(--border);
@@ -377,8 +388,15 @@ export const PAGE = String.raw`<!doctype html>
     font-weight: 550; font-size: 1rem; padding: .625rem .875rem; min-height: 2.75rem;
   }
   .settings-nav button:hover:not(:disabled) { background: var(--surface-sunken); }
+  /* The current section is marked by more than colour: a bar on its leading edge and bold. */
   .settings-nav button[aria-current="page"] {
     background: var(--accent-tint); color: var(--accent-ink); border-color: var(--accent);
+    box-shadow: inset 4px 0 0 var(--accent); font-weight: 700;
+  }
+  @media (forced-colors: active) {
+    .settings-nav button[aria-current="page"] {
+      forced-color-adjust: none; background: Highlight; color: HighlightText; border-color: Highlight;
+    }
   }
   /* Inside a section the cards lose their own frame: the section is the frame. */
   #dlg-settings .card { border: 0; border-radius: 0; box-shadow: none; padding: 0; margin: 0; background: none; }
@@ -400,14 +418,23 @@ export const PAGE = String.raw`<!doctype html>
      they are what pushed a section past the bottom of the screen. The empty "Advanced options"
      disclosure goes too — its contents are in Save Locations. */
   #dlg-settings .first-run, #dlg-settings details { display: none; }
+  /* Also the picture guide, which expands inside Account to several screens: a parent
+     reconnecting has the five written steps, and has seen the pictures once already. And
+     the screen-reader "Step N of 4" lines, which are about the setup steps, not sections. */
+  #dlg-settings .ck-help,
+  #dlg-settings #connect-state, #dlg-settings #children-state, #dlg-settings #run-state, #dlg-settings #schedule-state { display: none; }
   /* After a run, the result's sentence says what the three counters say, and the folder it
      offers to open is a button on the dashboard and in Save Locations already. While a run
      is going the counters are the progress, so they stay. */
   #dlg-settings #card-run:not([data-running]) .stats,
+  #dlg-settings #card-run:not([data-running]) #run-msg,
+  #dlg-settings #card-run:not([data-running]) #bar,
   #dlg-settings #run-result .dir-actions, #dlg-settings #run-result .dir-note { display: none; }
   @media (max-width: 44rem) {
-    .settings-layout { grid-template-columns: minmax(0, 1fr); }
-    .settings-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    /* The sections wrap onto a second row rather than scrolling sideways, where the ones
+       past the edge could not be seen and a focused one could sit clipped. */
+    .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .settings-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
     .settings-nav button { flex: 0 0 auto; }
   }
   .nowrap { white-space: nowrap; }
@@ -1041,6 +1068,13 @@ async function save(patch, opts) {
  */
 function applySaved(d) {
   savedDir = d.config.archiveDir;
+  // The dashboard's "Photos are in" and the end-of-run folder read from state, which is
+  // otherwise only refreshed on load — so a folder chosen since would show the old one.
+  if (state) {
+    state.config.archiveDir = d.config.archiveDir;
+    if (d.archiveDirShown) state.archiveDirShown = d.archiveDirShown;
+    paintFacts();
+  }
   // Always the stored folder, never the typed one: this says where the photos will go.
   $('p-dir').textContent = d.config.archiveDir;
   if (d.warning) show($('config-msg'), 'warn', esc(d.warning));
@@ -1075,10 +1109,17 @@ function clearDirError() {
   $('archiveDir').setAttribute('aria-invalid', 'false');
 }
 
+/** In Settings, the section holding el, brought forward: a refusal is no use behind another section. */
+function revealSection(el) {
+  const panel = el && el.closest('.settings-panel');
+  if (panel && panel.hidden) showSection(panel.dataset.panel);
+}
+
 function showSaveError(d, opts) {
   const text = d.error || 'Could not save those settings.';
   if (d.field === 'includeStudents') {
     const st = $('kids-status');
+    if (opts && opts.focus) revealSection(st);
     st.classList.add('err');
     st.textContent = text;
     updateRunReady();
@@ -1091,7 +1132,10 @@ function showSaveError(d, opts) {
     // Only move focus when the person pressed something; stealing it as they tab away
     // from the field would trap them in it.
     // The field is out in the open now, so there is no disclosure to prise open first.
-    if (opts.focus) $('archiveDir').focus();
+    if (opts.focus) {
+      revealSection($('archiveDir'));
+      $('archiveDir').focus();
+    }
   }
 }
 
@@ -1115,7 +1159,11 @@ function updateRunReady() {
 
 /** Settings cannot change under a run that has already read them, so say so. */
 function lockSettings(locked) {
-  for (const el of document.querySelectorAll('#card-children input, #card-children select, #card-children button')) {
+  // By the pieces, not by their old card: the folder field and the advanced options leave
+  // step 2 for Save Locations once setup is done, and a run must lock them there too.
+  const lockable = '#card-children input, #card-children select, #card-children button, ' +
+    '#dir-field input, #dir-field button, #advanced-inner input, #advanced-inner select';
+  for (const el of document.querySelectorAll(lockable)) {
     el.disabled = locked;
   }
   const msg = $('config-msg');
@@ -1185,6 +1233,9 @@ const STEP_SECTIONS = ['account', 'children', 'save', 'schedule'];
 
 function showSection(name) {
   for (const panel of document.querySelectorAll('.settings-panel')) panel.hidden = panel.dataset.panel !== name;
+  // The "Saved" line and the lock note belong to the controls in Children and Save
+  // Locations; under any other section they are height with nothing to do with it.
+  $('settings-status').hidden = !['children', 'save'].includes(name);
   for (const b of sectionButtons()) {
     if (b.dataset.go === name) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
@@ -1198,6 +1249,11 @@ function openSettings(name) {
 }
 
 for (const b of sectionButtons()) b.onclick = () => showSection(b.dataset.go);
+// Messages can point at a section by name; the name is a button that goes there.
+document.addEventListener('click', (e) => {
+  const to = e.target.closest && e.target.closest('[data-section]');
+  if (to) showSection(to.dataset.section);
+});
 
 function placeSetupFlow(inSettings) {
   for (const m of MOVED) {
@@ -1210,6 +1266,10 @@ function placeSetupFlow(inSettings) {
       m.home.after(m.node);
     }
   }
+  // Going back to setup — a session that expired — puts the steps on the page, so a dialog
+  // still open over them would be showing the leftovers of something that has moved.
+  const wasInSettings = $('setup-flow').hidden;
+  if (!inSettings && wasInSettings && $('dlg-settings').open) closeDialog('dlg-settings');
   $('setup-flow').hidden = inSettings;
   $('dash').hidden = !inSettings;
   // During setup those four are on the page itself, so Settings offers only the rest.
@@ -1540,8 +1600,15 @@ $('btn-connect').onclick = async () => {
       field.value = '';
       $('cookie-check').textContent = '';
       await refresh();
-      // Move focus forward so a keyboard or screen-reader user is taken to what is next.
-      $('btn-run').focus();
+      // Move focus forward so a keyboard or screen-reader user is taken to what is next —
+      // but only to something on screen. In Settings, Start saving is in another section,
+      // and focusing it would drop focus on the page behind the dialog.
+      const next = $('btn-run');
+      if (next.offsetParent !== null) next.focus();
+      else {
+        $('connect-msg').tabIndex = -1;
+        $('connect-msg').focus();
+      }
     } else {
       field.setAttribute('aria-invalid', 'true');
       show($('connect-msg'), 'err', esc(d.error));
@@ -1665,7 +1732,9 @@ $('btn-run').onclick = async () => {
   // was refused earlier, or is still on its way, cannot be left behind by a run that
   // reads its settings from disk.
   if (!(await persist(formState(), { focus: true }))) {
-    show($('run-result'), 'err', 'Not started. Fix the setting marked in step 2, then press Start saving again.');
+    show($('run-result'), 'err', $('setup-flow').hidden
+      ? 'Not started. Fix the setting that is marked, then press Start saving again.'
+      : 'Not started. Fix the setting marked in step 2, then press Start saving again.');
     updateRunReady();
     return;
   }
@@ -1772,7 +1841,10 @@ function paint(p, running, result) {
     show($('run-result'), 'ok', esc(p.message));
   }
   if (p.phase === 'error') {
-    show($('run-result'), 'err', esc(p.message) + ' <br><br>If your session has expired, paste a fresh value in step 1 above.');
+    show($('run-result'), 'err', esc(p.message) + ' <br><br>If your session has expired, paste a fresh value ' +
+      ($('setup-flow').hidden
+        ? 'under <button class="linkish" type="button" data-section="account">Account</button>.'
+        : 'in step 1 above.'));
     $('card-run').dataset.state = 'active';
   }
 }
@@ -1923,7 +1995,8 @@ function paintFacts() {
   const last = sched && sched.lastRun;
   // Whether it worked is said in words, not only in the presence of a number.
   $('dash-last').innerHTML = last
-    ? 'Last run on its own: <b>' + esc(fullWhen(last.at)) + '</b> &mdash; ' +
+    ? (last.trigger === 'manual' ? 'Last run, which you started: <b>' : 'Last run on its own: <b>') +
+      esc(fullWhen(last.at)) + '</b> &mdash; ' +
       (last.ok ? 'it worked' : 'it did not work') + '. ' + esc(last.message)
     : (sched && sched.installed ? 'The daily run has not run on its own yet.' : '');
   // No full stop after the path: the pill carries its own padding, so one would sit on its
@@ -2090,7 +2163,7 @@ function renderDupes() {
     }
     html += '</ul>';
   }
-  html += '<div id="m-dupes-actions" style="margin-top:var(--s3)"></div>';
+  if (dupes.files > 0) html += '<div id="m-dupes-actions" style="margin-top:var(--s3)"></div>';
   show(out, dupes.files > 0 ? 'warn' : 'ok', html);
   if (dupes.files === 0) return;
   $('m-dupes-actions').innerHTML =
