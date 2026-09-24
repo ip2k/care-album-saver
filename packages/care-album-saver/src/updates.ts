@@ -107,9 +107,16 @@ export function parseRelease(body: unknown): Release | null {
   const r = body as Record<string, unknown>;
   const tag = typeof r.tag_name === 'string' ? r.tag_name : '';
   const version = TAG.exec(tag)?.[1];
-  const url = typeof r.html_url === 'string' ? r.html_url : '';
-  // The link the page shows is this repository's release page and nothing else.
-  if (!version || !url.startsWith(`${RELEASES_URL}/`)) return null;
+  // The link the page shows is this repository's release page and nothing else — checked
+  // on the parsed, normalised address, so `..` segments and credentials cannot slip past.
+  let link: URL | null = null;
+  try {
+    link = new URL(typeof r.html_url === 'string' ? r.html_url : '');
+  } catch {
+    return null;
+  }
+  const url = link.href;
+  if (!version || !url.startsWith(`${RELEASES_URL}/`) || link.username || link.password || link.search || link.hash) return null;
   if (r.draft === true || r.prerelease === true) return null;
   const notes = typeof r.body === 'string' ? r.body.replace(/\r\n?/g, '\n') : '';
   return {

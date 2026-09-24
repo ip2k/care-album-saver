@@ -76,5 +76,8 @@ export function acceptableUserAgent(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const ua = value.trim();
   if (ua.length === 0 || ua.length > 512 || !BROWSER_SHAPE.test(ua)) return null;
+  // Printable ASCII only, everywhere in it: this goes out as a header on every request, and
+  // a CR or LF inside the parenthesised part would end the header and start another.
+  if (/[^\x20-\x7e]/.test(ua)) return null;
   return ua;
 }

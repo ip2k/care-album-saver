@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
+import { containedFile } from './contain.js';
 import { MANIFEST_FILENAME, type ManifestRecord } from './ferry/index.js';
 import type { Config } from './config.js';
 import { walkArchive } from './maintenance.js';
@@ -186,9 +187,12 @@ export async function photoAt(config: Config, id: string | null): Promise<{ path
   const record = all[index];
   if (!record || typeof record.path !== 'string') return null;
 
-  const root = config.archiveDir;
-  const absolute = join(root, ...record.path.split(posix.sep));
-  if (!absolute.startsWith(root.endsWith('/') ? root : `${root}/`)) return null;
+  // Both sides resolved to real places on disk before they are compared, so a manifest
+  // entry with `..` in it, or a symbolic link planted inside the archive, cannot name
+  // anything outside the folder. The separator is the platform's own: a hard-coded '/'
+  // made every photo a 404 on Windows, where join() writes backslashes.
+  const absolute = await containedFile(config.archiveDir, record.path);
+  if (!absolute) return null;
 
   const info = await stat(absolute).catch(() => null);
   if (!info?.isFile()) return null;
