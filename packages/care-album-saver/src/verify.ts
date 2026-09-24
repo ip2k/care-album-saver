@@ -1,4 +1,4 @@
-import { DEFAULT_BASE_URL, MAX_RESPONSE_BYTES, SESSION_COOKIE } from './api/client.js';
+import { DEFAULT_BASE_URL, MAX_RESPONSE_BYTES, apiHeaders } from './api/client.js';
 import { BodyTooLargeError, readBodyText } from './http-body.js';
 import { assertJsonResponse } from './api/schema.js';
 import { browserUserAgent } from './api/identity.js';
@@ -127,13 +127,8 @@ async function raw(
   baseUrl: string,
   fetchImpl: typeof fetch,
 ): Promise<Record<string, unknown>> {
-  const response = await fetchImpl(`${baseUrl}${path}`, {
-    headers: {
-      Cookie: `${SESSION_COOKIE}=${session.expose()}`,
-      Accept: 'application/json',
-      'X-Client-Name': 'web',
-    },
-  });
+  // The browser identity is added by the fetch this is handed, as to every request here.
+  const response = await fetchImpl(`${baseUrl}${path}`, { headers: apiHeaders(session) });
   // Capped while it is read, as the client's own requests are (security review outbound-7):
   // this command reads the same endpoints, and an endless or bomb-sized answer here would
   // fill memory as surely as one to a run.

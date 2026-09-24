@@ -290,27 +290,6 @@ export function checkBaseUrl(value: string): string {
   );
 }
 
-/**
- * Under test, refuse to send anything to the real Brightwheel API (the review's docs-14).
- *
- * scripts/test-env.js sets CARE_ALBUM_NO_LIVE_API, and every test that reaches an API names
- * the mock with --base-url or baseUrl. One that forgot would otherwise send a session — a
- * mock's, or with a stray CARE_ALBUM_SESSION a real one — to the live service. The variable
- * can only stop a request, never redirect one, which is why it is a refusal and not a default
- * address.
- */
-export function refuseLiveApiUnderTest(baseUrl: string | undefined): void {
-  if (!process.env.CARE_ALBUM_NO_LIVE_API) return;
-  let host: string;
-  try {
-    host = new URL(baseUrl ?? DEFAULT_BASE_URL).hostname;
-  } catch {
-    return;
-  }
-  if (host === new URL(DEFAULT_BASE_URL).hostname) {
-    throw new Error(
-      'CARE_ALBUM_NO_LIVE_API is set — this is a test — and nothing named another API (--base-url), so Brightwheel itself was not contacted.',
-    );
-  }
-}
+/** Refuse to reach Brightwheel itself from a test: see its definition in api/client.ts. */
+export { refuseLiveApiUnderTest } from './api/client.js';
 

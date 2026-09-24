@@ -251,8 +251,15 @@ function isNonPublicV6(w: number[]): boolean {
   const zeros = (from: number, to: number) => w.slice(from, to).every((x) => x === 0);
   // ::a.b.c.d (compatible — which takes in :: and ::1 as 0.0.0.0 and 0.0.0.1) and ::ffff:a.b.c.d.
   if (zeros(0, 5) && (w[5] === 0 || w[5] === 0xffff)) return isNonPublicV4(carried(w[6]!, w[7]!));
+  // ::ffff:0:a.b.c.d, IPv4-translated (RFC 2765).
+  if (zeros(0, 4) && w[4] === 0xffff && w[5] === 0) return isNonPublicV4(carried(w[6]!, w[7]!));
   // 64:ff9b::a.b.c.d, the NAT64 well-known prefix.
   if (first === 0x64 && w[1] === 0xff9b && zeros(2, 6)) return isNonPublicV4(carried(w[6]!, w[7]!));
+  // 64:ff9b:1::/48, NAT64 for local use (RFC 8215): translated on the local network.
+  if (first === 0x64 && w[1] === 0xff9b && w[2] === 1) return true;
+  // 100::/64, discard-only (RFC 6666), and 2001:db8::/32, documentation (RFC 3849).
+  if (first === 0x100 && zeros(1, 4)) return true;
+  if (first === 0x2001 && w[1] === 0xdb8) return true;
   // 2002:aabb:ccdd::/48, 6to4.
   if (first === 0x2002) return isNonPublicV4(carried(w[1]!, w[2]!));
   return false;

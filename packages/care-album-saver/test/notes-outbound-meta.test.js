@@ -53,6 +53,10 @@ function trackedBody(text = 'x') {
   const body = new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode(text));
+      // Ends by itself a little later, so code that reads the body instead of letting it go
+      // finishes, and the `cancelled` assertion fails, rather than the test hanging until CI's
+      // six-hour limit (§4.6, F17). Letting it go first still counts as cancelled.
+      setTimeout(() => { try { controller.close(); } catch {} }, 200).unref();
     },
     cancel() {
       seen.cancelled = true;
@@ -100,7 +104,7 @@ test('outbound-8: an unparseable media address is refused before fetch can quote
 
 // ------------------------------------------------------------------ outbound-9
 
-test('outbound-9: a 4xx other than 429 is asked once, its body let go, and the run told why', async () => {
+test('outbound-9: a 4xx other than 429 is asked once, its body let go, and the run told why', { timeout: 30_000 }, async () => {
   for (const status of [400, 404, 407, 410]) {
     let calls = 0;
     const tracked = trackedBody('<html>Please log in to the proxy</html>');
@@ -125,7 +129,7 @@ test('outbound-9: a 4xx other than 429 is asked once, its body let go, and the r
   }
 });
 
-test('outbound-9: 401 and 403 still mean the session, and 5xx is still retried with its body let go', async () => {
+test('outbound-9: 401 and 403 still mean the session, and 5xx is still retried with its body let go', { timeout: 30_000 }, async () => {
   for (const status of [401, 403]) {
     const client = new BrightwheelClient({ session: new Secret(SESSION), delayMs: 0, fetchImpl: async () => json({}, status) });
     await assert.rejects(client.me(), (e) => e.name === 'SessionExpiredError');

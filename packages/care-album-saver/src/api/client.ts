@@ -104,7 +104,12 @@ function imfFixdate(text: string): number | null {
 export function retryAfterSeconds(header: string | null, now: number = Date.now()): number | null {
   const text = header?.trim() ?? '';
   // More digits than any ceiling needs is the ceiling; `Number()` of hundreds is Infinity.
-  if (/^\d+$/.test(text)) return text.length > 10 ? RETRY_AFTER_CEILING_SECONDS : Math.min(Number(text), RETRY_AFTER_CEILING_SECONDS);
+  // Counted without leading zeros, which delay-seconds allows: 00000000005 is five seconds,
+  // not a year (§4.6, F16).
+  if (/^\d+$/.test(text)) {
+    const digits = text.replace(/^0+(?=\d)/, '');
+    return digits.length > 10 ? RETRY_AFTER_CEILING_SECONDS : Math.min(Number(digits), RETRY_AFTER_CEILING_SECONDS);
+  }
   const at = imfFixdate(text);
   return at === null ? null : Math.min(RETRY_AFTER_CEILING_SECONDS, Math.max(0, Math.ceil((at - now) / 1000)));
 }
@@ -227,6 +232,48 @@ function readEnvelope(raw: unknown, page: number, pageSize: number, items: numbe
  * would risk the account of the person running it, so the defaults are conservative and
  * the concurrency is one.
  */
+/**
+ * The headers of an API request, and the one place the session cookie is written into one
+ * (security review outbound-13). `verify`, which composes its own requests, takes them from
+ * here too.
+ */
+export function apiHeaders(session: Secret, userAgent?: string): Record<string, string> {
+  return {
+    Cookie: `${SESSION_COOKIE}=${session.expose()}`,
+    Accept: 'application/json',
+    // The web client identifies itself as 'web'; an unrecognised value risks rejection.
+    'X-Client-Name': 'web',
+    ...(userAgent ? { 'User-Agent': userAgent } : {}),
+  };
+}
+
+/**
+ * Refuse to reach Brightwheel itself from a test (security review docs-14).
+ *
+ * scripts/test-env.js sets CARE_ALBUM_NO_LIVE_API, and every test that reaches an API names
+ * the mock with --base-url or baseUrl. One that forgot would otherwise send a session — a
+ * mock's, or with a stray CARE_ALBUM_SESSION a real one — to the live service. The variable
+ * can only stop a request, never redirect one, which is why it is a refusal and not a default
+ * address. Brightwheel's domain and every name under it, however written: a trailing dot
+ * makes the same name (§4.6, F8). Checked where every client is made, so the command line,
+ * the setup page and anything using the library are all covered; `verify`, which composes its
+ * own requests, checks too.
+ */
+export function refuseLiveApiUnderTest(baseUrl: string | undefined): void {
+  if (!process.env.CARE_ALBUM_NO_LIVE_API) return;
+  let host: string;
+  try {
+    host = new URL(baseUrl ?? DEFAULT_BASE_URL).hostname.replace(/\.$/, '').toLowerCase();
+  } catch {
+    return;
+  }
+  if (host === 'mybrightwheel.com' || host.endsWith('.mybrightwheel.com')) {
+    throw new Error(
+      'CARE_ALBUM_NO_LIVE_API is set — this is a test — and nothing named another API (--base-url), so Brightwheel itself was not contacted.',
+    );
+  }
+}
+
 export class BrightwheelClient {
   private readonly baseUrl: string;
   private readonly delayMs: number;
@@ -242,6 +289,8 @@ export class BrightwheelClient {
   private lastRequest = 0;
 
   constructor(private readonly options: ClientOptions) {
+    // A caller that hands in its own fetch reaches no network through this client.
+    if (!options.fetchImpl) refuseLiveApiUnderTest(options.baseUrl);
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.delayMs = options.delayMs ?? 400;
     this.doFetch = options.fetchImpl ?? fetch;
@@ -251,13 +300,7 @@ export class BrightwheelClient {
 
   /** Headers for an API call. The session cookie is exposed only here. */
   private headers(): Record<string, string> {
-    return {
-      Cookie: `${SESSION_COOKIE}=${this.options.session.expose()}`,
-      Accept: 'application/json',
-      // The web client identifies itself as 'web'; an unrecognised value risks rejection.
-      'X-Client-Name': 'web',
-      'User-Agent': this.userAgent,
-    };
+    return apiHeaders(this.options.session, this.userAgent);
   }
 
   /**

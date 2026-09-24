@@ -174,6 +174,14 @@ async function fetchFollowingSafeRedirects(start: URL, headers: Record<string, s
     if (hops >= MAX_REDIRECTS) {
       throw new DownloadError(`${redactUrl(start.href)} redirected more than ${MAX_REDIRECTS} times, so it was not fetched.`, status);
     }
+    // On every hop, the same origin's too (§4.6, F15): fetch refuses such an address with an
+    // error quoting it whole, user name, password and signature, before redactUrl can act.
+    if (next.username || next.password) {
+      throw new DownloadError(
+        `${redactUrl(current.href)} redirected to an address carrying a user name or password. Nothing was fetched from it; it will be tried again next time.`,
+        status,
+      );
+    }
     if (next.origin !== current.origin) {
       const refused = mediaUrlRefusal(next.href);
       if (refused) {

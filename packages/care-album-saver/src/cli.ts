@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { stdin, stdout } from 'node:process';
-import { BrightwheelClient } from './api/client.js';
+import { BrightwheelClient, failureReason } from './api/client.js';
 import {
   checkBaseUrl,
   ConfigUnusableError,
@@ -96,7 +96,8 @@ let failureAnnounced = false;
  * and a desktop with no notifier just means the record is the only trace.
  */
 async function recordScheduledFailure(error: unknown): Promise<void> {
-  const message = scrub(error instanceof Error ? error.message : String(error));
+  // What happened, not only fetch's "fetch failed": the daily log is where a parent looks (§4.6, F21).
+  const message = failureReason(error);
   await schedule.appendLog(`FAILED  ${message}`);
   await schedule.recordRun({ at: new Date().toISOString(), ok: false, saved: 0, failed: 0, message, trigger: 'schedule' });
   await schedule.notify('failed').catch(() => false);
@@ -716,7 +717,7 @@ main()
     // A failure the run already printed is not printed a second time: the same thing said
     // twice, in two shapes, reads as two separate things having gone wrong.
     if (failureAnnounced) process.exit(1);
-    const message = error instanceof Error ? error.message : String(error);
-    stdout.write(`\n  ${scrub(message)}\n`);
+    // failureReason scrubs, and names what fetch keeps in `cause` (§4.6, F21).
+    stdout.write(`\n  ${failureReason(error)}\n`);
     process.exit(1);
   });

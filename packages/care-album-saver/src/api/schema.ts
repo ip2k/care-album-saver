@@ -124,6 +124,10 @@ const CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
  */
 function text(v: unknown, multiline = false): string | null {
   if (typeof v !== 'string') return null;
+  // Removed, not replaced (§4.6, F18, decided): a space would show as "Ro b in", and a name of
+  // controls alone would stop being no name. The cost is that a name which carried one gets a
+  // new folder, "Robin-Maple" where safeStem once made "Ro-bin-Maple"; nothing is downloaded
+  // again, because the list knows each post by its id, not by its folder.
   let clean = v.normalize('NFC').replace(CONTROLS, '');
   if (!multiline) clean = clean.replace(/[\t\n\r]/g, ' ');
   return clean.length > 0 ? clean : null;

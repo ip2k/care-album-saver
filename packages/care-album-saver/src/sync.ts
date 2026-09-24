@@ -1,4 +1,5 @@
-import { chmod, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { chmod, mkdir, mkdtemp, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { join, posix, sep } from 'node:path';
 import {
@@ -13,7 +14,7 @@ import {
   weekLabel,
   writeAtomically,
 } from './ferry/index.js';
-import type { ActivityListOptions, ActivityPage, BrightwheelClient } from './api/client.js';
+import { failureReason, type ActivityListOptions, type ActivityPage, type BrightwheelClient } from './api/client.js';
 import type { MediaActivity, Student } from './api/schema.js';
 import type { Config } from './config.js';
 import { applyMetadata, closeMetadata } from './metadata.js';
@@ -239,7 +240,18 @@ const ARCHIVE_FILE_MODE = 0o600;
  * folder the tool cannot make private is already reported, once, by `ensureOwnerOnly`.
  */
 async function ownerOnly(path: string): Promise<void> {
-  if (platform() !== 'win32') await chmod(path, ARCHIVE_FILE_MODE).catch(() => {});
+  if (platform() === 'win32') return;
+  // By handle, opened without following a link, as atomic.ts sets modes (fs-2): a link planted
+  // at a staged name is not followed to make its target owner-only (§4.6, F19).
+  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW).catch(() => null);
+  if (!handle) return;
+  try {
+    await handle.chmod(ARCHIVE_FILE_MODE);
+  } catch {
+    // A share or a drive that keeps no modes: see above.
+  } finally {
+    await handle.close().catch(() => {});
+  }
 }
 
 /** A child's or a week's folder in the archive is a link to somewhere else. See realFolderUnder. */
@@ -822,7 +834,8 @@ async function syncHoldingTheLock(
               throw error;
             }
             result.failed += 1;
-            const message = error instanceof Error ? error.message : String(error);
+            // What happened, not only fetch's "fetch failed" (§4.6, F21).
+            const message = failureReason(error);
             if (isGone(error)) {
               // Written down rather than retried for ever. The reason is the status alone:
               // the fuller message carries the media URL, and a signed URL is a credential.
@@ -878,7 +891,7 @@ async function syncHoldingTheLock(
   } catch (error) {
     // Say so on the progress stream as well, with the counts intact: a polling UI must see
     // the real state rather than a bar that has merely stopped moving.
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = failureReason(error);
     const kept =
       result.saved > 0
         ? ` The ${result.saved} item${result.saved === 1 ? ' saved before this is' : 's saved before this are'} kept; the next run carries on from there.`
