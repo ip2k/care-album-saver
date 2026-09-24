@@ -90,6 +90,29 @@ archive.json
 *.3gp.json
 *.webm.json
 *.avi.json
+# What a run leaves behind in the archive while it works, or after it crashes: the run lock
+# (process id, the computer's name, when), a download not yet complete (.part, a photo's
+# first bytes), ExifTool's own temporary copy of a photo, and writeAtomically's temporaries,
+# named .<file>.<random>.tmp, each a half-written archive.json, sidecar or setting.
+.care-album-saver.lock
+*.part
+*_exiftool_tmp
+*.tmp
+
+# ── The tool's own state ─────────────────────────────────────────────────────
+# These live in the config folder, beside session.json and config.json, and are never
+# written into the project tree. They name children, folders and photo fingerprints, so a
+# copy dropped here while debugging is kept out the same way as the session (security
+# review sc-9, docs-10): what Photos was handed and the private copies it was handed, the
+# record of every saved photo's fingerprint, how the last run went, the update check's
+# answer, and the daily log.
+photos.json
+photos.lock
+photos-handover-*/
+fingerprints.json
+last-run.json
+update-check.json
+daily.log
 
 # ── Browser automation state ─────────────────────────────────────────────────
 user-data-dir/
@@ -108,5 +131,9 @@ coverage/
 # Claude Code worktrees used by parallel agents
 .claude/worktrees/
 
-# The mark scripts/deploy.js leaves in the production clone. Never committed.
+# The mark scripts/deploy.js leaves in the production clone. Never committed; a test checks
+# that neither it nor the development mark's name is ever tracked (security review sc-11).
 .care-album-saver-production
+# The development mark lives inside .git, where nothing is committed; a file of its name in
+# the tree means nothing to the tool, and is refused so that it cannot look as though it did.
+care-album-saver-development
