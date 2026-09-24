@@ -411,7 +411,12 @@ async function takeLock(): Promise<(() => Promise<void>) | null> {
     try {
       handle = await open(file, 'wx', 0o600);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        // A folder at the name is EEXIST here, but may be EISDIR or EPERM elsewhere (Windows).
+        const found = await sightLock(file).catch(() => null);
+        if (found?.notAFile !== undefined) throw new RunLockUnusableError(file, found.notAFile);
+        throw error;
+      }
     }
     if (handle) {
       await writeLockOrRemove(handle, file, mine);

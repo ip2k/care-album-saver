@@ -30,7 +30,7 @@ import { RunLockUnusableError, runLockRefusal, setAsideIfUnchanged, sightLock, w
  *    every run for ever as a benign "another run is already saving photos"; a folder there
  *    threw a raw EISDIR. Both are now a failure that says what to do.
  *  - processes-10: a lock written on another computer was honoured as long as it kept being
- *    refreshed; now for a day at most.
+ *    refreshed; now for a day at most, unless a live process here may be its holder.
  *  - processes-6: the Photos lock had the same takeover race, left an empty lock behind when
  *    its write failed, and its release removed whatever lock was there.
  */
@@ -67,7 +67,7 @@ const litter = async (dir) => (await readdir(dir)).filter((n) => n.includes('.st
 
 // ---------------------------------------------------------------- fs-7: taking over by rename
 
-test('fs-7: of two runs that find the same abandoned lock at once, exactly one holds the folder', async () => {
+test('fs-7: of three runs that find the same abandoned lock at once, exactly one holds the folder', async () => {
   const dead = deadPid();
   for (let round = 0; round < 25; round += 1) {
     const dir = await folder('race');
@@ -229,7 +229,7 @@ test('a folder at the lock\'s name is the same clear failure, never a raw EISDIR
   try {
     await mkdir(file);
     await writeFile(join(file, 'inside.txt'), 'kept');
-    await utimes(file, hoursAgo(3), hoursAgo(3));
+    await utimes(file, hoursAgo(3), hoursAgo(3)).catch(() => {}); // a folder's time, where the platform lets it be set
     await assert.rejects(takeRunLock(dir), (error) => {
       assert.equal(error.name, 'RunLockUnusableError');
       assert.match(error.message, /a folder/);
@@ -378,7 +378,7 @@ test('processes-6: something at the Photos lock\'s name that is not a file is sa
   const lock = join(configDir, 'photos.lock');
   try {
     await mkdir(lock);
-    await utimes(lock, hoursAgo(2), hoursAgo(2));
+    await utimes(lock, hoursAgo(2), hoursAgo(2)).catch(() => {});
     const photos = recorder();
     await assert.rejects(addToPhotos(config, { platform: 'darwin', spawn: photos.spawn }), /not the lock file this tool makes/);
     assert.equal(photos.calls.length, 0, 'Photos was not asked');
