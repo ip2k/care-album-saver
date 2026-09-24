@@ -2,6 +2,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import { MANIFEST_FILENAME, type ManifestRecord } from './ferry/index.js';
 import type { Config } from './config.js';
+import { walkArchive } from './maintenance.js';
+import { formatBytes } from './units.js';
 
 /**
  * What the setup page shows once there is nothing left to set up.
@@ -33,7 +35,13 @@ export interface GalleryItem {
 export interface ArchiveSummary {
   /** Every file the manifest lists, across every run this archive has ever had. */
   totalFiles: number;
+  /**
+   * The whole folder on disk — photos, the small files beside them, the tool's own list —
+   * which is what the folder check reports and what Finder, Files or Explorer shows for it.
+   */
   totalBytes: number;
+  /** totalBytes, written the way this computer's file manager writes it. */
+  totalSize: string;
   /** The most recent posted time in the archive, which is how fresh it really is. */
   newestPostedAt: string | null;
   /** The files the most recent run added, newest first. */
@@ -70,8 +78,32 @@ export async function records(config: Config): Promise<ManifestRecord[]> {
  * before today look like it had no runs at all. Files saved within a few minutes of the
  * newest one are the same run — a run takes minutes, and the next one is a day later.
  */
-export async function summarise(config: Config, limit = 12): Promise<ArchiveSummary> {
+/**
+ * The folder's size, remembered until the tool's list changes.
+ *
+ * Asked on every poll of the page — every 700ms during a run — and walking a folder of
+ * thousands of files each time would be slow on a large archive and slower on a network or
+ * iCloud one. The list is rewritten whenever anything is added, so its time and size are a
+ * cheap, reliable sign that the folder may have changed.
+ */
+let folderSize: { root: string; stamp: string; bytes: number } | null = null;
+
+async function sizeOnDisk(root: string): Promise<number> {
+  const info = await stat(join(root, MANIFEST_FILENAME)).catch(() => null);
+  const stamp = info ? `${info.mtimeMs}:${info.size}` : 'none';
+  if (folderSize && folderSize.root === root && folderSize.stamp === stamp) return folderSize.bytes;
+  const bytes = (await walkArchive(root)).reduce((sum, f) => sum + f.bytes, 0);
+  folderSize = { root, stamp, bytes };
+  return bytes;
+}
+
+export async function summarise(
+  config: Config,
+  limit = 12,
+  options: { platform?: NodeJS.Platform } = {},
+): Promise<ArchiveSummary> {
   const all = await records(config);
+  const totalBytes = all.length === 0 ? 0 : await sizeOnDisk(config.archiveDir);
   const withTime = all
     .map((r) => ({ r, at: Date.parse(r.downloadedAt ?? '') }))
     .filter((x) => Number.isFinite(x.at))
@@ -90,7 +122,8 @@ export async function summarise(config: Config, limit = 12): Promise<ArchiveSumm
 
   return {
     totalFiles: all.length,
-    totalBytes: all.reduce((sum, r) => sum + (r.bytes ?? 0), 0),
+    totalBytes,
+    totalSize: formatBytes(totalBytes, options.platform),
     newestPostedAt: postedTimes.at(-1) ?? null,
     lastRunCount: sameRun.length,
     lastSavedAt: lastSavedAt === null ? null : new Date(lastSavedAt).toISOString(),

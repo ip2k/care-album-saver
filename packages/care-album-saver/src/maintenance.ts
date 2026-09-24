@@ -5,6 +5,7 @@ import { join, posix, relative, sep } from 'node:path';
 import { Manifest, MANIFEST_FILENAME, hashFile, type ManifestRecord } from './ferry/index.js';
 import type { BrightwheelClient } from './api/client.js';
 import type { Config } from './config.js';
+import { formatBytes } from './units.js';
 
 /**
  * Looking after an archive that has been running for a year.
@@ -39,7 +40,7 @@ interface DiskFile {
 }
 
 /** Every file under the archive root, with its size. Directories are walked, not reported. */
-async function walkArchive(root: string): Promise<DiskFile[]> {
+export async function walkArchive(root: string): Promise<DiskFile[]> {
   const found: DiskFile[] = [];
   const visit = async (dir: string): Promise<void> => {
     let entries;
@@ -88,17 +89,9 @@ function isArchiveOwnFile(rel: string): boolean {
   return ARCHIVE_FILES.has(name) || name.startsWith('.');
 }
 
-/** Bytes as a parent would say them: "1.2 GB", not "1288490188". */
-export function humanBytes(bytes: number): string {
-  if (bytes < 1000) return `${bytes} bytes`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1000;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+/** Bytes as this computer's file manager would say them. See units.ts for why that differs. */
+export function humanBytes(bytes: number, platform?: NodeJS.Platform): string {
+  return formatBytes(bytes, platform);
 }
 
 // ------------------------------------------------------------------ the manifest, for writing
