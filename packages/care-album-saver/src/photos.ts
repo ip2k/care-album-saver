@@ -1,5 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, open, readdir, realpath, rm, stat, utimes } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, open, readdir, realpath, rm, utimes, type FileHandle } from 'node:fs/promises';
 import { platform as osPlatform } from 'node:os';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,7 @@ import { containedFile } from './contain.js';
 import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 import { checkArchiveDir } from './safety.js';
 import { savedFingerprints } from './fingerprints.js';
+import { RunLockUnusableError, setAsideIfUnchanged, sightLock, writeLockOrRemove } from './run-lock.js';
 
 /**
  * Adding saved photos to the Photos app, on a Mac, when the parent has asked for it.
@@ -249,9 +251,8 @@ async function sortOut(config: Config, all: readonly ManifestRecord[], state: Ph
   const seen = new Set<string>();
   let earlier = 0;
   for (const record of all) {
-    // The list is read as it is found, unchecked (gallery.ts's records), and the hash is
-    // now compared as text; an entry without a string for either is not one this tool wrote.
-    if (typeof record?.sha256 !== 'string' || typeof record.path !== 'string') continue;
+    // gallery.ts's records gives only entries `usableRecord` accepts (security review fs-8),
+    // so both are strings here; an entry with no hash names nothing to key the record by.
     if (!record.sha256 || state.added[record.sha256] || seen.has(record.sha256)) continue;
     seen.add(record.sha256);
     // A list edited by anything else that can write the folder could name a file outside
@@ -390,24 +391,46 @@ function changedReport(paths: readonly string[], added: number): string {
 /**
  * Take the one lock, so two runs at once — the daily one and a press of the button — cannot
  * both hand the same files over. Returns the release, or null when another run holds it.
+ *
+ * Built as the folder's run lock is, from its parts in run-lock.ts (security review
+ * processes-6): a lock left by a run that died is removed by one taker at a time, and only if
+ * it is still the one judged stale, so of two runs that judge it at once only one goes on
+ * (see setAsideIfUnchanged); a lock whose
+ * write failed is taken away again rather than left empty, where it would read as another
+ * run's for 45 minutes; and the release removes the lock only while it is still this run's,
+ * told apart by a random token in it.
  */
 async function takeLock(): Promise<(() => Promise<void>) | null> {
   const file = lockPath();
   await mkdir(configDir(), { recursive: true, mode: 0o700 });
-  // Twice at most: once, and once more after clearing a lock left by a run that died.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const mine = `${process.pid} ${new Date().toISOString()} ${randomBytes(8).toString('hex')}\n`;
+  // Three tries at most: once; again after a lock whose run just finished vanished, or after
+  // setting aside one left by a run that died; and a last time after both.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let handle: FileHandle | undefined;
     try {
-      const handle = await open(file, 'wx', 0o600);
-      await handle.writeFile(`${process.pid} ${new Date().toISOString()}\n`);
-      await handle.close();
-      return () => rm(file, { force: true });
+      handle = await open(file, 'wx', 0o600);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      // Gone between the two calls means its owner just finished: try again at once.
-      const touched = await stat(file).then((s) => s.mtimeMs, () => 0);
-      if (Date.now() - touched < STALE_LOCK_MS) return null;
-      await rm(file, { force: true });
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        // A folder at the name is EEXIST here, but may be EISDIR or EPERM elsewhere (Windows).
+        const found = await sightLock(file).catch(() => null);
+        if (found?.notAFile !== undefined) throw new RunLockUnusableError(file, found.notAFile);
+        throw error;
+      }
     }
+    if (handle) {
+      await writeLockOrRemove(handle, file, mine);
+      return async () => {
+        const now = await sightLock(file).catch(() => null);
+        if (now?.text === mine) await rm(file, { force: true });
+      };
+    }
+    const seen = await sightLock(file);
+    // Gone between the two calls means its owner just finished: try again at once.
+    if (!seen) continue;
+    if (seen.notAFile !== undefined) throw new RunLockUnusableError(file, seen.notAFile);
+    if (Date.now() - seen.touched < STALE_LOCK_MS) return null;
+    await setAsideIfUnchanged(file, seen);
   }
   return null;
 }

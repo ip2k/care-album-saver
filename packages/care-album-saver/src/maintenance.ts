@@ -1,6 +1,8 @@
-import { readdir, readFile, rm, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, open, readdir, rm, stat, type FileHandle } from 'node:fs/promises';
 import { join, posix, relative, sep } from 'node:path';
-import { Manifest, MANIFEST_FILENAME, hashFile, writeAtomically, type ManifestRecord } from './ferry/index.js';
+import { MANIFEST_FILENAME, hashFile, writeAtomically, type ManifestRecord } from './ferry/index.js';
+import { readManifestFile, usableRecord } from './ferry/manifest.js';
 import { containedFile } from './contain.js';
 import { runLockRefusal, takeRunLock, type RunLock } from './run-lock.js';
 import type { BrightwheelClient } from './api/client.js';
@@ -120,23 +122,27 @@ export function humanBytes(bytes: number, platform?: NodeJS.Platform): string {
  * untouched: the schema number, the source, the notes a reader years from now will need,
  * and the walk state that decides where the next run starts.
  *
- * `Manifest.open` is still called first, and its refusal is still the refusal: it is the
- * one place that knows which manifests are unusable, and rebuilding that judgement here
- * would be a second opinion that could disagree with the run's.
+ * Read by `readManifestFile`, the same judgement `Manifest.open` makes, so a list the run
+ * refuses as a whole is refused here in the same words: rebuilding that judgement here would
+ * be a second opinion that could disagree with the run's. The one difference is on purpose.
+ * An entry `usableRecord` refuses stops the run (see `Manifest.open`), and maintenance is the
+ * way out of that, so here such entries are counted rather than refused: the check reports
+ * them, the repair sets them aside, and everything else carries them through unchanged
+ * (security review fs-8, and the verifier's "every maintenance action fails" with it).
  */
-async function readManifestJson(archiveDir: string): Promise<{ data: Record<string, unknown>; records: ManifestRecord[] }> {
-  await Manifest.open(archiveDir, 'brightwheel');
-  const file = join(archiveDir, MANIFEST_FILENAME);
-  let raw: string;
-  try {
-    raw = await readFile(file, 'utf8');
-  } catch {
-    // No manifest yet: an archive nothing has ever been saved into.
-    return { data: {}, records: [] };
-  }
-  const data = JSON.parse(raw) as Record<string, unknown>;
-  const records = Array.isArray(data.files) ? (data.files as ManifestRecord[]) : [];
-  return { data, records };
+interface ManifestJson {
+  data: Record<string, unknown>;
+  /** The usable entries. */
+  records: ManifestRecord[];
+  /** Every entry as found, usable or not: what a write that is not the repair carries through. */
+  entries: unknown[];
+  /** How many entries are not usable. */
+  unusable: number;
+}
+
+async function readManifestJson(archiveDir: string): Promise<ManifestJson> {
+  // No manifest yet: an archive nothing has ever been saved into.
+  return (await readManifestFile(archiveDir)) ?? { data: {}, records: [], entries: [], unusable: 0 };
 }
 
 /**
@@ -184,7 +190,7 @@ export async function archiveBusy(config: Config, wanted: 'check' | 'repair' | '
 }
 
 /** Write the manifest back, atomically and owner-only, exactly as the run would. */
-async function writeManifestJson(archiveDir: string, data: Record<string, unknown>, records: ManifestRecord[]): Promise<void> {
+async function writeManifestJson(archiveDir: string, data: Record<string, unknown>, records: unknown[]): Promise<void> {
   const payload = { ...data, files: records, updatedAt: new Date().toISOString() };
   await writeAtomically(join(archiveDir, MANIFEST_FILENAME), JSON.stringify(payload, null, 2), 0o600);
 }
@@ -284,6 +290,11 @@ export interface ArchiveAudit {
   unrecorded: string[];
   /** In the manifest, not on disk: moved, deleted, or on a drive that is not plugged in. */
   missing: string[];
+  /**
+   * Entries of the list that are not in the form this tool writes (`usableRecord`), which
+   * stop every run until the list is fixed; the repair sets them aside. Not in `recorded`.
+   */
+  unusable: number;
   /** Everything under the archive folder, companions and all. */
   bytesOnDisk: number;
   /** Whether repairing the manifest would change anything. */
@@ -300,7 +311,7 @@ export interface ArchiveAudit {
  */
 export async function auditArchive(config: Config): Promise<ArchiveAudit> {
   const root = config.archiveDir;
-  const { records } = await readManifestJson(root);
+  const { records, unusable } = await readManifestJson(root);
   const files = await walkArchive(root);
   const everything = new Set(files.map((f) => f.rel));
   const media = files.filter((f) => !isArchiveOwnFile(f.rel) && !isCompanion(f.rel));
@@ -326,7 +337,14 @@ export async function auditArchive(config: Config): Promise<ArchiveAudit> {
         `moved, deleted, or on a drive that is not plugged in.`,
     );
   }
-  if (unrecorded.length === 0 && missing.length === 0) parts.push('Everything matches.');
+  if (unusable > 0) {
+    parts.push(
+      `${unusable === 1 ? 'One entry on the list is' : `${unusable} entries on the list are`} not in the form this tool ` +
+        `writes, so no run can start until the list is fixed. Fixing it sets ${unusable === 1 ? 'that entry' : 'them'} ` +
+        `aside, and lists again every photo that is on disk.`,
+    );
+  }
+  if (unrecorded.length === 0 && missing.length === 0 && unusable === 0) parts.push('Everything matches.');
 
   return {
     archiveDir: root,
@@ -334,8 +352,9 @@ export async function auditArchive(config: Config): Promise<ArchiveAudit> {
     onDisk: media.length,
     unrecorded,
     missing,
+    unusable,
     bytesOnDisk,
-    repairable: unrecorded.length > 0 || missing.length > 0,
+    repairable: unrecorded.length > 0 || missing.length > 0 || unusable > 0,
     summary: parts.join(' '),
   };
 }
@@ -343,6 +362,8 @@ export async function auditArchive(config: Config): Promise<ArchiveAudit> {
 export interface RepairResult {
   added: number;
   dropped: number;
+  /** Entries not in the form this tool writes, set aside (see `ArchiveAudit.unusable`). */
+  unusable: number;
   summary: string;
 }
 
@@ -357,6 +378,11 @@ export interface RepairResult {
  *  - A record whose file is gone is dropped from the list. That is not a deletion: the file
  *    is already not there. Dropping it is what lets the next run notice and fetch it back.
  *
+ * And an entry that is not in the form this tool writes — which stops every run (see
+ * `Manifest.open`) — is set aside: it names no file this tool can find, and a photo it may
+ * have stood for is on disk, unrecorded, and listed again by the first repair above from the
+ * `.json` saved beside it.
+ *
  * No photo is written, moved or removed by this. That is the whole reason it can be offered
  * as a single press.
  */
@@ -369,7 +395,7 @@ export async function repairManifest(config: Config): Promise<RepairResult> {
 async function repairHoldingTheLock(config: Config): Promise<RepairResult> {
   const root = config.archiveDir;
   const audit = await auditArchive(config);
-  const { data, records } = await readManifestJson(root);
+  const { data, records, unusable } = await readManifestJson(root);
 
   const kept = records.filter((r) => !audit.missing.includes(r.path));
   const dropped = records.length - kept.length;
@@ -415,13 +441,14 @@ async function repairHoldingTheLock(config: Config): Promise<RepairResult> {
     added += 1;
   }
 
-  if (added > 0 || dropped > 0) await writeManifestJson(root, data, kept);
+  if (added > 0 || dropped > 0 || unusable > 0) await writeManifestJson(root, data, kept);
 
   const parts: string[] = [];
   if (added > 0) parts.push(`${added} file${added === 1 ? '' : 's'} already on disk ${added === 1 ? 'is' : 'are'} now on the list, so ${added === 1 ? 'it' : 'they'} will not be downloaded again.`);
   if (dropped > 0) parts.push(`${dropped} entr${dropped === 1 ? 'y' : 'ies'} for ${dropped === 1 ? 'a file' : 'files'} that is not there ${dropped === 1 ? 'was' : 'were'} removed from the list, so the next run will fetch ${dropped === 1 ? 'it' : 'them'} again.`);
+  if (unusable > 0) parts.push(`${unusable === 1 ? 'One entry' : `${unusable} entries`} not in the form this tool writes ${unusable === 1 ? 'was' : 'were'} set aside, so runs can start again.`);
   if (parts.length === 0) parts.push('Nothing needed fixing.');
-  return { added, dropped, summary: parts.join(' ') };
+  return { added, dropped, unusable, summary: parts.join(' ') };
 }
 
 interface Sidecar {
@@ -435,13 +462,58 @@ interface Sidecar {
   kind?: string;
 }
 
+/** A sidecar is a few hundred bytes; anything this large is not one this tool wrote. */
+const SIDECAR_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Not through a link, and never block on something that is not a file: O_NOFOLLOW where the
+ * platform has it (not Windows, where the lstat below is the whole check), and O_NONBLOCK so
+ * that a FIFO planted at the name cannot hang the repair.
+ */
+const SIDECAR_OPEN_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
+
+/**
+ * The `.json` saved beside a photo, if it is an ordinary file in the archive.
+ *
+ * Only an ordinary file, never one reached through a symbolic link (security review,
+ * the filesystem verifier's "repair sidecar through link"): what it says is copied into
+ * archive.json as the photo's provenance — the child, the note, who posted it — and a link
+ * planted at that name by anything else that can write the folder would otherwise have the
+ * repair copy some other file's contents into the list. The photo itself is reached through
+ * containedFile, which refuses links; this is the same rule for the file beside it.
+ */
 async function readSidecar(path: string): Promise<Sidecar | null> {
+  let handle: FileHandle | undefined;
   try {
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as Sidecar;
-    return typeof parsed === 'object' && parsed !== null ? parsed : null;
+    const found = await lstat(path);
+    if (!found.isFile() || found.size > SIDECAR_MAX_BYTES) return null;
+    handle = await open(path, SIDECAR_OPEN_FLAGS);
+    // The file opened is the one looked at, and still an ordinary file of a sidecar's size.
+    const info = await handle.stat();
+    if (!info.isFile() || info.ino !== found.ino || info.dev !== found.dev || info.size > SIDECAR_MAX_BYTES) return null;
+    const parsed = JSON.parse(await handle.readFile('utf8')) as unknown;
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? sidecarFields(parsed as Record<string, unknown>) : null;
   } catch {
     return null;
+  } finally {
+    await handle?.close().catch(() => {});
   }
+}
+
+/** The fields the repair copies, each only when it has the type this tool writes it with. */
+function sidecarFields(raw: Record<string, unknown>): Sidecar {
+  const text = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
+  const textOrNull = (value: unknown): string | null | undefined => (value === null ? null : typeof value === 'string' ? value : undefined);
+  const child = typeof raw.child === 'object' && raw.child !== null ? (raw.child as Record<string, unknown>) : undefined;
+  return {
+    brightwheelActivityId: text(raw.brightwheelActivityId),
+    postedAt: text(raw.postedAt),
+    capturedAt: text(raw.capturedAt),
+    child: child ? { id: text(child.id), name: text(child.name) } : undefined,
+    note: textOrNull(raw.note),
+    postedBy: textOrNull(raw.postedBy),
+    kind: text(raw.kind),
+  };
 }
 
 // ------------------------------------------------------------------ 3. duplicates
@@ -600,7 +672,7 @@ async function removeHoldingTheLock(config: Config, wanted: string[]): Promise<R
   }
 
   const root = config.archiveDir;
-  const { data, records } = await readManifestJson(root);
+  const { data, entries } = await readManifestJson(root);
   const removed: string[] = [];
   let bytes = 0;
   for (const rel of wanted) {
@@ -617,10 +689,12 @@ async function removeHoldingTheLock(config: Config, wanted: string[]): Promise<R
   }
 
   const gone = new Set(removed);
+  // Every other entry exactly as it was, an unusable one included: this removes duplicates,
+  // and setting such entries aside is the repair's, said in its report (fs-8).
   await writeManifestJson(
     root,
     data,
-    records.filter((r) => !gone.has(r.path.split('\\').join('/'))),
+    entries.filter((r) => !(usableRecord(r) && gone.has(r.path.split('\\').join('/')))),
   );
 
   return {
