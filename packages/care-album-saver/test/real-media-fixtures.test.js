@@ -178,7 +178,7 @@ test('buildTags picks the table by kind: EXIF for photos, QuickTime for videos',
   const when = new Date('2026-09-17T18:14:55-10:00');
   const base = {
     filePath: '/nowhere', tagChildName: true, tagNote: true, stripLocation: true, writeSidecar: false,
-    student: { id: 's', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook' },
+    student: { id: 's', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Example Care Provider' },
   };
   const activity = { id: 'a', studentId: 's', postedAt: when, note: 'Water play.', url: 'u', author: 'Ms. Alvarez' };
 
@@ -237,7 +237,7 @@ test('photo metadata round-trips: capture time, offset, name and note, pixels un
   assert.equal(tags['XMP-dc:Description'], photo.sidecar.note);
   assert.equal(tags['IPTC:Caption-Abstract'], photo.sidecar.note);
   assert.equal(tags['XMP-dc:Creator'], photo.sidecar.postedBy);
-  assert.equal(tags['XMP-iptcExt:LocationCreatedSublocation'], 'Sunnybrook Early Learning');
+  assert.equal(tags['XMP-iptcExt:LocationCreatedSublocation'], 'Example Care Provider');
   // A backstop, not the proof: the mock's photos carry no coordinates in the first place,
   // so this line would hold with the stripping removed. What the strip actually does is
   // proved further down, on a file that does carry them.
@@ -400,7 +400,7 @@ const gpsActivity = (id, kind) => ({
   kind,
 });
 const GPS_STUDENT = {
-  id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook Early Learning',
+  id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Example Care Provider',
 };
 
 test('coordinates that come in with a photo or a video are taken back out', { skip: exiftoolMissing }, async () => {

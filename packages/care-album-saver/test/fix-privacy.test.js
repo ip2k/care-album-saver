@@ -48,7 +48,7 @@ const STUDENT = {
   firstName: 'Robin',
   lastName: 'Maple',
   fullName: 'Robin Maple',
-  schoolName: 'Sunnybrook Early Learning',
+  schoolName: 'Example Care Provider',
 };
 const ACTIVITY = {
   id: 'act-1',
@@ -107,7 +107,7 @@ test('with the names off, the teacher\'s note stays out of the file as well', ()
     assert.ok(!off.includes('Sunflower'), `${kind}: nor the room, which the note names`);
     assert.ok(!off.includes('circle time'), `${kind}: nor any of the note`);
     assert.ok(!off.includes('Alvarez'), `${kind}: nor whoever posted it`);
-    assert.ok(!off.includes('Sunnybrook'), `${kind}: nor the nursery`);
+    assert.ok(!off.includes('Example Care Provider'), `${kind}: nor the nursery`);
 
     // And the dates, which say nothing about who, are written either way. Without this the
     // test above would pass just as well on a function that returned nothing at all.
@@ -144,7 +144,7 @@ test('nothing is lost: the .json sidecar keeps the note and the nursery whatever
   const first = manifest.files[0];
   const sidecar = JSON.parse(await readFile(join(dir, `${first.path}.json`), 'utf8'));
   assert.equal(sidecar.child.name, 'Robin Maple', 'the sidecar is the record, and keeps the name');
-  assert.equal(sidecar.school, 'Sunnybrook Early Learning');
+  assert.equal(sidecar.school, 'Example Care Provider');
   assert.ok(sidecar.postedBy, 'and who posted it');
   t.diagnostic(`sidecar note: ${sidecar.note === null ? '(none on this record)' : 'present'}`);
 });
@@ -265,7 +265,7 @@ function fakeApi() {
   // carries the nursery's name, because a per-tenant bucket really can, and the test below
   // is about verify not printing it.
   const mediaUrl =
-    'https://sunnybrook-early-learning.media.example.net/p/1.jpg?signature=not-a-real-signature&expires=99';
+    'https://example-care-provider.media.example.net/p/1.jpg?signature=not-a-real-signature&expires=99';
   const json = (body) =>
     new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
 
@@ -338,7 +338,7 @@ test('the verify report is safe to paste in public: no session, no signature, no
   assert.ok(!text.includes(mediaUrl), 'nor the media URL');
   // A per-tenant host can carry the nursery's name. The company that serves the media is
   // the useful answer; the labels in front of it are somebody's family.
-  assert.ok(!text.includes('sunnybrook-early-learning'), 'nor anything that names the nursery');
+  assert.ok(!text.includes('example-care-provider'), 'nor anything that names the nursery');
   assert.match(text, /Media is served from example\.net/, 'the useful half of the host is still reported');
 
   // How many children are on the account is a fact about the family, not about the API.

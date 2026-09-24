@@ -210,7 +210,7 @@ test('a stop that arrives in the instant a run is starting still stops it', asyn
  * the child attends. All three now follow the same switch.
  */
 const NAMED = {
-  student: { id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Sunnybrook Early Learning' },
+  student: { id: 'stu-x', firstName: 'Robin', lastName: 'Maple', fullName: 'Robin Maple', schoolName: 'Example Care Provider' },
   activity: {
     id: 'act-1',
     studentId: 'stu-x',
@@ -225,7 +225,7 @@ const NAMED = {
    * is governed by this one as well, because a note routinely names the child, the room
    * and the teacher in one sentence.
    */
-  names: ['Robin', 'Sunnybrook', 'Alvarez'],
+  names: ['Robin', 'Example Care Provider', 'Alvarez'],
   note: 'Water play',
 };
 

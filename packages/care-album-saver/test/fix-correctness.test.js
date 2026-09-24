@@ -462,7 +462,7 @@ test('who posted a photo is recorded, from the fields the real API actually has'
     // The staff email is on the record and must not be taken: a member of staff did not
     // agree to be in a parent's archive, and a name is all the provenance an archive needs.
     const raw = await readFile(join(dir, 'archive.json'), 'utf8');
-    assert.ok(!raw.includes('@sunnybrook.example'), 'and never their email address');
+    assert.ok(!raw.includes('@example-care-provider.example'), 'and never their email address');
   } finally {
     await mock.close();
   }

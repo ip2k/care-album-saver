@@ -78,8 +78,8 @@ export interface MockOptions {
 const SESSION_COOKIE_NAME = '_brightwheel_v2';
 
 const STUDENTS = [
-  { object_id: 'stu-aaa-111', first_name: 'Robin', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
-  { object_id: 'stu-bbb-222', first_name: 'Sam', last_name: 'Maple', school: { name: 'Sunnybrook Early Learning' } },
+  { object_id: 'stu-aaa-111', first_name: 'Robin', last_name: 'Maple', school: { name: 'Example Care Provider' } },
+  { object_id: 'stu-bbb-222', first_name: 'Sam', last_name: 'Maple', school: { name: 'Example Care Provider' } },
 ];
 
 const NOTES = [
@@ -121,7 +121,7 @@ function actorFor(index: number) {
     object_id: `stf-${surname.toLowerCase()}`,
     first_name: title,
     last_name: surname,
-    email: `${surname.toLowerCase()}@sunnybrook.example`,
+    email: `${surname.toLowerCase()}@example-care-provider.example`,
     user_type: 'staff',
     role: { is_administrator: false },
   };
