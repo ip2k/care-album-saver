@@ -306,12 +306,17 @@ test('outbound-3: a connection that ends short of Content-Length is said in word
 
 // ------------------------------------------------------------------ missed-web
 
-/** A copy of the tool on disk: `<root>/packages/care-album-saver/dist/cli.js`. */
+/**
+ * A copy of the tool on disk: `<root>/packages/care-album-saver/dist/cli.js`, with the two
+ * package.json files a clone has, which is how a copy's root is found (processes-9).
+ */
 async function copyOfTheTool(name, { production = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), `cas-copy-${name}-`));
   const dist = join(root, 'packages', 'care-album-saver', 'dist');
   await mkdir(dist, { recursive: true });
   await writeFile(join(dist, 'cli.js'), '');
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'care-album-saver', private: true }));
+  await writeFile(join(dist, '..', 'package.json'), JSON.stringify({ name: 'care-album-saver' }));
   if (production) await writeFile(join(root, '.care-album-saver-production'), `${root}\nproduction\n`);
   return join(dist, 'cli.js');
 }
@@ -349,7 +354,7 @@ test('missed-web: another copy that is still there cannot take over the daily ru
   assert.equal((await loadConfig()).schedule, null);
 });
 
-test('missed-web: a copy that is gone owns nothing, and a record from before copies were written down names no owner', async () => {
+test('missed-web: a copy that is gone owns nothing, and a record from before copies were written down is owned by the copy its job runs', async () => {
   await freshConfigDir();
   const env = await scheduler();
   const gone = join(await mkdtemp(join(tmpdir(), 'cas-gone-')), 'packages', 'care-album-saver', 'dist', 'cli.js');
@@ -358,10 +363,15 @@ test('missed-web: a copy that is gone owns nothing, and a record from before cop
   await schedule.install('18:00', env(mine));
   assert.equal((await loadConfig()).schedule.cliPath, mine);
 
+  // Since §4.4: the record names no owner, but the LaunchAgent still runs `mine`, and that is
+  // who owns it (test/notes-schedule-cli-owner.test.js has the other three schedulers).
   const config = await loadConfig();
   const { cliPath: _, ...legacy } = config.schedule;
   await writeFile(configPath(), JSON.stringify({ ...config, schedule: legacy }));
-  await schedule.install('19:00', env(await copyOfTheTool('other')));
+  const other = await copyOfTheTool('other');
+  await assert.rejects(schedule.install('19:00', env(other)), (error) => error instanceof schedule.ScheduleOwnedElsewhereError && error.owner === mine);
+  await schedule.install('19:00', env(other), { replace: true });
+  assert.equal((await loadConfig()).schedule.cliPath, other);
 });
 
 test('missed-web: a production copy\'s daily run is not taken or turned off from anywhere else, except by --replace', async () => {
