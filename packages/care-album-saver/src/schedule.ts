@@ -218,11 +218,14 @@ export async function notify(message: string, env: ScheduleEnvironment = {}): Pr
   const title = 'Care Album Saver';
   try {
     if (e.platform === 'darwin') {
-      // The message is a literal here, never interpolated from an error: this is
-      // AppleScript source, and the argument array does not protect its contents.
+      // Each message is a literal here, never interpolated from an error: this is
+      // AppleScript source, and the argument array does not protect its contents. A message
+      // this function does not know is not shown at all.
       const script = message === FAILED_NOTICE
         ? `display notification "The daily photo run did not work. Open the setup assistant to see why." with title "${title}"`
-        : null;
+        : message === PHOTOS_NOTICE
+          ? `display notification "Your new photos were saved, but could not be added to Photos. Open the setup assistant to see why." with title "${title}"`
+          : null;
       if (!script) return false;
       return (await e.run('osascript', ['-e', script])).code === 0;
     }
@@ -233,7 +236,7 @@ export async function notify(message: string, env: ScheduleEnvironment = {}): Pr
   }
 }
 
-/** The one notice this tool sends. Fixed text, so nothing about a family can reach it. */
+/** One of the two notices this tool sends. Fixed text, so nothing about a family can reach it. */
 export const FAILED_NOTICE = 'The daily photo run did not work. Open the setup assistant to see why.';
 
 /**

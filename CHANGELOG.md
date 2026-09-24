@@ -79,6 +79,15 @@ file was started.
 
 ### Fixed
 
+- Six things the dead-code audit found on the way. The Docker build context now excludes
+  `node_modules`, `dist`, sessions and archives at any depth, not only at the root (the host's
+  build output had been going into the image). A request the setup page's server cannot read
+  gets a fixed "not understood" answer instead of an error that quoted part of it. The settings
+  patch stores only the eight settings the page can change, each in its expected shape. The
+  "could not be added to Photos" notification can now actually be shown. Photos are served on
+  Windows (the containment check assumed `/`), and a symbolic link planted inside the archive
+  can no longer reach a file outside it. The demo's "open the log" no longer opens a real
+  log viewer.
 - `docker build` failed: the Dockerfile still copied the `media-ferry` package, which was folded
   into this one on 23 September. A test now checks that everything the Dockerfile copies exists.
 - `scripts/deploy.js` could deploy only once: every later deploy failed a test that assumed the
