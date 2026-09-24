@@ -1,15 +1,23 @@
-# Keep the build context minimal. A `COPY . .` with a developer's session file in the
-# tree would bake that credential into an image layer — and deleting it in a later
-# layer does NOT remove it from the image history.
+# Keep the build context minimal. The Dockerfile copies the root manifests by name and the
+# whole packages/ folder, and anything that reaches the build stage is in the image's
+# history for good: deleting it in a later layer does NOT remove it. A pattern here is
+# anchored at the context root unless it starts with **/, which is why every rule below
+# does. The first version of this file listed `dist`, `node_modules` and `session.json`
+# bare, so they matched only at the root, and the host's build output and node_modules
+# under packages/ went into the image (found by the 2026-09-23 audit).
 .git
-node_modules
-dist
-*.har
-*.env
-.env*
-session.json
-config.json
-cookies.*
+.claude
 docs
-Brightwheel*Photos/
+**/.git
+**/node_modules
+**/dist
 **/*.tsbuildinfo
+**/*.har
+**/*.env
+**/.env*
+**/session.json
+**/config.json
+**/cookies.*
+**/Care*Album*Photos/
+**/Brightwheel*Photos/
+**/.care-album-saver-production
