@@ -68,13 +68,14 @@ async function setupUi({ connect = true } = {}) {
 const pageHtml = (handle) =>
   fetch(`http://127.0.0.1:${handle.port}/?token=${handle.token}`).then((r) => r.text());
 
-/** The page's one inline script, as source text. */
+/** The page's one inline script, as source text. Its tag carries the CSP nonce (security review page-3). */
 function pageScript(html) {
-  const open = html.indexOf('<script>');
+  const open = html.indexOf('<script nonce="');
+  const body = html.indexOf('>', open) + 1;
   const close = html.indexOf('</script>', open);
-  assert.ok(open > 0 && close > open, 'the page must carry an inline script');
+  assert.ok(open > 0 && close > body, 'the page must carry an inline script');
   assert.equal(html.indexOf('<script', close), -1, 'and exactly one, or this reads the wrong half');
-  return html.slice(open + '<script>'.length, close);
+  return html.slice(body, close);
 }
 
 /** The slice of that script between two markers, so an assertion cannot match elsewhere. */
@@ -313,7 +314,7 @@ test('the page keeps a refused folder marked until the folder itself is fixed', 
     // The refusal is restored from its own words. Restoring whatever error happened to be
     // in the box would pin an unrelated, transient one there for the rest of the session.
     const note = section(html, 'function savedNote()', '/** The folder is agreed again');
-    assert.match(note, /if \(dirError\) el\.innerHTML = /, 'a later "Saved" puts the refusal back');
+    assert.match(note, /if \(dirError\) say\(el, 'err', dirError\)/, 'a later "Saved" puts the refusal back, as text');
     assert.ok(!note.includes("querySelector('.msg.err')"), 'and never re-uses an unrelated error');
     assert.match(section(html, 'function showSaveError', 'function updateRunReady'), /dirError = text/);
     assert.match(section(html, 'function clearDirError()', 'function showSaveError'), /aria-invalid', 'false'/);
@@ -365,7 +366,7 @@ test('the page offers Stop only while a run is going, and reports a stopped run 
     const paint = html.slice(html.indexOf('function paint(p, running, result)'));
     assert.match(paint, /const stopped = p\.phase === 'stopped';/);
     assert.match(paint, /bar\.dataset\.stopped = stopped/, 'the bar holds still where the run stopped');
-    assert.match(paint, /show\(\$\('run-result'\), 'ok', esc\(p\.message\)\)/, 'a neutral notice, not an error');
+    assert.match(paint, /say\(\$\('run-result'\), 'ok', p\.message\)/, 'a neutral notice, not an error');
     assert.match(paint, /if \(p\.phase !== lastAnnounced\)/, 'and the new phase is announced once');
     assert.match(paint, /updateRunReady\(\);/, 'which is what puts Start back');
   } finally {

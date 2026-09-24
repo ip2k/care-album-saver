@@ -178,12 +178,13 @@ test('the page saves each option as it changes and persists the form before star
     assert.ok(persistAt > 0 && syncAt > persistAt, 'Start saving persists the whole form before it starts');
     assert.ok(run.slice(persistAt, syncAt).includes('return;'), 'and refuses to start when that fails');
 
-    // The child chips are real checkboxes with real labels, and names are escaped.
+    // The child chips are real checkboxes with real labels, and names are text, never markup
+    // (security review page-3: built with h(), where a string is always a text node).
     assert.ok(html.includes('<fieldset class="kids-set">'), 'children are grouped as a fieldset');
     assert.ok(html.includes('<legend>Save photos for</legend>'));
-    assert.ok(html.includes("<label class=\"kid\" for=\"kid-' + i + '\">"), 'label[for] per child');
-    assert.ok(html.includes("'<input type=\"checkbox\" id=\"kid-' + i + '\" data-id=\"' + esc(k.id) + '\"'"), 'checkbox per child, id escaped');
-    assert.ok(html.includes('esc(k.fullName)'), 'the name is escaped before innerHTML');
+    assert.ok(html.includes("h('label', { class: 'kid', for: 'kid-' + i }, box, k.fullName)"), 'label[for] per child, the name a text node');
+    assert.ok(html.includes("h('input', { type: 'checkbox', id: 'kid-' + i })"), 'checkbox per child');
+    assert.ok(html.includes('box.dataset.id = k.id;'), 'the Brightwheel id set as a property, not spliced into markup');
     assert.ok(html.includes('id="kids-status" role="status" aria-live="polite"'), 'selection changes are announced');
     assert.match(html, /\.kid input\[type=checkbox\][^}]*width: 1\.5rem; height: 1\.5rem/, 'checkbox is 24px');
     assert.ok(html.includes('none = kids.length > 0 && selectedIds().length === 0'), 'Start is disabled when nobody is ticked');

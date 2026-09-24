@@ -239,12 +239,42 @@ const RESTART = 'Then stop this page (Ctrl+C in the terminal it was started from
 const DAILY_CARRIES_ON = 'The daily run, if it is set up, uses the new version from its next run: nothing else to change.';
 
 /**
+ * A folder written so that the shell the steps are typed into reads it as one word.
+ *
+ * `cd ~/My Photos Tool` is `cd` with three arguments, so a folder with a space in it — or a
+ * quote, a bracket, an ampersand — broke the first command of the update (security review
+ * page-4). A folder that needs nothing is left as it is, so the usual case reads as before.
+ *
+ * On a Mac or Linux it is single-quoted, which the shell takes literally, with a quote inside
+ * written as '\''. A leading ~/ stays outside the quotes, where it still means the home
+ * folder. On Windows it is double-quoted, the one quoting that cmd and PowerShell both
+ * understand; neither allows a double quote in a folder name. A `$` or backtick (PowerShell)
+ * or a `%` (cmd) inside a Windows folder name is not handled: no single spelling serves both
+ * shells, and a folder named like that is rare enough to leave to the update guide.
+ */
+function shellFolder(path: string, platform: NodeJS.Platform): string {
+  if (platform === 'win32') return /^[A-Za-z0-9_\-.\\/:~]+$/.test(path) ? path : `"${path}"`;
+  const home = /^~(?:\/|$)/.exec(path)?.[0] ?? '';
+  const rest = path.slice(home.length);
+  if (/^[A-Za-z0-9_\-./+,:@%]*$/.test(rest)) return path;
+  return `${home}'${rest.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * The steps for each way of installing. `root` is where a clone or download lives and
  * `source` the checkout a production copy is deployed from, both written the way a person
- * reads them (~/…).
+ * reads them (~/…). `platform` says which shell the commands are for, and so how a folder
+ * in them is quoted: this computer's, unless a test says otherwise.
  */
-export function updateSteps(kind: InstallKind, where: { root?: string | null; source?: string | null } = {}): UpdateSteps {
+export function updateSteps(
+  kind: InstallKind,
+  where: { root?: string | null; source?: string | null; platform?: NodeJS.Platform } = {},
+): UpdateSteps {
+  const platform = where.platform ?? process.platform;
+  // The words used when the folder is not known are a placeholder for the person to replace,
+  // not a folder, so they are never quoted.
   const root = where.root ?? 'the folder it is in';
+  const cdRoot = `cd ${where.root ? shellFolder(where.root, platform) : root}`;
   const global = (installedAs: string, command: string): UpdateSteps => ({
     installedAs,
     before: 'In a terminal:',
@@ -262,7 +292,12 @@ export function updateSteps(kind: InstallKind, where: { root?: string | null; so
       return {
         installedAs: 'the production copy that scripts/deploy.js keeps',
         before: 'Bring the checkout it is deployed from up to date, then deploy again:',
-        commands: [`cd ${where.source ?? 'your development checkout'}`, 'git switch main', 'git pull', 'node scripts/deploy.js'],
+        commands: [
+          `cd ${where.source ? shellFolder(where.source, platform) : 'your development checkout'}`,
+          'git switch main',
+          'git pull',
+          'node scripts/deploy.js',
+        ],
         after:
           'deploy.js builds and tests the new version, moves the daily run onto it, and puts ' +
           `production back as it was if anything fails. ${RESTART}`,
@@ -271,7 +306,7 @@ export function updateSteps(kind: InstallKind, where: { root?: string | null; so
       return {
         installedAs: 'a clone of the repository',
         before: 'In a terminal:',
-        commands: [`cd ${root}`, 'git pull', 'pnpm install', 'pnpm build'],
+        commands: [cdRoot, 'git pull', 'pnpm install', 'pnpm build'],
         after: `${RESTART} ${DAILY_CARRIES_ON} If git says you have changes of your own, git stash puts them aside first.`,
       };
     case 'download':
@@ -281,7 +316,7 @@ export function updateSteps(kind: InstallKind, where: { root?: string | null; so
           'Download the new version’s source code (the .zip on its release page), and put its contents ' +
           `in place of this folder’s, ${root}. Your photos, settings and session are kept elsewhere and ` +
           'are not touched. Then, in that folder:',
-        commands: [`cd ${root}`, 'pnpm install', 'pnpm build'],
+        commands: [cdRoot, 'pnpm install', 'pnpm build'],
         after: `${RESTART} Keep the folder where it is, and the daily run carries on with the new version.`,
       };
     case 'docker':
