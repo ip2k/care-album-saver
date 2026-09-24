@@ -4,6 +4,11 @@
 import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+
+// These exercise POSIX folder rules (/Users, /etc, /System) through the machine's own path
+// module, which on Windows resolves them under a drive letter. Windows has its own rehearsal
+// in ci-matrix-windows.test.js.
+const posixOnly = process.platform === 'win32' ? 'POSIX paths and folder rules; Windows is rehearsed in ci-matrix-windows.test.js' : false;
 import { request as httpRequest } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -103,7 +108,7 @@ const macChooser = (path) =>
 
 // ---------------------------------------------------------------- choosing a folder
 
-test('a picked folder is stored, and the dialog is opened with an argument array', async () => {
+test('a picked folder is stored, and the dialog is opened with an argument array', { skip: posixOnly }, async () => {
   await freshConfigDir();
   const native = macChooser('/Users/alex/Pictures/Brightwheel');
   const { handle, call } = await setupUi({ native: { platform: 'darwin', spawn: native.spawn } });
@@ -144,7 +149,7 @@ test('cancelling the dialog changes nothing at all', async () => {
   }
 });
 
-test('a picked folder meets exactly the refusals a typed one does', async () => {
+test('a picked folder meets exactly the refusals a typed one does', { skip: posixOnly }, async () => {
   await freshConfigDir();
   // The picker must not become a way around checkArchiveDir. A temporary folder is emptied
   // by the operating system, and a system folder is none of this tool's business, whether
@@ -185,7 +190,7 @@ test('a picked cloud folder is warned about rather than silently accepted', asyn
   }
 });
 
-test('a computer with no chooser says so plainly, and typing a path still works', async () => {
+test('a computer with no chooser says so plainly, and typing a path still works', { skip: posixOnly }, async () => {
   await freshConfigDir();
   // A Linux desktop with neither zenity nor kdialog installed: both report "missing".
   const native = recorder({});
@@ -248,7 +253,7 @@ test('only one folder chooser may be open at a time', async () => {
 
 // ---------------------------------------------------------------- opening the folder
 
-test('/api/open-folder ignores a path in the body and opens the configured folder', async () => {
+test('/api/open-folder ignores a path in the body and opens the configured folder', { skip: posixOnly }, async () => {
   await freshConfigDir();
   // NOT the test run's own archive folder, which is a temp directory: the route re-checks
   // the stored destination against the same rule that governs where photos may be saved,
@@ -278,7 +283,7 @@ test('/api/open-folder ignores a path in the body and opens the configured folde
   }
 });
 
-test('/api/open-folder says plainly when the folder has not been made yet', async () => {
+test('/api/open-folder says plainly when the folder has not been made yet', { skip: posixOnly }, async () => {
   await freshConfigDir();
   const native = recorder({ open: { code: 0 } });
   const { handle, call } = await setupUi({ native: { platform: 'darwin', spawn: native.spawn } });
@@ -358,7 +363,7 @@ test('both routes are refused without the token, cross-site, and on GET', async 
 
 // ---------------------------------------------------------------- never a shell
 
-test('a folder named like a command is one argument, not a command line', async () => {
+test('a folder named like a command is one argument, not a command line', { skip: posixOnly }, async () => {
   // The whole reason for execFile with an argument array. If any of this were ever pasted
   // into a shell string, this folder name would delete a home directory.
   const hostile = '/Users/alex/Pictures/; rm -rf ~';
@@ -395,7 +400,7 @@ test('openFolder refuses a path that could be read as a flag', async () => {
   assert.equal(native.calls.length, 0, 'nothing was launched');
 });
 
-test('the choosers and openers of every platform are argument arrays', async () => {
+test('the choosers and openers of every platform are argument arrays', { skip: posixOnly }, async () => {
   // Windows Explorer exits 1 even when it opened the window, so its exit code is not read.
   const windows = recorder({ 'explorer.exe': { code: 1, stderr: '' } });
   const real = process.env.CARE_ALBUM_DIR;
@@ -466,7 +471,7 @@ test('the page offers the chooser and the open button, and both go through the t
   }
 });
 
-test('opening the folder refuses a destination the tool would not archive into', async () => {
+test('opening the folder refuses a destination the tool would not archive into', { skip: posixOnly }, async () => {
   // config.json is an ordinary file in the parent's own directory. A hand edit, an older
   // build, or a bug in a neighbouring route can put anything in archiveDir — and without a
   // check here, "open my photos folder" becomes "open any absolute path on this machine".

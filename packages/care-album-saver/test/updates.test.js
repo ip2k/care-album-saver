@@ -138,7 +138,7 @@ test('nothing is sent before the parent says yes, or after they say no', async (
 
 test('how it was installed, from where its files are', async () => {
   const fixture = await mkdtemp(join(tmpdir(), 'cas-kind-'));
-  const kind = (packageDir, extra = {}) => installKind({ packageDir, repoRoot: fixture, inContainer: false, ...extra });
+  const kind = (packageDir, extra = {}) => installKind({ packageDir, repoRoot: fixture, inContainer: false, separator: packageDir.includes('\\') ? '\\' : '/', ...extra });
   assert.equal(kind('/Users/sam/.npm/_npx/1a2b3c/node_modules/care-album-saver'), 'npx');
   assert.equal(kind('/Users/sam/Library/Caches/pnpm/dlx/abcdef/node_modules/care-album-saver'), 'pnpm-dlx');
   assert.equal(kind('/private/var/folders/xy/T/bunx-501-care-album-saver@latest/node_modules/care-album-saver'), 'bunx');
