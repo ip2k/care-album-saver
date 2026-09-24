@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,8 +29,12 @@ test('a deployed clone is production, any other checkout is development, anythin
   assert.equal(environment(worktree), 'development', 'a worktree, whose .git is a file, is development too');
 });
 
-test('this checkout, where the suite runs, is development', () => {
-  assert.equal(environment(), 'development');
+test('the checkout the suite runs in is development, or production once deploy.js has marked it', () => {
+  // The suite runs in both: here, and in the production clone, where deploy.js runs it before
+  // anything is switched over. Asserting "development" alone made every deploy after the
+  // first fail, because by then production carries its marker.
+  const marked = existsSync(join(fileURLToPath(new URL('../../../', import.meta.url)), PRODUCTION_MARKER));
+  assert.equal(environment(), marked ? 'production' : 'development');
 });
 
 test('the daily run is refused from development before the scheduler can be reached', async () => {

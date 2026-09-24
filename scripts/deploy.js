@@ -11,8 +11,10 @@
  *   1. makes that clone if it is missing, from this repository;
  *   2. fast-forwards it to this repository's `main` — and refuses if production has changes
  *      of its own or has drifted onto another branch, rather than guessing;
- *   3. installs dependencies from the lockfile, builds, and runs the whole test suite there,
- *      stopping before anything is switched over if a single test fails;
+ *   3. installs dependencies from the lockfile, builds, and runs the whole test suite there —
+ *      and if any of that fails, puts production back on the commit it was on and rebuilds
+ *      it, because the daily run runs production's dist/ and the build has already replaced
+ *      it by the time the tests run;
  *   4. marks the clone as production (an untracked .care-album-saver-production file);
  *   5. and, when a daily run is set up, reinstalls it from production at the same time of
  *      day, so the scheduled job runs production's code and never a development build.
@@ -67,20 +69,41 @@ if (!dry || existsSync(join(PROD, '.git'))) {
   if (branch !== 'main') fail(`production is on "${branch}", not main. Put it back on main by hand first.`);
   const dirty = run('git', ['status', '--porcelain', '--untracked-files=no'], PROD, { quiet: true });
   if (dirty) fail('production has changes of its own. Nothing is changed in production except by this script.');
+  // Where production was, to put it back to if this deploy fails. A clone without the mark
+  // has never been deployed, so no daily run points at it and there is nothing to put back.
+  const before = run('git', ['rev-parse', 'HEAD'], PROD, { quiet: true });
+  const firstDeploy = !existsSync(join(PROD, MARKER));
   run('git', ['fetch', DEV, 'main'], PROD, { mutates: true });
   run('git', ['merge', '--ff-only', 'FETCH_HEAD'], PROD, { mutates: true });
   const prodAt = dry ? devMain : run('git', ['rev-parse', 'HEAD'], PROD, { quiet: true });
   if (!dry && prodAt !== devMain) fail(`production is at ${prodAt.slice(0, 7)} after the update, not ${devMain.slice(0, 7)}.`);
 
-  // 3. Build and test in production itself: what runs is what was tested.
-  run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], PROD, { mutates: true });
-  run('pnpm', ['run', 'build'], PROD, { mutates: true });
-  say('Running the test suite in production…');
+  // 3. Build and test in production itself: what runs is what was tested. The build replaces
+  // the dist/ the daily run uses before the tests can say whether it should have, so a
+  // failure from here on puts the previous commit back and rebuilds it.
+  let step = 'installing';
   try {
+    run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], PROD, { mutates: true });
+    step = 'building';
+    run('pnpm', ['run', 'build'], PROD, { mutates: true });
+    step = 'testing';
+    say('Running the test suite in production…');
     run('pnpm', ['test'], PROD, { mutates: true, quiet: true });
   } catch (error) {
     const out = String(error.stdout ?? '').split('\n').filter((l) => /^(ℹ (tests|pass|fail)|✖)/.test(l)).slice(0, 12).join('\n  ');
-    fail(`the tests failed in production, so nothing was switched over.\n  ${out}`);
+    const what = step === 'testing' ? 'the tests failed in production' : `${step} failed in production`;
+    if (firstDeploy) fail(`${what}. The daily run was not moved here, so it is running what it ran before.\n  ${out}`);
+    if (before === devMain) fail(`${what}. Production was already on ${before.slice(0, 7)}, so this changed nothing it runs.\n  ${out}`);
+    try {
+      run('git', ['reset', '--hard', before], PROD, { mutates: true, quiet: true });
+      run('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], PROD, { mutates: true, quiet: true });
+      run('pnpm', ['exec', 'tsc', '--build', '--clean'], PROD, { mutates: true, quiet: true });
+      run('pnpm', ['run', 'build'], PROD, { mutates: true, quiet: true });
+    } catch (rollback) {
+      fail(`${what}, and putting production back on ${before.slice(0, 7)} failed too: ${rollback.message}\n` +
+        `  The daily run will run whatever is in ${PROD}/packages/care-album-saver/dist until this is fixed.\n  ${out}`);
+    }
+    fail(`${what}, so production was put back on ${before.slice(0, 7)} and rebuilt; the daily run is running what it ran before.\n  ${out}`);
   }
 
   // 4. The mark the tool looks for.
