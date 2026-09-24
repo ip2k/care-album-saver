@@ -131,9 +131,9 @@ You sign in on Brightwheel's own website, exactly as you always do, including th
 like a temporary ticket that says "this person is already signed in" — and paste it in.
 
 That session is stored **on your computer only**, in your private settings folder, in a
-file only your user account can open — on a Mac or Linux, and apart from anyone who is an
-administrator of the computer; on Windows the protection is weaker
-([what this tool cannot protect you from](#what-this-tool-cannot-protect-you-from)). It is
+file only your user account can open. (An administrator of the computer can, and on
+Windows the protection is weaker: see
+[what this tool cannot protect you from](#what-this-tool-cannot-protect-you-from).) It is
 never sent anywhere except back to Brightwheel.
 
 Copying that value out of your browser is fiddlier than typing a password would be, and
