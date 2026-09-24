@@ -91,10 +91,10 @@ async function scrubPersonal(page) {
 /**
  * Draw callouts into the page's left and right margins and point an arrow at the target.
  *
- * The UI column is 760px wide inside a 1340px viewport, which leaves ~290px of clear
- * space either side. Putting every label there means an annotation can never cover the
- * thing it is describing, and labels cannot collide with each other because each is given
- * its own vertical band.
+ * The UI column is 1008px wide (56rem at 18px) inside a 1600px viewport, which leaves
+ * ~290px of clear space either side. Putting every label there means an annotation can
+ * never cover the thing it is describing, and labels cannot collide with each other
+ * because each is given its own vertical band.
  *
  * A label is set against the edge of the CARD, not of the element it points at. Measuring
  * from the element put the label wherever that element's own inset happened to fall, and
@@ -139,7 +139,7 @@ async function annotate(page, notes) {
       // The card the element lives in: the label is set against its edge, clear of it. The
       // dashboard counts as one; without it a label was set against the element itself and
       // landed inside the dashboard, over the heading and the first photo.
-      const cr = (el.closest('.card, .privacy, .dash') ?? el).getBoundingClientRect();
+      const cr = (el.closest('.card, .dash') ?? el).getBoundingClientRect();
       const GAP = 24;
       const bx = onRight ? cr.right + GAP : cr.left - GAP;
 
@@ -168,9 +168,7 @@ async function annotate(page, notes) {
       });
       layer.appendChild(box);
 
-      // Arrow from the callout's inner edge to the element edge, drawn after layout
-      // so the real label height is known.
-      requestAnimationFrame(() => {});
+      // Arrow from the callout's inner edge to the element edge.
       const line = document.createElementNS(svgNS, 'path');
       const startX = onRight ? bx - 6 : bx + 6;
       const startY = ay + (item.offset ?? 0) + 2;
@@ -216,7 +214,7 @@ async function annotate(page, notes) {
     const labels = [...document.querySelectorAll('.__ann > div')].filter((n) => n.textContent);
     // The drawn content, not `.wrap`: the column's own padding is clear space a label may
     // legitimately sit in, and judging by it would reject layouts that are perfectly fine.
-    const content = [...document.querySelectorAll('.card, .privacy, h1')].map((n) => n.getBoundingClientRect());
+    const content = [...document.querySelectorAll('.card, h1')].map((n) => n.getBoundingClientRect());
     const bad = [];
     for (const [i, label] of labels.entries()) {
       const r = label.getBoundingClientRect();
@@ -230,17 +228,6 @@ async function annotate(page, notes) {
   if (collisions.length > 0) throw new Error(`Callouts collide:\n  ${collisions.join('\n  ')}`);
 }
 
-/**
- * `endAt` names the element the picture should end just below, so no row and no card is
- * cut in half.
- *
- * The callouts are measured with it. A label sits in the margin beside the thing it
- * describes and, being four lines of text against a one-line row, routinely reaches
- * further down the page than its anchor — and half a callout looks as unfinished as half
- * a card. Rather than clamp to the viewport and quietly cut something anyway, a shot that
- * does not fit is an error naming the height it needed: the fix is that shot's viewport,
- * not a silently smaller picture.
- */
 /**
  * No real person's name in a committed picture.
  *
@@ -267,6 +254,17 @@ async function assertNothingPersonal(page, name) {
   }
 }
 
+/**
+ * `endAt` names the element the picture should end just below, so no row and no card is
+ * cut in half.
+ *
+ * The callouts are measured with it. A label sits in the margin beside the thing it
+ * describes and, being four lines of text against a one-line row, routinely reaches
+ * further down the page than its anchor — and half a callout looks as unfinished as half
+ * a card. Rather than clamp to the viewport and quietly cut something anyway, a shot that
+ * does not fit is an error naming the height it needed: the fix is that shot's viewport,
+ * not a silently smaller picture.
+ */
 async function shot(page, name, endAt) {
   await mkdir(OUT, { recursive: true });
   await showPath(page, SHOWN_PATH);

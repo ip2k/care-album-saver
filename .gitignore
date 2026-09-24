@@ -54,7 +54,7 @@ downloads/
 # note and who posted each photo. A parent who points the tool at a folder inside their
 # clone of this repository would otherwise commit all of it.
 #
-# The week folder is matched by shape — `2026-W38`, from media-ferry's weekFolder() — so
+# The week folder is matched by shape — `2026-W38`, from weekFolder() in src/ferry/weeks.ts — so
 # one rule covers whatever is inside it, whichever folder layout was chosen. Nothing in
 # this project is named that way, and the project's own README.md and docs/ are untouched
 # because these patterns name either a directory shape or a media sidecar suffix.
