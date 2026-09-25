@@ -76,3 +76,29 @@ test('the demo says which branch it is showing', async () => {
   const demo = (await readFile(fileURLToPath(new URL('../../../scripts/demo.js', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
   assert.match(demo, /Demo of \$\{branch\}/);
 });
+
+test('the demo pretends Apple Photos.app however osascript is named, and never runs the script for real', async () => {
+  // The tool calls /usr/bin/osascript by its full path. Until 2026-09-24 the demo caught only
+  // the bare name, so its pictures went to the real Apple Photos.app, and on to iCloud.
+  const demo = (await readFile(fileURLToPath(new URL('../../../scripts/demo.js', import.meta.url)), 'utf8')).replace(/\r\n/g, '\n');
+  const from = demo.indexOf('const spawn = async (file, args, timeoutMs) => {');
+  const code = demo.slice(from, demo.indexOf('\n};\n', from) + 3);
+  const { createContext, runInContext } = await import('node:vm');
+  const real = [];
+  const context = createContext({
+    PHOTOS_SCRIPT: '/pkg/applescript/add-to-photos.applescript',
+    values: {},
+    say: () => {},
+    runProgram: async (file, args) => { real.push([file, ...args]); return { code: 0, stdout: '', stderr: '' }; },
+  });
+  runInContext(`${code}\nthis.spawn = spawn;`, context);
+  for (const osascript of ['/usr/bin/osascript', 'osascript']) {
+    const handed = await context.spawn(osascript, [context.PHOTOS_SCRIPT, 'Brightwheel', '2026-W38', '--', '/tmp/a.jpg', '/tmp/b.jpg'], 1000);
+    assert.equal(handed.stdout, '2\n', `${osascript}: answered as the script would, with the count`);
+    const asked = await context.spawn(osascript, [context.PHOTOS_SCRIPT], 1000);
+    assert.equal(asked.stdout, 'ok\n');
+  }
+  const sneaky = await context.spawn('/usr/bin/osascript', ['-l', 'AppleScript', context.PHOTOS_SCRIPT], 1000);
+  assert.equal(sneaky.code, 1, 'the script named anywhere else is refused');
+  assert.deepEqual(real, [], 'nothing reached a real program');
+});
