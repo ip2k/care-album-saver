@@ -9,6 +9,12 @@ two always say the same thing.
 
 ### Security
 
+- **The tool no longer keeps any child's check-in or pickup code.** Brightwheel sends each
+  child's check-in code, invite code and the family's phone numbers beside every photo, and
+  the parent's own code with the account. The tool cannot ask for the photos without being
+  sent them, but it now throws every such field away as each answer is read, before anything
+  else in the tool sees it, so nothing can log, show or save one. `verify` lists the names of
+  the fields it dropped, never what was in them.
 - **Photos are only ever fetched from the internet.** A photo's address must be a secure
   (https) one that is not on your own computer or home network, and so must every place it
   redirects to. `verify` follows the same rule.

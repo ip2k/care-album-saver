@@ -2,6 +2,7 @@ import { loopbackOrigin } from '../ferry/url.js';
 import { BodyTooLargeError, readBodyText } from '../http-body.js';
 import { Secret, scrub } from '../secrets.js';
 import { browserUserAgent } from './identity.js';
+import { parseWithheld } from './withheld.js';
 import {
   ApiShapeError,
   assertJsonResponse,
@@ -376,7 +377,9 @@ export class BrightwheelClient {
         }
         assertJsonResponse(response, body, context);
         try {
-          return JSON.parse(body);
+          // Without the children's check-in codes, the phone numbers and anything else of
+          // that kind, which Brightwheel sends beside every photo: see withheld.ts.
+          return parseWithheld(body);
         } catch {
           throw new ApiShapeError(`Could not parse JSON from ${context}`);
         }

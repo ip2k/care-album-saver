@@ -59,7 +59,7 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 630 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+- 637 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
   because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
   of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
   24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
@@ -153,6 +153,13 @@ stores, and this tool is deliberately local-only with no cloud component.
   gone. The argument for not reviving it is in docs/DECISIONS.md A1: Brightwheel enforces
   2FA, so unattended password login is impossible, and teaching a parent to type their real
   password into other people's software is the habit phishing depends on.
+
+- **No child's check-in or pickup code is ever held (settled 2026-09-24, DECISIONS A5).**
+  Brightwheel embeds `raw_passcode`, `invite_code` and phone numbers in every activity's
+  `target` and in `/users/me`. Every Brightwheel answer is parsed with `parseWithheld`
+  (`src/api/withheld.ts`), which drops any field named like a code, PIN, password, token,
+  secret or phone number as the text is parsed. Never `JSON.parse` a Brightwheel answer
+  directly; `test/withheld.test.js` fails if the client or `verify` does.
 
 - **Two directories must be redirected before any test or throwaway script runs**, not one:
   `CARE_ALBUM_CONFIG_DIR` for the session and `CARE_ALBUM_DIR` for the

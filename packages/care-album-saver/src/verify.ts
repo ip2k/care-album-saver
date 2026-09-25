@@ -2,6 +2,7 @@ import { DEFAULT_BASE_URL, MAX_RESPONSE_BYTES, apiHeaders } from './api/client.j
 import { BodyTooLargeError, readBodyText } from './http-body.js';
 import { assertJsonResponse } from './api/schema.js';
 import { browserUserAgent } from './api/identity.js';
+import { parseWithheld } from './api/withheld.js';
 import { scrub } from './secrets.js';
 import type { Secret } from './secrets.js';
 import { checkBaseUrl, refuseLiveApiUnderTest } from './config.js';
@@ -126,6 +127,7 @@ async function raw(
   session: Secret,
   baseUrl: string,
   fetchImpl: typeof fetch,
+  withheld: Set<string>,
 ): Promise<Record<string, unknown>> {
   // The browser identity is added by the fetch this is handed, as to every request here.
   const response = await fetchImpl(`${baseUrl}${path}`, { headers: apiHeaders(session) });
@@ -142,7 +144,14 @@ async function raw(
     );
   }
   assertJsonResponse(response, text, label);
-  return JSON.parse(text) as Record<string, unknown>;
+  // Parsed as a run parses it, without the check-in codes and the rest (api/withheld.ts):
+  // this command reads the same answers, and must not be the one place that holds them.
+  try {
+    return parseWithheld(text, withheld) as Record<string, unknown>;
+  } catch {
+    // JSON.parse's own message quotes the text around the fault, which may be a code.
+    throw new Error(`Brightwheel's answer from ${label} was not JSON that could be read.`);
+  }
 }
 
 export async function verify(
@@ -165,9 +174,11 @@ export async function verify(
   const trustedMedia = loopbackOrigin(baseUrl);
   const askMedia = (url: string, init: RequestInit = {}) => fetchMedia(url, init, trustedMedia, doFetch);
   const report: VerifyReport = { reachable: false, sessionValid: false, checks: [], findings: [], warnings: [] };
+  // The names of the fields dropped as the answers were read, never their values.
+  const withheld = new Set<string>();
 
   // 1 — the account.
-  const me = await raw('/users/me', 'the account endpoint', session, baseUrl, doFetch);
+  const me = await raw('/users/me', 'the account endpoint', session, baseUrl, doFetch, withheld);
   report.reachable = true;
   const meObj = (me.object as Record<string, unknown>) ?? me;
   report.sessionValid = Boolean(meObj.object_id ?? meObj.id);
@@ -177,11 +188,6 @@ export async function verify(
   });
   if (meObj.object_id && !meObj.id) report.findings.push('CONFIRMED: the account id field is `object_id`, not `id`.');
   if (meObj.id && !meObj.object_id) report.findings.push('CONTRADICTED: this account uses `id`, not `object_id`.');
-  for (const sensitive of ['raw_passcode', 'invite_code', 'auth_phone_number', 'phone_1']) {
-    if (meObj[sensitive] !== undefined) {
-      report.warnings.push(`/users/me really does return \`${sensitive}\` — never persist this response.`);
-    }
-  }
 
   const guardianId = String(meObj.object_id ?? meObj.id);
 
@@ -192,6 +198,7 @@ export async function verify(
     session,
     baseUrl,
     doFetch,
+    withheld,
   );
   const list = (students.students ?? students.data ?? []) as unknown[];
   report.checks.push({
@@ -233,6 +240,7 @@ export async function verify(
       session,
       baseUrl,
       doFetch,
+      withheld,
     );
     const items = (acts.activities ?? acts.data ?? []) as unknown[];
     report.checks.push({
@@ -424,6 +432,12 @@ export async function verify(
     }
   }
 
+  if (withheld.size > 0) {
+    report.findings.push(
+      `WITHHELD: Brightwheel sent ${[...withheld].sort().map((name) => `\`${name}\``).join(', ')}, ` +
+        'which were dropped as the answers were read and never held (api/withheld.ts).',
+    );
+  }
   return report;
 }
 

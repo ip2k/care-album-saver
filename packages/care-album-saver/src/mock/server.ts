@@ -358,7 +358,10 @@ export async function startMockBrightwheel(options: MockOptions = {}): Promise<M
         students: STUDENTS.map((s) => ({
           relationship_type: 'parent',
           guardian_id: 'guardian-xyz-999',
-          student: s,
+          // Not seen on the live account, where `verify` reports only whether this list is
+          // empty; carried because the feed embeds the same child with them, so that a test
+          // asserting they are never held covers this answer as well.
+          student: { ...s, raw_passcode: '4821', invite_code: 'INVITE-NEVER-STORE', phone_1: '+15550000000', auth_phone_number: '+15550000001' },
         })),
       });
       return;
