@@ -394,6 +394,8 @@ function startHarness(answers) {
     updateRunReady: () => { calls.ready += 1; },
     poll: () => { calls.poll += 1; },
     show: (el, kind, html) => { el.textContent = html; el.kind = kind; },
+    // The button's name as the page shows it before the first run (page.ts, runButtonName).
+    runButtonName: () => 'Start saving',
   });
   runInContext(BUILDERS(), context);
   runInContext(slice('let saves = Promise.resolve();', 'function applySaved(d)'), context);

@@ -46,7 +46,7 @@ export class FingerprintsUnusableError extends Error {
   constructor(error: UnreadableFileError) {
     super(
       `The record of which photos this tool saved (${error.path}) cannot be read: ${error.reason}. ` +
-        'Nothing was added to Photos. Moving that file somewhere safe makes a new record from the photos in your folder as they are now.',
+        'Nothing was added to Apple Photos.app. Moving that file somewhere safe makes a new record from the photos in your folder as they are now.',
     );
     this.name = 'FingerprintsUnusableError';
   }

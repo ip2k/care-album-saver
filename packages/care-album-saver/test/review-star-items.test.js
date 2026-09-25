@@ -199,10 +199,10 @@ test('fs-5: a damaged record of what went into Photos stops the Photos step inst
   await writeFile(join(dir, 'photos.json'), '{"added": {"a/b.jpg": ');
   let spawned = 0;
   const archiveDir = await mkdtemp(join(tmpdir(), 'cas-star-archive-'));
-  const config = { ...(await loadConfig()), archiveDir, addToPhotos: true, addToPhotosFrom: null };
+  const config = { ...(await loadConfig()), archiveDir, addToPhotos: true };
   await assert.rejects(
     addToPhotos(config, { platform: 'darwin', spawn: async () => { spawned++; return { code: 0, stdout: '', stderr: '' }; } }),
-    /record of what has already been added to Photos .* cannot be read.*nothing has been added twice/s,
+    /record of what has already been added to Apple Photos\.app .* cannot be read.*nothing has been added twice/s,
   );
   assert.equal(spawned, 0, 'Photos was never asked to do anything');
 });
@@ -606,7 +606,7 @@ test('fs-5: a damaged Photos record is reported beside the switch, not taken for
   const status = await photosStatus(on, { platform: 'darwin' });
   assert.equal(status.supported, true);
   assert.equal(status.enabled, true);
-  assert.match(status.problem, /record of what has already been added to Photos .* cannot be read/);
+  assert.match(status.problem, /record of what has already been added to Apple Photos\.app .* cannot be read/);
   assert.equal((await photosStatus({ ...on, addToPhotos: false }, { platform: 'darwin' })).problem, null, 'off, it is nobody\'s problem yet');
   assert.equal((await photosStatus(on, { platform: 'linux' })).problem, null);
   const page = await readFile(fileURLToPath(new URL('../src/web/page.ts', import.meta.url)), 'utf8');

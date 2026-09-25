@@ -1,7 +1,8 @@
 -- add-to-photos.applescript, part of Care Album Saver.
 --
--- Everything Care Album Saver ever asks the Photos app to do is in this one file. It runs
--- only on a Mac, and only when "Also add them to Apple Photos" is turned on in Settings.
+-- Everything Care Album Saver ever asks Apple Photos.app to do is in this one file. It runs
+-- only on a Mac, and only when "Also add them to Apple Photos.app" is turned on in Settings
+-- and Maintenance > Integrations.
 --
 -- HOW IT IS CALLED
 --
@@ -9,11 +10,11 @@
 --
 -- for example
 --
---   osascript add-to-photos.applescript Brightwheel "Robin Maple" 2026-W38 -- /Users/alex/Care Album Photos/Robin Maple/2026-W38/2026-09-18_1.jpg
+--   osascript add-to-photos.applescript Brightwheel "Robin Maple" 2026-W38 -- /private/copy/2026-09-18_1.jpg
 --
--- The folders and the album are the same names as the folders on disk, so Photos ends up
--- with the same shape as your archive: a Brightwheel folder, then (depending on the layout
--- you chose) a folder per child and an album per week.
+-- The folders and the album are the same names as the folders on disk, so Apple Photos.app
+-- ends up with the same shape as your archive: a Brightwheel folder, then (depending on the
+-- layout you chose) a folder per child and an album per week.
 --
 -- Every name and every file arrives as a separate argument. Nothing is ever pasted into
 -- this script's text, so a file called "; do shell script ..." is an odd file name and
@@ -21,21 +22,23 @@
 --
 -- WHAT IT DOES
 --
---   1. Finds each FOLDER in Photos in turn, starting at the top level, and makes any that
---      is missing.
+--   1. Finds each FOLDER in Apple Photos.app in turn, starting at the top level, and makes
+--      any that is missing.
 --   2. Finds the ALBUM inside the last of them, and makes it if it is missing.
---   3. Imports the FILEs into that album. Photos copies them into its own library (unless
---      you have told it not to, in Photos > Settings > General > Importing), and if iCloud
---      Photos is turned on, Photos uploads them to iCloud from there.
---   4. Prints how many items Photos took.
+--   3. Imports the FILEs into that album. Apple Photos.app copies them into its own library,
+--      provided its "Copy items to the Photos library" setting is on (see THE FILES IT IS
+--      GIVEN, below), and if iCloud Photos is turned on, it uploads them to iCloud from there.
+--   4. Prints how many items Apple Photos.app says it imported: one number, and nothing else
+--      from your library.
 --
--- It never deletes, moves, renames or edits anything already in Photos, and it reads
--- nothing from your library except those folders and that album, looked up by name.
+-- It never deletes, moves, renames or edits anything already in Apple Photos.app, and it
+-- reads nothing from your library except those folders and that album, looked up by name.
 --
--- Duplicate checking is skipped on purpose. With it on, Photos stops at every duplicate
--- and waits for someone to click a button, which nobody is there to do when the daily run
--- happens at seven in the evening. Care Album Saver keeps its own list of what it has
--- already handed to Photos instead, and never passes the same file twice.
+-- Duplicate checking is skipped on purpose. With it on, Apple Photos.app stops at every
+-- duplicate and waits for someone to click a button, which nobody is there to do when the
+-- daily run happens at seven in the evening. Care Album Saver keeps its own list of what it
+-- has already handed over instead, by each file's contents, and never passes the same file
+-- twice.
 --
 -- Run with no arguments at all, it only counts your albums and prints "ok". The setup page
 -- does that when you turn the option on, so that macOS asks its "allow this to control
@@ -43,21 +46,25 @@
 --
 -- ONLY APPLE'S PHOTOS
 --
--- Before anything else, it checks that the Photos it is about to talk to is Apple's own, the
--- one in /System/Applications. That folder is on the part of macOS that nothing can change
--- while System Integrity Protection is on, so an app there is the one Apple shipped. An app
--- anywhere else can call itself "Photos", or claim Photos' identifier, and without this check
--- it could be the one handed your photos. If the Photos macOS would open is not that one, or
--- if any program running under Photos' identifier is not, it stops, and nothing is added.
--- Asking where Photos is does not open it.
+-- Before anything else, it checks that the Photos app it is about to talk to is Apple
+-- Photos.app itself, the one in /System/Applications. That folder is on the part of macOS
+-- that nothing can change while System Integrity Protection is on, so an app there is the
+-- one Apple shipped. An app anywhere else can call itself "Photos", or claim Apple
+-- Photos.app's identifier, and without this check it could be the one handed your photos.
+-- If the Photos macOS would open is not that one, or if any program running under that
+-- identifier is not, it stops, and nothing is added. Asking where Apple Photos.app is does
+-- not open it.
 --
 -- THE FILES IT IS GIVEN
 --
 -- Care Album Saver does not give it the files in your photos folder. It gives it private
 -- copies, checked against what it saved, in a folder only your account can open, and deletes
--- them once Photos has taken them. So Photos needs its usual "Copy items to the Photos
--- library" setting (Photos > Settings > General > Importing), which is on unless you have
--- turned it off.
+-- them once Apple Photos.app has taken them. So Apple Photos.app's "Copy items to the Photos
+-- library" setting (Settings > General, on the line headed Importing; Preferences on macOS 12
+-- and earlier) must be on, as it is unless someone turned it off. With it off, Apple
+-- Photos.app would keep only a link to a copy that is about to be deleted: the photos would
+-- show a preview but not open, and would never reach iCloud. Nothing here can see that
+-- setting, so the setup page asks you to confirm it before this is turned on.
 
 use AppleScript version "2.4"
 use framework "AppKit"

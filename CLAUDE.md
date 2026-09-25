@@ -59,7 +59,7 @@ stores, and this tool is deliberately local-only with no cloud component.
 
 ## Status
 
-- 637 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
+- 662 tests passing (`pnpm test`; the script is a glob, `packages/care-album-saver/test/*.test.js`,
   because `node --test <directory>` is accepted only by Node 26 — the first CI run failed 11
   of 12 cells on exactly that). The CI matrix is Ubuntu, macOS and Windows against Node 22,
   24 and 26; Node 20 was dropped on 2026-09-23 (EOL, and `exiftool-vendored` needs ≥22).
@@ -122,7 +122,16 @@ stores, and this tool is deliberately local-only with no cloud component.
 - **Adding to Apple Photos is off by default and must stay that way** (settled 2026-09-23).
   It is the one setting that can send photos off the machine — with iCloud Photos on, Apple
   uploads them — so it is turned on only through `/api/photos`, which asks macOS for
-  permission first and records *from when*; a settings patch cannot set it. Everything the
+  permission first; a settings patch cannot set it. Before that, the page asks the parent,
+  every time, to confirm Apple Photos.app's "Copy items to the Photos library" is ticked,
+  because the tool hands over copies it then deletes and cannot see the setting (DECISIONS C8;
+  whether the script's import obeys it is Q17, a check only the owner can make by hand).
+  Since 2026-09-24 every photo saved so far, for every child, is due, each once by SHA-256;
+  nothing goes in until the next run or "Add them to Apple Photos.app now" (`/api/photos`
+  with `now`). When it works, the only thing that comes back from Apple Photos.app is the
+  integer the script prints (a failure brings back osascript's last error line). An install
+  turned on before that date keeps its `addToPhotosFrom` limit until the parent turns it off
+  and on again, so an update never widens what goes to iCloud. User-facing text says "Apple Photos.app", never bare "Photos", for the app. Everything the
   tool asks Photos to do is in `applescript/add-to-photos.applescript`, run with argv and
   never with `-e`, by `/usr/bin/osascript`; the script refuses unless the Photos it would
   talk to is `/System/Applications/Photos.app`. Photos is handed private copies, each checked

@@ -19,6 +19,8 @@ import {
   albumPathFor,
   checkPhotosAccess,
   configPath,
+  importedCount,
+  loadConfig,
   photosStatus,
   startMockBrightwheel,
   startWebUi,
@@ -42,6 +44,7 @@ import {
 
 const SESSION = 'test-session-value';
 const ROBIN = 'stu-aaa-111';
+const SAM = 'stu-bbb-222';
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const CLI = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
@@ -73,8 +76,14 @@ async function savedArchive(dir, extra = {}) {
   return config;
 }
 
+/**
+ * What the real script prints: how many files Apple Photos.app imported, which is every file
+ * after `--`, or "ok" when it is only asked for permission.
+ */
+const imported = (args) => (args.includes('--') ? `${args.length - args.indexOf('--') - 1}\n` : 'ok\n');
+
 /** A stand-in for execFile that answers as told and remembers every call. */
-function recorder(reply = () => ({ code: 0, stdout: '1\n', stderr: '' })) {
+function recorder(reply = (file, args) => ({ code: 0, stdout: imported(args), stderr: '' })) {
   const calls = [];
   const spawn = async (file, args, timeoutMs) => {
     calls.push({ file, args: [...args], timeoutMs });
@@ -130,7 +139,7 @@ test('osascript is given the script file, names, `--` and private copies — nev
   const configDir = await freshConfigDir();
   const dir = await archiveDir();
   try {
-    const config = { ...(await savedArchive(dir)), addToPhotos: true, addToPhotosFrom: null };
+    const config = { ...(await savedArchive(dir)), addToPhotos: true };
     // Looked at while the call is being made: the copies are gone once Photos has them.
     const seen = [];
     const photos = recorder(async (file, args) => {
@@ -176,7 +185,7 @@ test('nothing is handed to Photos twice: the next attempt finds nothing to do', 
   await freshConfigDir();
   const dir = await archiveDir();
   try {
-    const config = { ...(await savedArchive(dir)), addToPhotos: true, addToPhotosFrom: null };
+    const config = { ...(await savedArchive(dir)), addToPhotos: true };
     const first = recorder();
     await addToPhotos(config, { platform: 'darwin', spawn: first.spawn });
     const again = recorder();
@@ -189,31 +198,118 @@ test('nothing is handed to Photos twice: the next attempt finds nothing to do', 
   }
 });
 
-test('turning it on covers what is saved from then on; earlier photos wait to be asked for', async () => {
+test('every photo saved so far, for every child, is due, and each goes in once', async () => {
+  await freshConfigDir();
+  const dir = await archiveDir();
+  try {
+    // Saved before the option was turned on, for both children. Until 2026-09-24 only photos
+    // saved after turning it on were due, which left a parent with one run of one child.
+    const saved = await savedArchive(dir, { includeStudents: [ROBIN, SAM] });
+    const { files } = await manifestOf(dir);
+    const config = { ...saved, addToPhotos: true };
+
+    const status = await photosStatus(config, { platform: 'darwin' });
+    assert.equal(status.pending, files.length);
+    assert.equal(status.earlier, 0, 'nothing held back: no earlier version set a date here');
+    assert.equal(status.limitedFrom, null);
+
+    const photos = recorder();
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
+    assert.equal(result.ok, true);
+    assert.equal(result.added, files.length);
+    const albums = new Set(photos.calls.map((c) => c.args.slice(1, c.args.indexOf('--')).join('/')));
+    assert.ok([...albums].some((a) => a.includes('Robin')) && [...albums].some((a) => a.includes('Sam')), [...albums].join(', '));
+
+    const again = recorder();
+    assert.equal((await addToPhotos(config, { platform: 'darwin', spawn: again.spawn })).added, 0);
+    assert.equal(again.calls.length, 0, 'nothing handed over twice');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an install turned on by an earlier version keeps its date: nothing saved before it goes in until it is turned on again', async () => {
   await freshConfigDir();
   const dir = await archiveDir();
   try {
     const saved = await savedArchive(dir);
     const { files } = await manifestOf(dir);
-    // Turned on a moment after everything was saved.
-    const config = { ...saved, addToPhotos: true, addToPhotosFrom: new Date(Date.now() + 1000).toISOString() };
+    // Written by a version before 2026-09-24, which added only what was saved after this.
+    const from = new Date(Date.now() + 60_000).toISOString();
+    await writeSecureFile(configPath(), JSON.stringify({ ...saved, addToPhotos: true, addToPhotosFrom: from }));
+    const config = await loadConfig();
+    assert.equal(config.addToPhotosFrom, from, 'kept, not dropped on reading');
 
     const status = await photosStatus(config, { platform: 'darwin' });
     assert.equal(status.pending, 0);
-    assert.equal(status.earlier, files.length, 'the earlier ones are counted, for the button');
-
+    assert.equal(status.earlier, files.length);
+    assert.equal(status.limitedFrom, from);
     const photos = recorder();
-    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn });
-    assert.equal(result.added, 0);
-    assert.equal(photos.calls.length, 0, 'nothing from before is added unasked');
+    assert.equal((await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn })).added, 0);
+    assert.equal(photos.calls.length, 0, 'nothing earlier goes in unasked');
 
-    // "Add the earlier ones too".
-    const all = { ...config, addToPhotosFrom: null };
-    const later = await addToPhotos(all, { platform: 'darwin', spawn: recorder().spawn });
-    assert.equal(later.added, files.length);
+    // Off and on again from the page, which asks first: then everything.
+    const handle = await startWebUi({ baseUrl: `${mock.url}/api/v1`, native: { platform: 'darwin', spawn: recorder().spawn } });
+    try {
+      assert.equal((await post(handle, '/api/photos', { enabled: false })).status, 200);
+      assert.equal('addToPhotosFrom' in JSON.parse(await readFile(configPath(), 'utf8')), false, 'the date goes with it');
+      const on = await post(handle, '/api/photos', { enabled: true });
+      assert.equal(on.body.photos.pending, files.length);
+      assert.equal(on.body.photos.limitedFrom, null);
+    } finally {
+      await handle.close();
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('turned off while it goes, it stops between batches, writes down what went in, and says why', async () => {
+  await freshConfigDir();
+  const dir = await archiveDir();
+  try {
+    const config = { ...(await savedArchive(dir, { includeStudents: [ROBIN, SAM] })), addToPhotos: true };
+    const { files } = await manifestOf(dir);
+    const photos = recorder();
+    let asked = 0;
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: photos.spawn, stillOn: async () => ++asked === 1 });
+    assert.equal(photos.calls.length, 1, 'the first batch, then nothing');
+    const handed = parts(photos.calls[0]).files.length;
+    assert.ok(handed < files.length, 'there was more than one batch to stop');
+    assert.equal(result.ok, true);
+    assert.equal(result.turnedOff, true);
+    assert.equal(result.added, handed);
+    assert.equal(result.remaining, files.length - handed);
+    const status = await photosStatus(config, { platform: 'darwin' });
+    assert.equal(status.lastAttempt.added, handed, 'the stopped attempt is the last one on record');
+    assert.equal(status.pending, files.length - handed);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('what Apple Photos.app counts is what is reported; the rest of a batch is unconfirmed, and not offered again', async () => {
+  await freshConfigDir();
+  const dir = await archiveDir();
+  try {
+    const config = { ...(await savedArchive(dir)), addToPhotos: true };
+    const { files } = await manifestOf(dir);
+    // No count at all (an older script, or output nobody expected): nothing is claimed.
+    const silent = recorder(() => ({ code: 0, stdout: '' }));
+    const result = await addToPhotos(config, { platform: 'darwin', spawn: silent.spawn });
+    assert.equal(result.ok, true);
+    assert.equal(result.added, 0);
+    assert.equal(result.unconfirmed, files.length);
+    assert.equal((await photosStatus(config, { platform: 'darwin' })).pending, 0, 'written down, so not handed over twice');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the count is believed only as a plain number no larger than the batch', () => {
+  assert.equal(importedCount('3\n', 3), 3);
+  assert.equal(importedCount(' 0 ', 3), 0);
+  for (const odd of ['', 'ok', '4', '-1', '2.5', '1e3', '3 photos', '9999999']) assert.equal(importedCount(odd, 3), null, JSON.stringify(odd));
 });
 
 test('off, or not a Mac, means Photos is never asked anything', async () => {
@@ -244,7 +340,7 @@ test('a refusal from macOS is explained, nothing is recorded, and the next attem
   await freshConfigDir();
   const dir = await archiveDir();
   try {
-    const config = { ...(await savedArchive(dir)), addToPhotos: true, addToPhotosFrom: null };
+    const config = { ...(await savedArchive(dir)), addToPhotos: true };
     const denied = recorder(() => ({
       code: 1,
       stderr: `${PHOTOS_SCRIPT}: execution error: Not authorized to send Apple events to Photos. (-1743)\n`,
@@ -272,7 +368,7 @@ test('a file gone from disk is left out, not allowed to fail every batch after i
   await freshConfigDir();
   const dir = await archiveDir();
   try {
-    const config = { ...(await savedArchive(dir)), addToPhotos: true, addToPhotosFrom: null };
+    const config = { ...(await savedArchive(dir)), addToPhotos: true };
     const { files } = await manifestOf(dir);
     await rm(join(dir, files[0].path));
     const photos = recorder();
@@ -298,7 +394,7 @@ test('a manifest pointing outside the archive is ignored, not imported', async (
     manifest.files.push({ ...manifest.files[0], path: `../${outside.split(sep).pop()}`, sha256: 'f'.repeat(64) });
     await writeFile(join(dir, 'archive.json'), JSON.stringify(manifest));
     const photos = recorder();
-    await addToPhotos({ ...DEFAULT_CONFIG, archiveDir: dir, addToPhotos: true, addToPhotosFrom: null }, { platform: 'darwin', spawn: photos.spawn });
+    await addToPhotos({ ...DEFAULT_CONFIG, archiveDir: dir, addToPhotos: true }, { platform: 'darwin', spawn: photos.spawn });
     const handed = photos.calls.flatMap((c) => parts(c).files);
     assert.ok(!handed.includes(outside));
     await rm(outside, { force: true });
@@ -311,7 +407,7 @@ test('two runs at once cannot both add the same photos; a lock left by a dead ru
   const configDir = await freshConfigDir();
   const dir = await archiveDir();
   try {
-    const config = { ...(await savedArchive(dir)), addToPhotos: true, addToPhotosFrom: null };
+    const config = { ...(await savedArchive(dir)), addToPhotos: true };
     const lock = join(configDir, 'photos.lock');
     await writeFile(lock, '99999 held\n');
     const blocked = recorder();
@@ -348,22 +444,20 @@ test('turning it on asks the Mac first, and a refusal leaves it off', async () =
   }
 });
 
-test('turning it on stores the moment it was turned on, by the server clock', async () => {
+test('turning it on stores the switch and nothing else, and a date left by an earlier version is dropped', async () => {
   await freshConfigDir();
+  // An earlier version stored when the option was turned on, and added only what was saved after.
+  await writeSecureFile(configPath(), JSON.stringify({ ...DEFAULT_CONFIG, addToPhotosFrom: new Date(Date.now() + 86_400_000).toISOString() }));
   const allowed = recorder(() => ({ code: 0, stdout: 'ok\n' }));
   const handle = await startWebUi({ baseUrl: `${mock.url}/api/v1`, native: { platform: 'darwin', spawn: allowed.spawn } });
   try {
-    const before = Date.now();
     const res = await post(handle, '/api/photos', { enabled: true });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.photos.enabled, true);
+    assert.deepEqual(allowed.calls.map((c) => c.args), [[PHOTOS_SCRIPT]], 'only the permission check: ticking the box adds nothing');
     const stored = JSON.parse(await readFile(configPath(), 'utf8'));
     assert.equal(stored.addToPhotos, true);
-    assert.ok(Date.parse(stored.addToPhotosFrom) >= before - 1000, 'from now, not from the beginning');
-
-    const earlier = await post(handle, '/api/photos', { earlier: true });
-    assert.equal(earlier.status, 200);
-    assert.equal(JSON.parse(await readFile(configPath(), 'utf8')).addToPhotosFrom, null, 'the earlier ones, on request');
+    assert.equal('addToPhotosFrom' in stored, false, 'the retired date is gone');
 
     const off = await post(handle, '/api/photos', { enabled: false });
     assert.equal(off.body.photos.enabled, false);
@@ -372,12 +466,12 @@ test('turning it on stores the moment it was turned on, by the server clock', as
   }
 });
 
-test('a settings patch cannot turn it on, or move where it starts', async () => {
+test('a settings patch cannot turn it on', async () => {
   await freshConfigDir();
   const photos = recorder();
   const handle = await startWebUi({ baseUrl: `${mock.url}/api/v1`, native: { platform: 'darwin', spawn: photos.spawn } });
   try {
-    await post(handle, '/api/config', { addToPhotos: true, addToPhotosFrom: null, tagNote: false });
+    await post(handle, '/api/config', { addToPhotos: true, tagNote: false });
     const stored = JSON.parse(await readFile(configPath(), 'utf8'));
     assert.equal(stored.tagNote, false, 'the rest of the patch is stored');
     assert.equal(stored.addToPhotos, false, 'but not this');
@@ -408,7 +502,7 @@ test('a run from the page adds its new photos to Photos afterwards, and says so'
   const photos = recorder();
   await writeSecureFile(
     configPath(),
-    JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: dir, delayMs: 0, addToPhotos: true, addToPhotosFrom: new Date(0).toISOString() }),
+    JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: dir, delayMs: 0, addToPhotos: true }),
   );
   const handle = await startWebUi({ baseUrl: `${mock.url}/api/v1`, native: { platform: 'darwin', spawn: photos.spawn } });
   try {
@@ -496,14 +590,14 @@ test('a CLI run on a Mac tries Photos after saving, and a refusal does not fail 
     await writeSecureFile(join(configDir, 'session.json'), JSON.stringify({ cookie: SESSION, savedAt: new Date().toISOString() }));
     await writeSecureFile(
       join(configDir, 'config.json'),
-      JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: dir, delayMs: 0, addToPhotos: true, addToPhotosFrom: new Date(0).toISOString() }),
+      JSON.stringify({ ...DEFAULT_CONFIG, archiveDir: dir, delayMs: 0, addToPhotos: true }),
     );
     const { stdout } = await promisify(execFile)(process.execPath, [CLI, 'run', '--base-url', `${mock.url}/api/v1`], {
       env: { ...process.env, CARE_ALBUM_CONFIG_DIR: configDir, CARE_ALBUM_LOG_DIR: logDir },
     });
     // The guard answers in place of Photos, so the step runs and is refused — which is
     // exactly the path a real refusal takes, and the run still exits 0.
-    assert.match(stdout, /Not added to Photos: .*CARE_ALBUM_NO_PHOTOS/);
+    assert.match(stdout, /Not added to Apple Photos\.app: .*CARE_ALBUM_NO_PHOTOS/);
     assert.match(stdout, /Done\./);
   } finally {
     await rm(dir, { recursive: true, force: true });

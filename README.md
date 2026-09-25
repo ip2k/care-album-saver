@@ -44,7 +44,7 @@ What you end up with is yours, on your disk, and it outlives the account.
 5. [Everyday use](#everyday-use)
    — [every day, automatically](#running-it-every-day),
    [stopping and carrying on](#stopping-a-run-and-carrying-on),
-   [Apple Photos](#adding-them-to-apple-photos-mac-optional),
+   [Apple Photos.app](#adding-them-to-apple-photosapp-mac-optional),
    [keeping it up to date](#keeping-it-up-to-date)
 6. [What gets written into each photo and video](#what-gets-written-into-each-photo-and-video)
    — [about the dates, honestly](#about-the-dates-honestly)
@@ -99,7 +99,7 @@ account, and no company behind it. This tool uploads nothing anywhere. Nobody �
 people who wrote this — can see your photos, your child's name, or which nursery they go to.
 
 The one way to add a third place is a setting that is **off unless you turn it on**: on a Mac,
-the tool can also add new photos to the Photos app, and if you use iCloud Photos, Apple then
+the tool can also add your photos to Apple Photos.app, and if you use iCloud Photos, Apple then
 uploads them to your iCloud account. [What that setting does, and how](docs/PHOTOS.md).
 
 The setup page can also ask GitHub, once a day, whether there is a newer version of this
@@ -163,7 +163,7 @@ Honesty matters more here than reassurance, so:
 - **Labelling photos with names writes those names into the file itself.** Your child's
   name, the nursery's name, the name of whoever posted the photo, and the teacher's note —
   which usually names all three in one sentence. That is what makes them searchable in
-  Apple Photos and similar apps, but it also means those names travel with the file if you
+  Apple Photos.app and similar apps, but it also means those names travel with the file if you
   ever share it. You can turn this off with one switch, and then nothing inside the file
   says who or where. Everything is still recorded in the small `.json` file beside each
   photo, which stays behind when you share the photo itself.
@@ -328,13 +328,18 @@ walked that child's whole feed with nothing left behind. An interrupted run hold
 photos and nothing older, so treating its newest photo as the marker would silently skip the
 rest of the feed for ever. It does not.
 
-### Adding them to Apple Photos (Mac, optional)
+### Adding them to Apple Photos.app (Mac, optional)
 
-Off unless you turn it on, under **Settings and Maintenance** on the setup page. Each run then
-also adds its new photos to the Photos app, in a folder called **Brightwheel** with the same
-folders and weekly albums as your archive folder. If you use iCloud Photos, that means they
-are uploaded to your iCloud account — which is why it is off, and why it only covers photos
-saved after you turn it on unless you ask for the earlier ones too.
+Off unless you turn it on, under **Settings and Maintenance › Integrations** on the setup
+page. It then adds every photo and video saved so far, for every child, to Apple Photos.app,
+and each run's new ones after that — each one once — in a folder called **Brightwheel** with
+the same folders and weekly albums as your archive folder. If you use iCloud Photos, that means
+they are uploaded to your iCloud account, which is why it is off.
+
+Before turning it on, check that Apple Photos.app's own **Copy items to the Photos library**
+setting is ticked (Settings › General in Apple Photos.app). It comes ticked; with it off, the
+photos this tool adds would not open and would never reach iCloud. The setup page asks you to
+confirm it every time you turn the option on.
 
 It works by running [one short AppleScript](packages/care-album-saver/applescript/add-to-photos.applescript)
 that you can read first. [docs/PHOTOS.md](docs/PHOTOS.md) explains the whole thing.
@@ -447,7 +452,7 @@ actually read:
 |---|---|
 | `QuickTime:CreateDate`, `ModifyDate` | The time it was **posted**, written in UTC as the QuickTime specification requires |
 | `QuickTime:TrackCreateDate`, `TrackModifyDate`, `MediaCreateDate`, `MediaModifyDate` | The same instant, in the track and media headers |
-| `Keys:CreationDate` | The same moment as local time with its offset — the field Apple Photos prefers |
+| `Keys:CreationDate` | The same moment as local time with its offset — the field Apple Photos.app prefers |
 | `XMP-photoshop:DateCreated`, `XMP-xmp:CreateDate`, `ModifyDate` | The same moment again, for Immich and web galleries |
 | `XMP-iptcExt:PersonInImage` | Your child's name — only with the names switch on |
 | `XMP-dc:subject`, `Keys:Keywords` | Your child's name and `Brightwheel`, as searchable tags — only with the names switch on |
@@ -620,7 +625,7 @@ that first, before trying to rewrite history.
 | Package | |
 |---|---|
 | [`care-album-saver`](packages/care-album-saver) | The tool itself: API client, metadata, week folders, CLI and setup assistant. |
-| [`applescript/`](packages/care-album-saver/applescript) | The one AppleScript the optional Apple Photos setting runs, kept as a file of its own so it can be read in one place. |
+| [`applescript/`](packages/care-album-saver/applescript) | The one AppleScript the optional Apple Photos.app setting runs, kept as a file of its own so it can be read in one place. |
 | [`src/ferry/`](packages/care-album-saver/src/ferry) | The service-agnostic half, kept as its own directory: downloading to a `.part` file and renaming it into place, stable identity for signed URLs, integrity checksums, safe filenames, ISO weeks and the archive list. It knows nothing about Brightwheel. |
 
 It used to be a second package, `media-ferry`, and was folded back in on 23 September 2026.

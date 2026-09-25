@@ -152,7 +152,7 @@ test('web-9: the gallery, the photo route and the Photos count pass over unusabl
       assert.ok(found, `photo ${item.id} is served`);
       assert.ok(found.path.endsWith(item.label));
     }
-    const status = await photosStatus({ ...config, addToPhotos: true, addToPhotosFrom: null }, { platform: 'darwin' });
+    const status = await photosStatus({ ...config, addToPhotos: true }, { platform: 'darwin' });
     assert.equal(status.problem, null);
     assert.equal(status.pending, good);
   } finally {

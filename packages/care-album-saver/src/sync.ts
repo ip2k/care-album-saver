@@ -622,7 +622,7 @@ async function syncHoldingTheLock(
     );
   } catch (error) {
     if (config.addToPhotos && result.warnings.length < 8) {
-      result.warnings.push(`The photos already saved could not be noted for adding to Photos: ${error instanceof Error ? error.message : String(error)}`);
+      result.warnings.push(`The photos already saved could not be noted for adding to Apple Photos.app: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   const noteSaved = async (): Promise<void> => {
@@ -633,7 +633,7 @@ async function syncHoldingTheLock(
       // Not the run's failure: the photos are saved. Only adding them to Photos is affected,
       // and that step says why when it meets them.
       if (config.addToPhotos && result.warnings.length < 8) {
-        result.warnings.push(`These photos were saved, but not noted for adding to Photos: ${error instanceof Error ? error.message : String(error)}`);
+        result.warnings.push(`These photos were saved, but not noted for adding to Apple Photos.app: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   };

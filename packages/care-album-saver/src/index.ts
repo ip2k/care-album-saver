@@ -31,6 +31,7 @@ export {
   addToPhotos,
   albumPathFor,
   checkPhotosAccess,
+  importedCount,
   photosStatus,
   photosSupported,
   PHOTOS_FOLDER,
