@@ -128,15 +128,31 @@ obvious from the endpoint names:
 | `GET /users/me` | `raw_passcode` (the physical pickup code), `invite_code`, `auth_phone_number`, `phone_1` |
 | `GET /students/{id}/activities` | `target.invite_code`, `target.raw_passcode`, `target.phone_1`, `target.phone_2`, `target.auth_phone_number`, `target.profile_photo.*`, and `actor.email` — a member of staff's address |
 
-None of it is persisted: the parser takes named fields and the sidecar is built from those,
-so a field we never read cannot reach disk. There is a test asserting that nothing written
-to disk contains the passcode. Two consequences worth keeping in mind:
+**No code, PIN, phone number or anything of that kind is kept.** The tool cannot ask for the
+photos without being sent them: they are in the same answers, and Brightwheel's own website is
+sent them on every scroll of the feed. But every answer from Brightwheel is parsed by
+`parseWithheld` ([`src/api/withheld.ts`](packages/care-album-saver/src/api/withheld.ts)), which
+drops each field whose name says it is a code, a PIN, a password or passkey, a token, a secret,
+a phone number, or something like a pickup word or a check-in number, *while the text is being
+parsed*. The parsed answer never has it, so no parser, log line, error message, report or file
+can reach it; an answer that cannot be parsed is reported without quoting it. It goes by the
+words in a name rather than a fixed list, so a code Brightwheel sends under a new name is
+dropped too, as long as the name still says what it is. What it does not drop is the rest of
+the table: `actor.email` and `target.profile_photo` are held in memory with the record, but the
+parsers take named fields only and name neither, so neither is ever shown or written. Tests
+check that the mock's codes and phone numbers (it sends them from all three endpoints) are in
+none of the client's parsed answers, that nothing written to disk holds them, that no field
+the tool reads is withheld, and that the client and `verify` read Brightwheel's answers no
+other way. What the tool cannot do is keep the bytes from arriving: they are in the answer's
+text until it has been parsed. Two consequences worth keeping in mind:
 
 - **The session is a bigger credential than "can see photos."** It reaches a child's pickup
   code. That is the argument for the session never leaving the API origin, and for the
   media host being fetched without it.
 - **`verify` prints field names, not values**, for exactly this reason — the report is meant
-  to be safe to paste into a public issue, and half these field names would not be.
+  to be safe to paste into a public issue. It reads the same answers through the same parse,
+  and lists the names of the fields it dropped, so a live account still shows that Brightwheel
+  sends them.
 
 ## Scope
 

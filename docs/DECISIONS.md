@@ -25,6 +25,7 @@ document and the work list that followed it) are in git history at d13f8ff, as
   [A2](#a2-the-session-is-an-unprintable-object-and-the-paste-is-checked-at-the-boundary) ·
   [A3](#a3-the-setup-pages-token-goes-in-the-link-not-in-a-cookie) ·
   [A4](#a4-what-protects-a-fork-is-that-nothing-secret-is-ever-in-the-tree) ·
+  [A5](#a5-check-in-codes-are-dropped-as-each-answer-is-read) ·
   [B1](#b1-the-api-as-far-as-one-live-account-confirms-it) ·
   [B2](#b2-there-is-no-capture-time-to-recover) ·
   [B3](#b3-media-urls-are-signed-and-short-lived) ·
@@ -174,6 +175,44 @@ That is the control. `.gitignore`, the gitleaks scan in CI, the npm `files` allo
 
 **Alternatives turned down.** gitleaks, husky, lefthook or pre-commit as dependencies. A hook,
 if one is added, is a few lines of Node with no dependency ([Q13](#q13-ignore-rules-and-a-pre-commit-hook)).
+
+### A5. Check-in codes are dropped as each answer is read
+
+**Decision.** Settled on 24 September 2026, when the owner asked that the tool have no access
+to any child's check-in or check-out code. Every answer from Brightwheel is parsed by
+`parseWithheld` ([`src/api/withheld.ts`](../packages/care-album-saver/src/api/withheld.ts)),
+whose `JSON.parse` reviver drops every field whose name says it is a code, a PIN, a password
+or passkey, a token, a secret, a phone or SMS number, or something like a pickup word or a
+check-in number, *while the text is parsed*. The parsed answer never holds one, so nothing
+after it can: not a parser, a log line, an error message, `verify`'s report or a file (an
+answer that is not JSON is reported without quoting it). It goes by the words in a name rather
+than a list of names, so `checkin_code`, `pickupPin2` and `kioskPasscode` are dropped too; a
+name that says none of those things is not, which is why the parsers still take named fields
+only. Tests check that no field
+the tool reads matches, that the mock's codes are in none of the client's parsed answers, and
+that the client and `verify` parse Brightwheel's answers no other way.
+
+**Why it has to be done this way.** Brightwheel keeps no endpoint for these codes. It embeds
+them: every activity record carries the child as `target`, with `raw_passcode` (the code that
+checks them in and out) and `invite_code`, and `/users/me` carries the parent's own
+([B1](#b1-the-api-as-far-as-one-live-account-confirms-it)). The photos are in the same
+answers. Before this, the protection was the parsers' allowlist, so nothing unnamed reached
+disk. That still holds, but it left every later parser, log line and error path responsible
+for not touching a value that sat in memory beside the photos.
+
+**What it cannot do** is stop the codes being sent. They arrive in the answer's bytes and are
+text for as long as the parse takes. Brightwheel's own website is sent the same fields, by the
+same endpoint, every time the feed scrolls.
+
+**Turned down.**
+- *Asking Brightwheel for less*, with a field-selection parameter or another endpoint.
+  Nothing shows one exists, and finding out would mean probing the live API with a parent's
+  session, which B1 rules out.
+- *Asking the server for photos only* (`action_type=ac_photo`, Q3). It would leave out the
+  check-in records, but the codes are on every record, photos included.
+- *A fixed list of field names.* A code Brightwheel added under a new name would be kept.
+- *Remembering the parent's id so as to skip `/users/me`.* The parent's own code would stop
+  arriving, the children's would not, and both are dropped as they are read in any case.
 
 ### B1. The API, as far as one live account confirms it
 
@@ -462,6 +501,7 @@ it before proposing one again.
 | Perceptual de-duplication | [C3](#c3-no-perceptual-de-duplication) |
 | Names off by default | [C4](#c4-the-childs-name-is-written-into-each-file-by-default) |
 | Anonymising folder names and sidecars | C4 |
+| Holding the check-in codes Brightwheel sends, or probing for a way to be sent them no more | [A5](#a5-check-in-codes-are-dropped-as-each-answer-is-read) |
 
 ### Decided elsewhere
 
