@@ -739,3 +739,11 @@ temporary folder, run the script on it
 delete the copy, and see whether the photo in the Test › Q17 album still opens or says
 **Missing File**. Then tick *Copy items* again, quit, hold Option while opening Apple Photos.app
 to switch back to your own library, and tick *Add them to Apple Photos.app* again.
+
+**Half answered, 2026-09-24.** In the owner's own library, with *Copy items* ticked, every
+photo the tool had added still opened at full size after the private copies it handed over had
+been deleted (as they are after every batch), and again after the archive folder was renamed
+and Apple Photos.app restarted. So with the setting on, the script's import copies into the
+library: the path the page asks every parent to be on works. What it does with the setting
+off, the half the steps above check, is still open, and low in stakes: either answer leaves
+the tool as safe as it is, and decides only whether the page's question is necessary.
