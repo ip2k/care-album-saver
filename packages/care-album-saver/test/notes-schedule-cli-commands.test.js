@@ -190,14 +190,14 @@ test('log-dir mode: a scheduled run with nothing to do still puts the log back t
 test('§4.4 Photos notice: while the Photos record is damaged the daily run remembers it said so, and forgets once it is readable', async (t) => {
   if (process.platform !== 'darwin') return t.skip('the Photos step only runs on macOS');
   const { configDir, photos, env } = await computer({
-    config: { addToPhotos: true, addToPhotosFrom: new Date(0).toISOString() },
+    config: { addToPhotos: true },
   });
   try {
     await writeFile(join(configDir, 'photos.json'), '{ not json');
     const notices = async () => JSON.parse(await readFile(join(configDir, 'notices.json'), 'utf8').catch(() => '{}'));
 
     const first = await cli(['run', '--scheduled', '--base-url', `${mock.url}/api/v1`], env);
-    assert.match(first.stdout, /Not added to Photos: .*cannot be read/, first.stdout);
+    assert.match(first.stdout, /Not added to Apple Photos\.app: .*cannot be read/, first.stdout);
     const said = (await notices()).photos;
     assert.match(said ?? '', /cannot be read/, 'the problem the notice was for is written down');
 

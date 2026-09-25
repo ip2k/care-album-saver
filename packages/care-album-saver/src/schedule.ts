@@ -250,7 +250,7 @@ const NOTICE_TITLE = 'Care Album Saver';
  */
 const NOTICE_TEXT: Readonly<Record<NoticeKind, string>> = {
   failed: 'The daily photo run did not work. Open the setup assistant to see why.',
-  photos: 'Your new photos were saved, but could not be added to Photos. Open the setup assistant to see why.',
+  photos: 'Your new photos were saved, but could not be added to Apple Photos.app. Open the setup assistant to see why.',
 };
 
 /**

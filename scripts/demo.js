@@ -79,9 +79,19 @@ const branch = (() => {
 })();
 const say = (line) => process.stdout.write(`  [demo] ${line}\n`);
 
-/** The Photos app, pretended. Everything else — the folder chooser, Finder — is real. */
+/**
+ * Apple Photos.app, pretended. Everything else — the folder chooser, Finder — is real.
+ *
+ * Caught by the script, whatever runs it: the tool calls /usr/bin/osascript by its full path,
+ * and until 2026-09-24 this matched only the bare name "osascript", so the real app was driven
+ * with the demo's pictures (and, with iCloud Photos on, they went to iCloud). And any other
+ * osascript call that names the Photos script is refused outright rather than run for real.
+ */
 const spawn = async (file, args, timeoutMs) => {
-  if (file === 'osascript' && args[0] === PHOTOS_SCRIPT) {
+  if (args.includes(PHOTOS_SCRIPT) && args[0] !== PHOTOS_SCRIPT) {
+    return { code: 1, stdout: '', stderr: 'The demo never runs the Photos script for real.' };
+  }
+  if (args[0] === PHOTOS_SCRIPT) {
     const at = args.indexOf('--');
     const shown =
       at < 0 ? '(no files: the permission check)' : `${args.slice(1, at).join(' › ')}  ←  ${args.length - at - 1} file(s)`;

@@ -15,14 +15,15 @@ import { savedFingerprints } from './fingerprints.js';
 import { RunLockUnusableError, setAsideIfUnchanged, sightLock, touchedWithin, writeLockOrRemove } from './run-lock.js';
 
 /**
- * Adding saved photos to the Photos app, on a Mac, when the parent has asked for it.
+ * Adding saved photos to Apple Photos.app, on a Mac, when the parent has asked for it: every
+ * photo and video saved so far, for every child, and each run's new ones after that, once each.
  *
  * WHY THIS IS OFF UNLESS TURNED ON. Everywhere else this tool can promise that nothing
  * leaves the computer. A Photos library with iCloud Photos switched on uploads whatever is
  * added to it, so this is the one setting that breaks that promise — on the parent's say-so,
  * to the parent's own iCloud account, and never by default.
  *
- * HOW IT TALKS TO PHOTOS. Through one AppleScript file, `applescript/add-to-photos.applescript`,
+ * HOW IT TALKS TO APPLE PHOTOS.APP. Through one AppleScript file, `applescript/add-to-photos.applescript`,
  * which holds everything this tool ever asks Photos to do, so that a parent — or anyone
  * reviewing the project — can read the whole of it in one place. It is run as
  *
@@ -36,10 +37,19 @@ import { RunLockUnusableError, setAsideIfUnchanged, sightLock, touchedWithin, wr
  * osascript is /usr/bin/osascript, never whatever PATH finds first, and the script itself
  * stops unless the Photos it would talk to is Apple's own, in /System/Applications.
  *
- * WHAT PHOTOS IS GIVEN. Private copies, never the files in the photos folder, and only copies
- * whose SHA-256 is one this tool recorded when it saved the file, in a record kept outside
- * that folder. Anything else that can write the folder can make a photo be left out, and
- * nothing more. See `addToPhotos` and fingerprints.ts.
+ * WHAT APPLE PHOTOS.APP IS GIVEN. Private copies, never the files in the photos folder, and
+ * only copies whose SHA-256 is one this tool recorded when it saved the file, in a record kept
+ * outside that folder. Anything else that can write the folder can make a photo be left out,
+ * and nothing more. See `addToPhotos` and fingerprints.ts. The copies are deleted once it has
+ * them, so it must keep a copy of its own: its "Copy items to the Photos library" setting has
+ * to be on. With it off it keeps only a reference, to a file about to be deleted, and the
+ * photo never opens and never reaches iCloud. Nothing here can read that setting (it is a
+ * private preference inside Apple Photos.app's sandbox), so the setup page asks the parent to
+ * confirm it every time the option is turned on; docs/DECISIONS.md C8.
+ *
+ * WHAT COMES BACK. One number per batch, how many items the import said it took
+ * (`importedCount`), and on failure the last line of osascript's error. Nothing is read from
+ * the library: no names, no paths, no ids.
  *
  * WHERE THEY GO. Into a folder named after the source, then folders and an album that repeat
  * the folders on disk: `child-then-week` gives Brightwheel › Robin-Maple › 2026-W38, and
@@ -50,7 +60,10 @@ import { RunLockUnusableError, setAsideIfUnchanged, sightLock, touchedWithin, wr
  * waits for somebody to click, which nobody is there to do at seven in the evening — so the
  * script turns it off, and this module guarantees instead that no file is handed over twice.
  * The list is keyed by each file's SHA-256 from the manifest, so a file moved by a change of
- * folder layout is still recognised, and the same photo posted twice is added once.
+ * folder layout is still recognised. (Two posts of one picture are two files by then, each
+ * tagged with its own date and note, so each goes in; and a batch Apple Photos.app took but
+ * that was not written down — it stopped answering, or the process was killed — is handed
+ * over again.)
  */
 
 /** The top-level folder in Photos. Named after the source, so a second source gets its own. */
@@ -93,14 +106,22 @@ export interface PhotosOptions {
   onProgress?: (message: string) => void;
   /** Stop between batches. The batch Photos is working on is finished, never cut off. */
   signal?: AbortSignal;
+  /**
+   * Asked before each batch: whether the option is still on. The run's step and the daily run
+   * pass one that reads the settings again, so that unticking the box stops them between
+   * batches as it stops an import started on its own (whose signal the page aborts).
+   */
+  stillOn?: () => Promise<boolean>;
 }
 
 /** How the last attempt went, kept so the page can say so days later. */
 export interface PhotosAttempt {
   at: string;
   ok: boolean;
-  /** How many files this attempt handed over. */
+  /** How many Photos said it imported, in this attempt. See `importedCount`. */
   added: number;
+  /** Handed over in this attempt beyond the count Photos gave back. Absent when none. */
+  unconfirmed?: number;
   /** For a parent to read. Absent when it worked. */
   error?: string;
 }
@@ -116,9 +137,19 @@ export type PhotosFailure = 'unsupported' | 'denied' | 'timeout' | 'busy' | 'fai
 
 export interface PhotosResult {
   ok: boolean;
+  /** How many Photos said it imported: the sum of the counts the script printed. */
   added: number;
-  /** Still waiting after this attempt: the ones a failure left behind. */
+  /**
+   * Handed to Photos, but more than the count it gave back for their batch: Photos took
+   * fewer than it was given, or did not say. Photos does not say which ones, so they are
+   * written down as handed over with the rest and not offered again (offering them again
+   * would add a second copy of each one it did take). Absent when none.
+   */
+  unconfirmed?: number;
+  /** Still waiting after this attempt: the ones a failure, a stop or turning it off left behind. */
   remaining: number;
+  /** Stopped between batches because the option was turned off while it went. */
+  turnedOff?: boolean;
   /** Listed in the manifest but no longer on disk, so not handed over. */
   missing: number;
   /**
@@ -136,11 +167,18 @@ export interface PhotosStatus {
   /** Whether this computer can do it at all. */
   supported: boolean;
   enabled: boolean;
-  from: string | null;
   folder: string;
-  /** Saved since it was turned on and not yet in Photos. */
+  /**
+   * Saved and not yet handed to Apple Photos.app, each file once: what the next run adds, or,
+   * while it is off, what turning it on would add.
+   */
   pending: number;
-  /** Saved before it was turned on and not in Photos: the "add those too" count. */
+  /**
+   * On an install that turned the option on before 2026-09-24: the moment it was turned on,
+   * before which nothing is added (see `sortOut`), and how many saved earlier are waiting for
+   * the parent to turn it off and on again. Null and 0 everywhere else.
+   */
+  limitedFrom: string | null;
   earlier: number;
   lastAttempt: PhotosAttempt | null;
   scriptUrl: string;
@@ -200,13 +238,13 @@ async function loadState(): Promise<PhotosState> {
     stored = await readJsonFile<PhotosState>(statePath());
   } catch (error) {
     // Read as empty, a damaged record would say nothing had ever been added, and the next
-    // run would hand every photo since the option was turned on to Photos a second time —
-    // and to iCloud with it. So it stops here instead (security review fs-5).
+    // run would hand every photo in the archive to Apple Photos.app a second time — and to
+    // iCloud with it. So it stops here instead (security review fs-5).
     if (error instanceof UnreadableFileError) {
       throw new Error(
-        `The record of what has already been added to Photos (${error.path}) cannot be read: ${error.reason}. ` +
+        `The record of what has already been added to Apple Photos.app (${error.path}) cannot be read: ${error.reason}. ` +
           'Nothing was added, so nothing has been added twice. Moving that file somewhere safe starts the ' +
-          'record again, which adds every photo since you turned this on a second time.',
+          'record again, which adds every photo in your folder to Apple Photos.app a second time, as duplicates.',
       );
     }
     throw error;
@@ -239,9 +277,18 @@ function nameThisToolWrites(name: string): boolean {
   return name !== '--' && !name.startsWith('.') && !/[\u0000-\u001f\u007f]/.test(name);
 }
 
-/** Which files are due, and how many earlier ones are waiting on the parent's say-so. */
+/**
+ * Which files are due: every one in the archive, for every child and from every run, that
+ * has not been handed over already, each file once — both decided by its SHA-256.
+ *
+ * Except on an install that turned the option on before 2026-09-24, when only what was saved
+ * after that moment was due: its `addToPhotosFrom` still limits what goes in, so that an
+ * update never sends Apple Photos.app (and iCloud) photos the parent did not agree to. Those
+ * are counted as `earlier`, and the page says how to add them: turning the option off and on
+ * again removes the date, and turning it on asks about everything.
+ */
 async function sortOut(config: Config, all: readonly ManifestRecord[], state: PhotosState): Promise<{ due: Waiting[]; earlier: number }> {
-  const from = config.addToPhotosFrom ? Date.parse(config.addToPhotosFrom) : Number.NEGATIVE_INFINITY;
+  const from = config.addToPhotos && typeof config.addToPhotosFrom === 'string' ? Date.parse(config.addToPhotosFrom) : Number.NEGATIVE_INFINITY;
   const root = resolve(config.archiveDir);
   // The archive where it really is, so that albums can be named from where each file really
   // is. Unresolvable, and containedFile would refuse every entry anyway.
@@ -294,7 +341,7 @@ function cloudWarning(config: Config): string | null {
   if (!checkArchiveDir(config.archiveDir).warning) return null;
   return (
     'Your photos folder looks like it may be synced to a cloud service. That does not decide what goes into ' +
-    'Photos: only photos this tool saved go in, checked against a record kept on this Mac rather than in that ' +
+    'Apple Photos.app: only photos this tool saved go in, checked against a record kept on this Mac rather than in that ' +
     'folder, and anything changed or added there is left out and reported.'
   );
 }
@@ -314,12 +361,13 @@ export async function photosStatus(config: Config, options: PhotosOptions = {}):
     }
   }
   const { due, earlier } = supported && !problem ? await sortOut(config, await records(config), state) : { due: [], earlier: 0 };
+  const enabled = supported && config.addToPhotos;
   return {
     supported,
-    enabled: supported && config.addToPhotos,
-    from: config.addToPhotosFrom,
+    enabled,
     folder: PHOTOS_FOLDER,
-    pending: config.addToPhotos ? due.length : 0,
+    pending: due.length,
+    limitedFrom: enabled && typeof config.addToPhotosFrom === 'string' ? config.addToPhotosFrom : null,
     earlier,
     lastAttempt: state.lastAttempt ?? null,
     scriptUrl: PHOTOS_SCRIPT_URL,
@@ -342,16 +390,16 @@ function explain(code: number, stderr: string): { reason: PhotosFailure; error: 
     return {
       reason: 'denied',
       error:
-        'Your Mac has not allowed Care Album Saver to add photos to Photos. Open System Settings › ' +
+        'Your Mac has not allowed Care Album Saver to add photos to Apple Photos.app. Open System Settings › ' +
         'Privacy & Security › Automation, find the program it runs in (Terminal, or node for the ' +
-        'daily run) and turn on Photos under it. Your photos are safe in your folder and will be added next time.',
+        'daily run) and turn on Photos (Apple Photos.app) under it. Your photos are safe in your folder and will be added next time.',
     };
   }
   if (code === 124 || /\(-1712\)/.test(stderr)) {
     return {
       reason: 'timeout',
       error:
-        'Photos did not answer in time. Open Photos yourself once, check it shows your library ' +
+        'Apple Photos.app did not answer in time. Open it yourself once, check it shows your library ' +
         'rather than a welcome screen, and try again. Nothing was lost; they will be added next time.',
     };
   }
@@ -361,14 +409,50 @@ function explain(code: number, stderr: string): { reason: PhotosFailure; error: 
     return {
       reason: 'failed',
       error:
-        `Nothing was added to Photos: ${where} Care Album Saver hands photos only to Apple's own Photos app, the one in ` +
+        `Nothing was added to Apple Photos.app: ${where} Care Album Saver hands photos only to Apple Photos.app itself, the one in ` +
         '/System/Applications, and this is not that one. Your photos are safe in your folder.',
     };
   }
   if (/\(-600\)|\(-10810\)|\(-10814\)/.test(stderr)) {
-    return { reason: 'failed', error: 'Photos could not be opened on this Mac, so nothing was added to it.' };
+    return { reason: 'failed', error: 'Apple Photos.app could not be opened on this Mac, so nothing was added to it.' };
   }
-  return { reason: 'failed', error: `Photos did not take them${said ? `: ${said}` : '.'}` };
+  return { reason: 'failed', error: `Apple Photos.app did not take them${said ? `: ${said}` : '.'}` };
+}
+
+/**
+ * How many items Photos says it imported from one batch, from the script's output.
+ *
+ * The script ends by printing the count of what Photos' `import` command returned, and that
+ * number is all that comes back from Photos when it works: no name, no path, nothing from the
+ * library (a failure brings back osascript's last line of complaint, see `explain`). It
+ * is believed only as a plain count no larger than the batch. Anything else — no output, a
+ * word, a larger number — is null, and the batch counts as unconfirmed rather than added.
+ */
+export function importedCount(stdout: string, handed: number): number | null {
+  const text = stdout.trim();
+  if (!/^\d{1,6}$/.test(text)) return null;
+  const count = Number(text);
+  return count <= handed ? count : null;
+}
+
+/**
+ * What to tell a parent about `PhotosResult.unconfirmed`: Photos counted fewer than it was
+ * given, or gave no count at all, and either way cannot say which.
+ */
+/**
+ * What an install that turned the option on before 2026-09-24 is not adding (see `sortOut`),
+ * and how to add it. The page says the same.
+ */
+export function earlierSentence(count: number, from: string): string {
+  return (`Only photos saved since ${from.slice(0, 10)} are added, as when this was turned on. ${count} saved before then ` +
+    `${count === 1 ? 'is' : 'are'} not: to add every photo, turn it off and on again on the setup page, which asks first.`);
+}
+
+export function unconfirmedSentence(count: number): string {
+  return (
+    `Apple Photos.app did not confirm ${count} of the photos it was given. ${count === 1 ? 'It is' : 'Every one is'} still in your ` +
+    `photos folder; if one is missing from Apple Photos.app, add it from there by hand.`
+  );
 }
 
 /**
@@ -380,10 +464,10 @@ function changedReport(paths: readonly string[], added: number): string {
   const it = one ? 'it' : 'them';
   const which = paths.slice(0, 3).join(', ') + (paths.length > 3 ? `, and ${paths.length - 3} more` : '');
   return (
-    `${one ? 'One photo was' : `${paths.length} photos were`} not added to Photos, because ` +
+    `${one ? 'One photo was' : `${paths.length} photos were`} not added to Apple Photos.app, because ` +
     `${one ? 'it is' : 'they are'} not ${one ? 'a file' : 'files'} this tool saved on this Mac, or not as it saved ${it}: ${which}. ` +
     `Something has changed or put ${it} there since — an edit of your own, another program, or another computer that can ` +
-    `write to your photos folder. If that was you, you can add ${it} to Photos by hand; if not, look at ${it} before you do.` +
+    `write to your photos folder. If that was you, you can add ${it} to Apple Photos.app by hand; if not, look at ${it} before you do.` +
     (added > 0 ? ` The other ${added} ${added === 1 ? 'was' : 'were'} added.` : '')
   );
 }
@@ -444,10 +528,10 @@ async function takeLock(): Promise<(() => Promise<void>) | null> {
  * to answer and the run would simply stall.
  */
 export async function checkPhotosAccess(options: PhotosOptions = {}): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!photosSupported(options.platform)) return { ok: false, error: 'Adding to Photos is only possible on a Mac.' };
+  if (!photosSupported(options.platform)) return { ok: false, error: 'Adding to Apple Photos.app is only possible on a Mac.' };
   const spawn = options.spawn ?? realSpawn;
   const result = await spawn(OSASCRIPT, [PHOTOS_SCRIPT], CHECK_TIMEOUT_MS);
-  if (result.missing) return { ok: false, error: 'This Mac has no osascript, so Photos cannot be reached.' };
+  if (result.missing) return { ok: false, error: 'This Mac has no osascript, so Apple Photos.app cannot be reached.' };
   if (result.code === 0) return { ok: true };
   return { ok: false, error: explain(result.code, result.stderr).error };
 }
@@ -463,7 +547,7 @@ export async function checkPhotosAccess(options: PhotosOptions = {}): Promise<{ 
 export async function addToPhotos(config: Config, options: PhotosOptions = {}): Promise<PhotosResult> {
   const say = options.onProgress ?? (() => {});
   if (!photosSupported(options.platform)) {
-    return { ok: false, added: 0, remaining: 0, missing: 0, reason: 'unsupported', error: 'Adding to Photos is only possible on a Mac.' };
+    return { ok: false, added: 0, remaining: 0, missing: 0, reason: 'unsupported', error: 'Adding to Apple Photos.app is only possible on a Mac.' };
   }
   if (!config.addToPhotos) return { ok: true, added: 0, remaining: 0, missing: 0 };
 
@@ -475,12 +559,13 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
       remaining: 0,
       missing: 0,
       reason: 'busy',
-      error: 'Another run is adding photos to Photos right now. Anything it does not reach will be added next time.',
+      error: 'Another run is adding photos to Apple Photos.app right now. Anything it does not reach will be added next time.',
     };
   }
 
   const spawn = options.spawn ?? realSpawn;
   let added = 0;
+  let unconfirmed = 0;
   let missing = 0;
   /** The list's paths for files that are no longer what was saved, for the report. */
   const changed: string[] = [];
@@ -506,13 +591,21 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
     const keys = [...albums.keys()].sort();
 
     let remaining = due.length;
-    say(`Adding ${due.length} to Photos, in the ${PHOTOS_FOLDER} folder…`);
+    say(`Adding ${due.length} to Apple Photos.app, in the ${PHOTOS_FOLDER} folder…`);
     for (const key of keys) {
       const items = albums.get(key) ?? [];
       for (let i = 0; i < items.length; i += BATCH) {
-        // Stopped: what Photos has taken is written down, the rest waits for the next run.
-        // Asked before the batch is read and hashed, which is the slow part of a batch.
-        if (options.signal?.aborted) return { ok: true, added, remaining, missing, changed: changed.length };
+        // Stopped, or turned off: what Photos has taken is written down, the rest waits for
+        // the next run (or, turned off, for the option to be turned on again). Asked before
+        // the batch is read and hashed, which is the slow part of a batch.
+        const off = !options.signal?.aborted && options.stillOn ? !(await options.stillOn().catch(() => true)) : false;
+        if (options.signal?.aborted || off) {
+          if (added > 0 || unconfirmed > 0) {
+            state.lastAttempt = { at: new Date().toISOString(), ok: true, added, ...(unconfirmed > 0 && { unconfirmed }) };
+            await saveState(state);
+          }
+          return { ok: true, added, remaining, missing, changed: changed.length, ...(unconfirmed > 0 && { unconfirmed }), ...(off && { turnedOff: true }) };
+        }
         // Photos is never handed a file in the photos folder, only a private copy of it
         // (security review processes-5, and the time between check and use). Whatever else
         // can write that folder could swap a checked file for a link, or for other bytes, in
@@ -560,39 +653,46 @@ export async function addToPhotos(config: Config, options: PhotosOptions = {}): 
           const result = await spawn(OSASCRIPT, [PHOTOS_SCRIPT, ...album, '--', ...batch.map((b) => b.copy)], IMPORT_TIMEOUT_MS);
           if (result.missing || result.code !== 0) {
             const why = result.missing
-              ? { reason: 'failed' as const, error: 'This Mac has no osascript, so Photos cannot be reached.' }
+              ? { reason: 'failed' as const, error: 'This Mac has no osascript, so Apple Photos.app cannot be reached.' }
               : explain(result.code, result.stderr);
-            state.lastAttempt = { at: new Date().toISOString(), ok: false, added, error: why.error };
+            state.lastAttempt = { at: new Date().toISOString(), ok: false, added, ...(unconfirmed > 0 && { unconfirmed }), error: why.error };
             await saveState(state);
-            return { ok: false, added, remaining, missing, changed: changed.length, ...why };
+            return { ok: false, added, remaining, missing, changed: changed.length, ...(unconfirmed > 0 && { unconfirmed }), ...why };
           }
           const now = new Date().toISOString();
+          // Every file of the batch is written down, whatever Photos counted: see
+          // `PhotosResult.unconfirmed`. The count said is Photos' own.
           for (const b of batch) state.added[b.record.sha256] = now;
-          added += batch.length;
+          const took = importedCount(result.stdout, batch.length) ?? 0;
+          added += took;
+          unconfirmed += batch.length - took;
           remaining -= batch.length;
           await saveState(state);
-          say(`Added ${added} of ${due.length} to Photos…`);
+          say(`Apple Photos.app has imported ${added} of ${due.length}…`);
         } finally {
-          // Photos has copied them into its library by the time the script returns.
+          // Apple Photos.app has copied them into its library by the time the script returns,
+          // provided "Copy items to the Photos library" is on. With it off, it now holds links
+          // to files that no longer exist, and nothing here can tell: see WHAT APPLE PHOTOS.APP
+          // IS GIVEN, above.
           await rm(stage, { recursive: true, force: true });
         }
       }
     }
 
-    // A changed file makes the attempt a failure, although Photos took everything it was
-    // given: that way it is said everywhere a failure is — the page's Photos card, the
+    // A changed file makes the attempt a failure, although Apple Photos.app took everything it
+    // was given: that way it is said everywhere a failure is — the page's Photos card, the
     // run's own line, the daily log and, once, a notification — rather than only counted.
     // Said again on every run that finds it, until the file is put back or moved out.
     if (changed.length > 0) {
       const error = changedReport(changed, added);
-      state.lastAttempt = { at: new Date().toISOString(), ok: false, added, error };
+      state.lastAttempt = { at: new Date().toISOString(), ok: false, added, ...(unconfirmed > 0 && { unconfirmed }), error };
       await saveState(state);
-      return { ok: false, added, remaining: 0, missing, changed: changed.length, reason: 'changed', error };
+      return { ok: false, added, remaining: 0, missing, changed: changed.length, ...(unconfirmed > 0 && { unconfirmed }), reason: 'changed', error };
     }
 
-    state.lastAttempt = { at: new Date().toISOString(), ok: true, added };
+    state.lastAttempt = { at: new Date().toISOString(), ok: true, added, ...(unconfirmed > 0 && { unconfirmed }) };
     await saveState(state);
-    return { ok: true, added, remaining: 0, missing, changed: 0 };
+    return { ok: true, added, remaining: 0, missing, changed: 0, ...(unconfirmed > 0 && { unconfirmed }) };
   } finally {
     await release();
   }

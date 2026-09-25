@@ -350,7 +350,8 @@ function recorder() {
       copies.push({ copy, rel: [...args.slice(2, at), basename(copy)].join('/'), sha256: sha256(await readFile(copy)) });
     }
     calls.push({ file, args: [...args], copies });
-    return { code: 0, stdout: '', stderr: '' };
+    // What the real script prints: how many files Apple Photos.app imported.
+    return { code: 0, stdout: `${copies.length}\n`, stderr: '' };
   };
   return { calls, spawn };
 }
@@ -380,7 +381,7 @@ async function savedForPhotos(dir) {
   } finally {
     await mock.close();
   }
-  return configFor(dir, { addToPhotos: true, addToPhotosFrom: null });
+  return configFor(dir, { addToPhotos: true });
 }
 
 test('processes-5: a file that is no longer the one saved is not handed to Photos, not recorded, and is reported', async () => {
@@ -492,8 +493,8 @@ test('processes-5: a copy of the tool that is not talking to Apple\'s Photos say
     const result = await addToPhotos(config, { platform: 'darwin', spawn: async () => refusal });
     assert.equal(result.ok, false);
     assert.equal(result.added, 0);
-    assert.match(result.error, /Nothing was added to Photos: the Photos this Mac would open is at \/Users\/alex\/Applications\/Photos\.app\./);
-    assert.match(result.error, /only to Apple's own Photos app, the one in \/System\/Applications/);
+    assert.match(result.error, /Nothing was added to Apple Photos\.app: the Photos this Mac would open is at \/Users\/alex\/Applications\/Photos\.app\./);
+    assert.match(result.error, /only to Apple Photos\.app itself, the one in \/System\/Applications/);
     const access = await checkPhotosAccess({ platform: 'darwin', spawn: async () => refusal });
     assert.equal(access.ok, false);
     assert.match(access.error, /\/Users\/alex\/Applications\/Photos\.app/);
@@ -594,7 +595,7 @@ test('processes-5: a photos folder that looks cloud-synced is warned about where
     const config = await savedForPhotos(dir);
     const status = await photosStatus(config, { platform: 'darwin' });
     assert.match(status.warning ?? '', /synced to a cloud service/);
-    assert.match(status.warning, /does not decide what goes into Photos/);
+    assert.match(status.warning, /does not decide what goes into Apple Photos\.app/);
     assert.equal(status.problem, null, 'a warning, not a stop');
 
     const photos = recorder();

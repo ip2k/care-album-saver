@@ -37,11 +37,13 @@ document and the work list that followed it) are in git history at d13f8ff, as
   [C5](#c5-a-videos-dates-are-written-in-utc-with-apples-local-time-key-beside-them) ·
   [C6](#c6-how-the-tool-describes-itself) ·
   [C7](#c7-the-name-is-care-album-saver) ·
+  [C8](#c8-every-photo-goes-to-apple-photosapp-once-and-copy-items-is-asked-about) ·
   [rejected for good](#rejected-for-good) ·
   [decided elsewhere](#decided-elsewhere)
 - Open: [the API](#what-nobody-has-checked-yet-about-brightwheels-api) (Q1–Q8) ·
   [sessions](#what-only-a-real-account-can-answer-about-sessions) (Q9) ·
-  [agreed but not built](#agreed-but-not-built) (Q11–Q16; Q10 built, see A3)
+  [agreed but not built](#agreed-but-not-built) (Q11–Q16; Q10 built, see A3) ·
+  [Apple Photos.app](#what-only-a-real-mac-can-answer-about-apple-photosapp) (Q17)
 
 ---
 
@@ -478,6 +480,52 @@ there. Tests pin all three, and `doctor` says when the old folder is the one in 
 Not decided, because it is still hypothetical: whether reading a second service would mean a
 source-adapter boundary in `src/api/`.
 
+### C8. Every photo goes to Apple Photos.app once, and Copy items is asked about
+
+**Decision.** Settled on 24 September 2026. Turning on *Add them to Apple Photos.app* makes
+every photo and video saved so far, for every child, due, and each run's new ones after that.
+Each file goes once: `photos.json` keeps the SHA-256 of everything handed over, so a file
+moved by a change of layout is not handed over again (two posts of one picture are two files,
+each tagged with its own date, and each goes in; a batch that was cut off before it could be
+written down is handed over again). Ticking the box adds nothing by itself; the next run does, or *Add them to
+Apple Photos.app now* under it, which fetches nothing from Brightwheel. The count the page
+shows is the one integer the AppleScript prints, what Apple Photos.app's `import` returned;
+when it works, that integer is all that comes back from Apple Photos.app, and when it fails,
+the last line of the error osascript reports. A batch it counts short is
+still written down whole, because it does not say which ones it took, and handing them all
+over again would duplicate those it did; the page says how many it did not confirm. Every
+time the option is turned on, the page first asks the parent to confirm that Apple
+Photos.app's *Copy items to the Photos library* is ticked.
+
+**An install that already had it on is not widened.** Its `addToPhotosFrom`, the moment it
+was turned on, still limits what goes in, so updating never sends Apple Photos.app (and so
+iCloud) photos the parent did not agree to. The page says how many saved earlier are not being
+added; turning the option off and on again removes the limit, and turning it on asks.
+
+**Why every photo.** Until this date only photos saved after the option was turned on were
+due, with a separate button for the earlier ones. The owner turned it on after a run, and
+Apple Photos.app got that run's photos, of one child, and nothing else, which looked like a
+fault and was, from where a parent stands: someone who asks for their photos in Apple
+Photos.app means all of them.
+
+**Why the question.** The tool hands Apple Photos.app private copies and deletes them once it
+has them ([PHOTOS.md](PHOTOS.md#how-it-works)). With *Copy items* off it keeps only a
+reference, to a file about to be deleted: a preview that will not open, never uploaded to
+iCloud, and written down as added, so never offered again. Nothing can see the setting. It is
+a private preference inside Apple Photos.app's sandbox, and reading it would be reaching into
+the parent's Photos data, the direction this tool never goes.
+
+**Turned down.**
+- *Reading the preference* (`defaults read`, or the sandboxed container): private,
+  undocumented, and a path from Photos' data back into the tool.
+- *Keeping the copies rather than deleting them*: a second full copy of the archive, for
+  ever, to cover a setting that comes ticked.
+- *PhotoKit, through a compiled helper*: a native binary to build, sign and ship, against
+  zero runtime dependencies, for the same import.
+- *A test import, checked afterwards*: finding out whether it opens means reading the library.
+- *Asking Apple Photos.app which items it took*: names or ids from the library back into the
+  tool, where the count is enough.
+
 ### Rejected for good
 
 Each of these was considered and turned down; the entry named gives the reason. Please read
@@ -502,14 +550,17 @@ it before proposing one again.
 | Names off by default | [C4](#c4-the-childs-name-is-written-into-each-file-by-default) |
 | Anonymising folder names and sidecars | C4 |
 | Holding the check-in codes Brightwheel sends, or probing for a way to be sent them no more | [A5](#a5-check-in-codes-are-dropped-as-each-answer-is-read) |
+| Reading Apple Photos.app's settings or library | [C8](#c8-every-photo-goes-to-apple-photosapp-once-and-copy-items-is-asked-about) |
+| Keeping the copies handed to Apple Photos.app | C8 |
 
 ### Decided elsewhere
 
 Settled decisions with a document of their own:
 
-- **Adding photos to Apple Photos is off by default**, and is turned on only after macOS has
-  asked permission — it is the one setting that can send photos off the computer.
-  [PHOTOS.md](PHOTOS.md).
+- **Adding photos to Apple Photos.app is off by default**, and is turned on only after macOS
+  has asked permission — it is the one setting that can send photos off the computer.
+  [PHOTOS.md](PHOTOS.md), and [C8](#c8-every-photo-goes-to-apple-photosapp-once-and-copy-items-is-asked-about)
+  for what it adds and the question it asks.
 - **The update check asks once**, and sends nothing before a yes; after that it asks GitHub at
   most daily, only from the setup page, never from the daily run.
   [UPDATE-CHECK.md](UPDATE-CHECK.md).
@@ -666,3 +717,25 @@ CI runs the whole suite on Windows with Node 22, 24 and 26. Still unproven there
 renaming over an open file — `archive.json` on save, a `.part` file into place — trips an
 antivirus scanner. File permissions on Windows are inherited from the folder, so there is no
 owner-only mode on the session or the archive ([SECURITY.md](../SECURITY.md)).
+
+### What only a real Mac can answer about Apple Photos.app
+
+#### Q17. Does the script's import follow *Copy items to the Photos library*?
+
+[C8](#c8-every-photo-goes-to-apple-photosapp-once-and-copy-items-is-asked-about) assumes
+that AppleScript's `import` obeys the setting as **File › Import** does, so that with it off
+Apple Photos.app keeps a reference to the private copy rather than a copy of its own. If it
+always copies, the question the page asks is harmless but unnecessary; if it follows the
+setting, the question is what stands between a parent and photos that will not open. No test
+can answer it: no test may drive the real app. To check by hand, in a throwaway library so
+nothing of yours is touched: first untick *Add them to Apple Photos.app* on your own setup
+page, and do this well away from the daily run's time, so that no run of yours hands your
+archive to the throwaway library (and writes it down as added). Quit Apple Photos.app, then
+hold Option while opening it, and create a new library. Untick *Copy items* in its Settings ›
+General. While `node scripts/demo.js` is running, copy one of its invented photos from its archive
+folder (`node_modules/.cache/care-album-saver-demo`, deleted when the demo stops) into a
+temporary folder, run the script on it
+(`osascript packages/care-album-saver/applescript/add-to-photos.applescript Test Q17 -- <that copy>`),
+delete the copy, and see whether the photo in the Test › Q17 album still opens or says
+**Missing File**. Then tick *Copy items* again, quit, hold Option while opening Apple Photos.app
+to switch back to your own library, and tick *Add them to Apple Photos.app* again.

@@ -324,7 +324,7 @@ async function photosArchive() {
   const client = new BrightwheelClient({ session: new Secret(SESSION), baseUrl: `${mock.url}/api/v1`, delayMs: 0 });
   const config = { ...DEFAULT_CONFIG, archiveDir: dir, incremental: false, delayMs: 0, includeStudents: ['stu-aaa-111'] };
   await sync(client, config, () => {}, { allowTemporaryDir: true });
-  return { dir, configDir, config: { ...config, addToPhotos: true, addToPhotosFrom: null } };
+  return { dir, configDir, config: { ...config, addToPhotos: true } };
 }
 
 function recorder(during = async () => {}) {
@@ -332,7 +332,8 @@ function recorder(during = async () => {}) {
   const spawn = async (file, args) => {
     calls.push(args);
     await during();
-    return { code: 0, stdout: `${args.length}\n`, stderr: '' };
+    // What the real script prints: how many files, after `--`, Apple Photos.app imported.
+    return { code: 0, stdout: `${args.length - args.indexOf('--') - 1}\n`, stderr: '' };
   };
   return { calls, spawn };
 }
@@ -374,7 +375,7 @@ test('processes-6: a stale Photos lock is set aside, not deleted by name, and le
 
     // A fresh one is another run's: this one stops, and leaves it be.
     await writeFile(lock, '4242 now other\n');
-    const busy = await addToPhotos({ ...config, addToPhotosFrom: null }, { platform: 'darwin', spawn: recorder().spawn });
+    const busy = await addToPhotos({ ...config }, { platform: 'darwin', spawn: recorder().spawn });
     assert.equal(busy.reason, 'busy');
     assert.equal(await readFile(lock, 'utf8'), '4242 now other\n');
   } finally {

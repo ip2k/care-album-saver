@@ -155,7 +155,7 @@ test('processes-9: a notice is chosen by kind, its AppleScript is made from its 
   }
   assert.equal(mac.calls.length, 2, 'only the two known kinds reached osascript');
   assert.match(mac.calls[0].args[1], /^display notification "The daily photo run did not work\. [^"]+" with title "Care Album Saver"$/);
-  assert.match(mac.calls[1].args[1], /could not be added to Photos/);
+  assert.match(mac.calls[1].args[1], /could not be added to Apple Photos\.app/);
   // The same words on every desktop: the Mac's are made from them, not kept beside them.
   const [title, text] = penguin.calls[0].args;
   assert.equal(title, 'Care Album Saver');

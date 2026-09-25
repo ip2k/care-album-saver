@@ -150,10 +150,11 @@ test('the pictures do not bloat the page', () => {
   // against somebody later inlining seven screenshots as base64 data: URIs, which is the
   // obvious thing to try and would put megabytes on a page served from a laptop.
   // The line is well above the page's own growth — text, styles and the drawings came to
-  // about 150 KB by 23 September 2026 — and far below one inlined screenshot, which is
-  // hundreds of kilobytes on its own.
+  // about 150 KB by 23 September 2026 and about 200 KB by the 24th, with the Apple
+  // Photos.app panel and its help — and far below one inlined screenshot, which is hundreds
+  // of kilobytes on its own.
   const bytes = Buffer.byteLength(PAGE, 'utf8');
-  assert.ok(bytes < 200 * 1024, `the setup page is ${Math.round(bytes / 1024)} KB, which is more than it should be`);
+  assert.ok(bytes < 256 * 1024, `the setup page is ${Math.round(bytes / 1024)} KB, which is more than it should be`);
 });
 
 test('docs/COOKIE.md shows the same pictures and says the same words', () => {

@@ -302,6 +302,16 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
   // because the caller (the CLI on Ctrl+C, close()) must not tear the process down while
   // the in-flight download is still being written.
   let current: { controller: AbortController; done: Promise<void> } | null = null;
+  // Adding to Photos on its own, from the Photos card (POST /api/photos with `now`): nothing
+  // is asked of Brightwheel and nothing is downloaded, only what a run does after it has
+  // saved. Kept apart from `running`, whose progress, counts and result are a run's, and
+  // refused beside a run or a repair, as those are refused beside it. `photosRunning` is
+  // claimed in the same turn as the checks, as `running` is; `photosCurrent` is what stop()
+  // aborts and waits for. The count it reports is Photos' own (photos.ts, importedCount).
+  let photosRunning = false;
+  let photosCurrent: { controller: AbortController; done: Promise<void> } | null = null;
+  let photosMessage: string | null = null;
+  let lastPhotosRun: (PhotosResult & { at: string }) | null = null;
   // The children on the account, as last read from Brightwheel. Kept so that choosing a
   // child in the page does not cost a round trip to Brightwheel per tick, and so that
   // "every child is ticked" can be recognised and stored as "all" (an empty list), which
@@ -589,6 +599,7 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
           progress,
           running,
           lastResult,
+          photosRun: { running: photosRunning, message: photosMessage, last: lastPhotosRun },
         });
         return;
       }
@@ -897,20 +908,20 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
       }
 
       /**
-       * Adding to Apple Photos: on, off, and "the earlier ones too".
+       * Adding to Apple Photos.app: on, off, and "add them now".
        *
        * Its own route rather than a field in /api/config, because turning it on is not a
        * setting being stored. It is the one choice that can send a child's photos off this
-       * computer (to the parent's iCloud, when iCloud Photos is on), so it does two things
-       * a tick box elsewhere does not: it asks the Mac for permission while the parent is
-       * looking, and it decides from when — the server's clock, not the page's — so that
-       * turning it on never pours the whole archive into Photos unasked.
+       * computer (to the parent's iCloud, when iCloud Photos is on), so it asks the Mac for
+       * permission while the parent is looking. Turning it on adds nothing by itself: the
+       * next run does, or "add them now". Everything saved is due, not only what is saved
+       * from now (until 2026-09-24 it was), so the page asks first and names how many.
        */
       if (req.method === 'POST' && url.pathname === '/api/photos') {
-        const body = (await readJson(req)) as { enabled?: unknown; earlier?: unknown };
+        const body = (await readJson(req)) as { enabled?: unknown; now?: unknown };
         const photoOptions = { platform: options.native?.platform, spawn: options.native?.spawn };
         if (!photosSupported(photoOptions.platform)) {
-          json(400, { ok: false, error: 'Adding to Photos is only possible on a Mac.' });
+          json(400, { ok: false, error: 'Adding to Apple Photos.app is only possible on a Mac.' });
           return;
         }
         if (body.enabled === true) {
@@ -922,24 +933,79 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         }
         const config = await withConfigLock(async () => {
           const current = await loadConfig();
-          if (body.enabled === true) {
-            current.addToPhotos = true;
-            current.addToPhotosFrom = new Date().toISOString();
-          } else if (body.enabled === false) {
-            current.addToPhotos = false;
-          } else if (body.earlier === true && current.addToPhotos) {
-            current.addToPhotosFrom = null;
-          }
+          if (body.enabled === true) current.addToPhotos = true;
+          else if (body.enabled === false) current.addToPhotos = false;
+          // An earlier version's limit (config.ts, addToPhotosFrom) lasts until the parent
+          // next turns it on or off here; turning it on now asks about every photo.
+          if (typeof body.enabled === 'boolean') delete current.addToPhotosFrom;
           await saveConfig(current);
           return current;
         });
+        // Off means off: an import going now finishes the batch Photos has and stops there.
+        if (body.enabled === false) photosCurrent?.controller.abort();
+
+        // "Add them now": refused beside a run, which adds them itself once it has saved, and
+        // beside a repair, which may be rewriting the list this reads. The checks and the
+        // claim are one synchronous turn, so two presses cannot both start one.
+        if (body.now === true && body.enabled !== false) {
+          if (!config.addToPhotos) {
+            json(400, { ok: false, error: 'Adding to Apple Photos.app is turned off, so nothing was added.' });
+            return;
+          }
+          const busy = running
+            ? 'A run is saving photos right now, and it adds the new ones to Apple Photos.app when it has finished.'
+            : maintaining > 0
+              ? MAINTENANCE_IN_PROGRESS
+              : photosRunning
+                ? 'Photos are already being added to Apple Photos.app.'
+                : null;
+          if (busy) {
+            json(409, { ok: false, error: busy, photos: await photosStatus(config, photoOptions) });
+            return;
+          }
+          photosRunning = true;
+          const controller = new AbortController();
+          photosMessage = 'Starting…';
+          lastPhotosRun = null;
+          const done = (async () => {
+            const result: PhotosResult = await addToPhotos(config, {
+              ...photoOptions,
+              signal: controller.signal,
+              onProgress: (message) => {
+                photosMessage = message;
+              },
+            }).catch((error: unknown) => ({
+              // Nothing awaits this with a catch of its own; a throw would end the process.
+              ok: false,
+              added: 0,
+              remaining: 0,
+              missing: 0,
+              reason: 'failed' as const,
+              error: error instanceof Error ? error.message : String(error),
+            }));
+            if (result.error) result.error = scrub(result.error);
+            lastPhotosRun = { ...result, at: new Date().toISOString() };
+          })().finally(() => {
+            photosRunning = false;
+            photosCurrent = null;
+            photosMessage = null;
+          });
+          photosCurrent = { controller, done };
+          json(202, { ok: true, photos: await photosStatus(config, photoOptions) });
+          return;
+        }
         json(200, { ok: true, photos: await photosStatus(config, photoOptions) });
         return;
       }
 
       if (req.method === 'POST' && url.pathname === '/api/sync') {
         if (running) {
-          json(409, { ok: false, error: 'Already running.' });
+          // `running`, so that a page which did not start it can follow it rather than just say so.
+          json(409, { ok: false, error: 'Already running.', running: true });
+          return;
+        }
+        if (photosRunning) {
+          json(409, { ok: false, error: 'Photos are being added to Apple Photos.app right now. Nothing was started. Wait for that to finish, then try again.' });
           return;
         }
         if (maintaining > 0) {
@@ -1024,12 +1090,17 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
             // Not after a Stop, which means stop. The run's own last line is put back
             // afterwards; a failed run's error is never replaced by a Photos message.
             let photos: PhotosResult | null = null;
-            if (config?.addToPhotos && !controller.signal.aborted && !refused) {
+            // The switch as it is now, not as it was when the run began: it can be ticked or
+            // unticked on the Photos card while the run goes (the rest is locked till it ends).
+            const now = config && (await loadConfig().catch(() => null));
+            const photosConfig = config && now ? { ...config, addToPhotos: now.addToPhotos, addToPhotosFrom: now.addToPhotosFrom } : config;
+            if (photosConfig?.addToPhotos && !controller.signal.aborted && !refused) {
               const finished = progress;
-              photos = await addToPhotos(config, {
+              photos = await addToPhotos(photosConfig, {
                 platform: options.native?.platform,
                 spawn: options.native?.spawn,
                 signal: controller.signal,
+                stillOn: async () => (await loadConfig()).addToPhotos,
                 onProgress: (message) => {
                   if (result) progress = { ...finished, phase: 'photos', message };
                 },
@@ -1152,6 +1223,10 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
         // Asking Brightwheel who is on the account reads the list only for names, and a run
         // beside it changes nothing it reports, so it neither blocks a run nor waits for one.
         const touchesArchive = action !== 'children';
+        if (touchesArchive && photosRunning) {
+          json(409, { ok: false, error: 'Photos are being added to Apple Photos.app right now. Wait for that to finish, then try again.' });
+          return;
+        }
         // Claimed before the first await, as /api/sync claims `running`, so that a Start
         // pressed while the settings are being read is refused rather than let in.
         if (touchesArchive) maintaining += 1;
@@ -1242,10 +1317,15 @@ export async function startWebUi(options: WebUiOptions = {}): Promise<WebUiHandl
   port = (server.address() as AddressInfo).port;
 
   const stop = async (): Promise<void> => {
-    if (!current) return;
-    current.controller.abort();
-    // `done` never rejects: the catch above turns a failure into a progress event.
-    await current.done;
+    // Adding to Photos on its own stops between batches, never in the middle of one.
+    const photos = photosCurrent;
+    photos?.controller.abort();
+    if (current) {
+      current.controller.abort();
+      // `done` never rejects: the catch above turns a failure into a progress event.
+      await current.done;
+    }
+    await photos?.done;
   };
 
   return {

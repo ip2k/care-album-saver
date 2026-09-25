@@ -43,13 +43,13 @@ export interface Config {
    */
   addToPhotos: boolean;
   /**
-   * Only files saved at or after this moment are added to Photos; `null` means every file
-   * in the archive. Set to the moment the option is turned on, so that turning it on does
-   * not pour years of photos into a library unasked. Going back further is a separate,
-   * explicit choice ("add the earlier ones too"). Written by the server only, never taken
-   * from a settings patch.
+   * Written only by versions before 2026-09-24, which gave Apple Photos.app just what was saved
+   * after the option was turned on: this moment. Still honoured where it is found (photos.ts,
+   * `sortOut`), so that updating never widens what goes to Apple Photos.app, and so to iCloud,
+   * without the parent's say-so. Removed when the option is next turned on or off through the
+   * page, and turning it on now asks about every photo. Never taken from a settings patch.
    */
-  addToPhotosFrom: string | null;
+  addToPhotosFrom?: string | null;
   /**
    * Ask GitHub once a day whether a newer release exists, while the setup page is open.
    * `null` until the parent has been asked — the dashboard asks once — so that nothing is
@@ -99,7 +99,6 @@ export const DEFAULT_CONFIG: Config = {
   includeStudents: [],
   schedule: null,
   addToPhotos: false,
-  addToPhotosFrom: null,
   checkForUpdates: null,
 };
 

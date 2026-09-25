@@ -128,7 +128,7 @@ test('the Photos-failure notice is one of the two the tool can show, and only fi
     assert.equal(args[0], '-e');
     assert.match(args[1], /^display notification "[^"$]+" with title "Care Album Saver"$/, 'a literal, with nothing interpolated');
   }
-  assert.match(calls[0][1][1], /could not be added to Photos/);
+  assert.match(calls[0][1][1], /could not be added to Apple Photos\.app/);
 });
 
 test('the log routes use the stand-in scheduler, so the demo never opens a real log viewer', async () => {

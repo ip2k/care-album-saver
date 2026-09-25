@@ -129,7 +129,7 @@ folder itself sits just above it.
 | Setting | Default | What it means |
 |---|---|---|
 | Save photos for | **All your children** | Untick a child to leave their photos out. A child who joins your account later is included automatically as long as everyone is ticked. |
-| Label photos with names | **On** | Writes inside the photo file: your child's name, the nursery's name, whoever posted it, and the teacher's note — which usually names all three in one sentence. That is what lets Apple Photos, Immich and similar apps search by name, and it means all of it travels with the file if you ever share it. Turn it off and nothing inside the file says who or where. |
+| Label photos with names | **On** | Writes inside the photo file: your child's name, the nursery's name, whoever posted it, and the teacher's note — which usually names all three in one sentence. That is what lets Apple Photos.app, Immich and similar apps search by name, and it means all of it travels with the file if you ever share it. Turn it off and nothing inside the file says who or where. |
 | Keep the teacher's note | **On** | Saves the caption as the photo's description. It only applies while **Label photos with names** is on, because a note names people. |
 | Remove location information | **On** | Strips GPS coordinates so a shared photo cannot reveal where it was taken. On the one account this has been checked against, Brightwheel's photos carry no coordinates at all, so this is a precaution rather than a repair. This one needs ExifTool: without it nothing inside the photo can be changed, so any coordinates stay — and the run tells you so. |
 | Folder layout | Child, then week | Or one folder per week with all children together, or one folder per week with a folder for each child inside it. |
@@ -330,9 +330,12 @@ It requests one page at a time with a pause between, which is gentler than scrol
 website. It reads only your own data. We cannot promise anything on Brightwheel's behalf,
 and their terms are theirs to interpret — but nothing here is aggressive.
 
-**Can it put them in Apple Photos or iCloud Photos?**
-Yes, on a Mac, if you turn it on under **Settings and Maintenance**. It is off unless you do,
-because with iCloud Photos on it means Apple uploads them to your iCloud account.
+**Can it put them in Apple Photos.app or iCloud Photos?**
+Yes, on a Mac, if you turn it on under **Settings and Maintenance › Integrations**. It is off
+unless you do, because with iCloud Photos on it means Apple uploads them to your iCloud
+account. It adds every photo saved so far, for every child, and each run's new ones after
+that, each one once. Check first that **Copy items to the Photos library** is ticked in Apple
+Photos.app's Settings › General; the page asks you to confirm it.
 [How it works, and what it means](PHOTOS.md).
 
 **Does it delete anything from Brightwheel?**

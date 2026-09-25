@@ -26,7 +26,7 @@ import { archiveBusy, auditArchive, checkChildren, findDuplicates, removeDuplica
 import * as schedule from './schedule.js';
 import { DEVELOPMENT_SCHEDULE_REFUSAL, environment } from './environment.js';
 import { stampLines } from './log-lines.js';
-import { addToPhotos, photosStatus, photosSupported, PHOTOS_FOLDER } from './photos.js';
+import { addToPhotos, earlierSentence, photosStatus, photosSupported, PHOTOS_FOLDER, unconfirmedSentence, type PhotosResult } from './photos.js';
 import type { Config } from './config.js';
 
 const HELP = `
@@ -103,28 +103,42 @@ async function recordScheduledFailure(error: unknown): Promise<void> {
   await schedule.notify('failed').catch(() => false);
 }
 
-async function photosStep(config: Config, scheduled: boolean): Promise<void> {
+async function photosStep(config: Config, scheduled: boolean, signal?: AbortSignal): Promise<void> {
+  // The switch as it is now, not as the run found it: it can be changed on the setup page
+  // while a run goes. And asked again before each batch, so that unticking it stops this.
+  const now = await loadConfig().catch(() => null);
+  if (now) config = { ...config, addToPhotos: now.addToPhotos, addToPhotosFrom: now.addToPhotosFrom };
   if (!config.addToPhotos || !photosSupported()) return;
   const before = await photosStatus(config).catch(() => null);
-  const outcome = await addToPhotos(config, { onProgress: (m) => stdout.write(`  ${m}\n`) }).catch((error: unknown) => ({
+  const outcome: PhotosResult = await addToPhotos(config, {
+    onProgress: (m) => stdout.write(`  ${m}\n`),
+    signal,
+    stillOn: async () => (await loadConfig()).addToPhotos,
+  }).catch((error: unknown) => ({
     ok: false,
     added: 0,
+    remaining: 0,
+    missing: 0,
     reason: 'failed' as const,
     error: error instanceof Error ? error.message : String(error),
   }));
+  const unconfirmed = outcome.unconfirmed ?? 0;
   if (outcome.ok) {
-    if (outcome.added > 0) stdout.write(`  Added ${outcome.added} to Photos, in the ${PHOTOS_FOLDER} folder.\n`);
+    if (outcome.added > 0) stdout.write(`  Apple Photos.app imported ${outcome.added}, into the ${PHOTOS_FOLDER} folder.\n`);
+    if (outcome.turnedOff) stdout.write(`  Stopped: adding to Apple Photos.app was turned off. The other ${outcome.remaining} were not added.\n`);
   } else {
-    stdout.write(`  Not added to Photos: ${scrub(outcome.error ?? 'no reason given')}\n`);
+    stdout.write(`  Not added to Apple Photos.app: ${scrub(outcome.error ?? 'no reason given')}\n`);
   }
+  if (unconfirmed > 0) stdout.write(`  ${unconfirmedSentence(unconfirmed)}\n`);
   if (!scheduled) return;
   // The Photos record can be read again, so it is what remembers the last attempt once more:
   // a damaged record's notice, below, has been dealt with.
   if (before && !before.problem) await schedule.forgetNotice('photos').catch(() => {});
-  if (outcome.ok && outcome.added === 0) return;
+  if (outcome.ok && outcome.added === 0 && unconfirmed === 0) return;
   await schedule.appendLog(
     `PHOTOS  ` +
-      (outcome.ok ? `added ${outcome.added} to Photos` : `not added: ${scrub(outcome.error ?? 'no reason given')}`),
+      (outcome.ok ? `Apple Photos.app imported ${outcome.added}` : `not added: ${scrub(outcome.error ?? 'no reason given')}`) +
+      (unconfirmed > 0 ? `; ${unconfirmed} handed over that it did not confirm` : ''),
   );
   if (outcome.ok || outcome.reason === 'busy') return;
   // Said once, when it starts failing: a permission that was never granted would otherwise
@@ -515,7 +529,7 @@ async function main(): Promise<number> {
         const photos = await photosStatus(config);
         const last = photos.lastAttempt;
         stdout.write(
-          `  Add to Photos: ${photos.enabled ? `on (${photos.pending} waiting)` : 'off'}` +
+          `  Add to Apple Photos.app: ${photos.enabled ? `on (${photos.pending} waiting)` : 'off'}` +
             (photos.problem
               ? ` — ${scrub(photos.problem)}`
               : last && !last.ok
@@ -523,6 +537,8 @@ async function main(): Promise<number> {
                 : '') +
             '\n',
         );
+        if (last?.unconfirmed) stdout.write(`                 Last time: ${unconfirmedSentence(last.unconfirmed)}\n`);
+        if (photos.limitedFrom && photos.earlier > 0) stdout.write(`                 ${earlierSentence(photos.earlier, photos.limitedFrom)}\n`);
         if (photos.warning) stdout.write(`                 ${photos.warning}\n`);
       }
       return check.ok ? 0 : 1;
@@ -616,11 +632,12 @@ async function main(): Promise<number> {
       // A second Ctrl+C is a parent saying they meant it, and ends the process there.
       const stop = new AbortController();
       let stopping = false;
+      let stopSays = 'Stopping after the current photo…';
       const onInterrupt = () => {
         if (stopping) process.exit(130);
         stopping = true;
         stop.abort();
-        stdout.write('\n  Stopping after the current photo…\n');
+        stdout.write(`\n  ${stopSays}\n`);
       };
       process.on('SIGINT', onInterrupt);
       // SIGTERM is how the scheduler says stop — turning the daily run off, changing its
@@ -670,9 +687,11 @@ async function main(): Promise<number> {
             trigger: 'manual',
           });
         }
-        process.off('SIGINT', onInterrupt);
-        process.off('SIGTERM', onInterrupt);
-        if (!stop.signal.aborted) await photosStep(config, Boolean(values.scheduled)).catch(() => {});
+        // Still listening for Ctrl+C (the `finally` below stops listening): it stops the
+        // Photos step between batches, where killing the process part-way through one would
+        // leave that batch in Apple Photos.app but not written down, to be handed over again.
+        stopSays = 'Stopping once Apple Photos.app has the photos it is being given…';
+        if (!stop.signal.aborted) await photosStep(config, Boolean(values.scheduled), stop.signal).catch(() => {});
         throw error;
       } finally {
         process.off('SIGINT', onInterrupt);
@@ -694,7 +713,18 @@ async function main(): Promise<number> {
       if (!values.scheduled && coversTheDay) await schedule.recordRun(schedule.finishedRun(result, 'manual'));
       if (result.stopped) stdout.write('  Run the same command again to carry on where it left off.\n');
       for (const w of result.warnings) stdout.write(`  Note: ${scrub(w)}\n`);
-      if (!result.stopped) await photosStep(config, Boolean(values.scheduled));
+      if (!result.stopped) {
+        // Ctrl+C, or the scheduler's SIGTERM, stops between batches here too (see above).
+        stopSays = 'Stopping once Apple Photos.app has the photos it is being given…';
+        process.on('SIGINT', onInterrupt);
+        process.on('SIGTERM', onInterrupt);
+        try {
+          await photosStep(config, Boolean(values.scheduled), stop.signal);
+        } finally {
+          process.off('SIGINT', onInterrupt);
+          process.off('SIGTERM', onInterrupt);
+        }
+      }
       return result.failed > 0 ? 1 : 0;
     }
 

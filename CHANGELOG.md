@@ -33,6 +33,31 @@ two always say the same thing.
 
 ### Changed
 
+- **Apple Photos.app gets all your photos, not just new ones.** Turning on *Add them to Apple
+  Photos.app* now adds every photo and video saved so far, for every child, and each run's new
+  ones after that — each one once, and never one it has handed over before. It used to add
+  only photos saved after you turned it on; if you turned it on then, that still holds until
+  you untick it and tick it again, and the page says how many earlier photos that would add.
+  The option lives under **Settings and
+  Maintenance › Integrations**; turning it on no longer takes you anywhere else, and **Add them
+  to Apple Photos.app now** adds what is waiting without starting a run. The number it reports
+  is the one Apple Photos.app gives back, and if that is fewer than it was given, the page says
+  so.
+- **Unticking Apple Photos.app stops an import already going**, a run's included, once Apple
+  Photos.app has the batch it is taking; so does Ctrl+C in the terminal, instead of ending the
+  run in the middle of a batch. If Apple Photos.app counts fewer than it was given, the page,
+  the main screen and `care-album-saver status` say so.
+- **Before turning Apple Photos.app on, the page asks you to confirm that its *Copy items to
+  the Photos library* setting is ticked.** With it off, the photos this tool adds would not
+  open and would never reach iCloud, and the tool has no way to see the setting. The page, the
+  help and [docs/PHOTOS.md](docs/PHOTOS.md) explain it, and how to put things right if it was
+  off.
+- **Everywhere the tool means Apple's Photos app, it now says "Apple Photos.app".**
+- **Saving from the main page happens on the main page.** **Save new photos** shows its
+  progress and result under the buttons instead of opening Settings.
+- **The lines under the main page's buttons start with an icon** saying what each is about:
+  🔗 connection, ⏰ the daily run, 📜 the last run, 🗂️ the folder, 📷 Apple Photos.app, 📦
+  new versions. One that needs attention shows ⚠️.
 - **A few folder names change, once, to work on every computer:** a child whose name ends like
   a Mac app (`Robin.app`) gets `Robin-app`; a name Windows reserves (`Con.`) gets a leading `_`;
   a name that contained an invisible control character loses it. Photos already saved are not
@@ -58,6 +83,10 @@ two always say the same thing.
   so.
 - A Photos problem is announced once, not every evening.
 - `deploy.js` says "Deployed, but not finished" when only moving the daily run failed.
+- **The main page's "Last run" line catches up when a run ends**, rather than at the next reload.
+- `scripts/demo.js` pretends Apple Photos.app again. Since the tool began calling
+  `/usr/bin/osascript` by its full path, the demo's pretend no longer caught it, and turning the
+  option on in the demo gave its invented pictures to the real Apple Photos.app.
 
 ## [0.1.1] - 2026-09-24
 
