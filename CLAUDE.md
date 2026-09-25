@@ -125,7 +125,8 @@ stores, and this tool is deliberately local-only with no cloud component.
   permission first; a settings patch cannot set it. Before that, the page asks the parent,
   every time, to confirm Apple Photos.app's "Copy items to the Photos library" is ticked,
   because the tool hands over copies it then deletes and cannot see the setting (DECISIONS C8;
-  whether the script's import obeys it is Q17, a check only the owner can make by hand).
+  Q17: with it on, the owner confirmed on 2026-09-24 that the photos are copied in — they open
+  at full size once the copies are gone; what the import does with it off is still unchecked).
   Since 2026-09-24 every photo saved so far, for every child, is due, each once by SHA-256;
   nothing goes in until the next run or "Add them to Apple Photos.app now" (`/api/photos`
   with `now`). When it works, the only thing that comes back from Apple Photos.app is the
@@ -169,6 +170,9 @@ stores, and this tool is deliberately local-only with no cloud component.
   (`src/api/withheld.ts`), which drops any field named like a code, PIN, password, token,
   secret or phone number as the text is parsed. Never `JSON.parse` a Brightwheel answer
   directly; `test/withheld.test.js` fails if the client or `verify` does.
+
+- **Upstream candidates** (the global rule's running list) are in docs/UPSTREAM-CANDIDATES.md.
+  Nothing there is posted anywhere without the owner's sign-off and the oss-contributions rules.
 
 - **Two directories must be redirected before any test or throwaway script runs**, not one:
   `CARE_ALBUM_CONFIG_DIR` for the session and `CARE_ALBUM_DIR` for the
