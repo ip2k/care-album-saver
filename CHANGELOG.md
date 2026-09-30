@@ -7,6 +7,8 @@ two always say the same thing.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-29
+
 ### Security
 
 - **The tool no longer keeps any child's check-in or pickup code.** Brightwheel sends each
@@ -50,7 +52,7 @@ two always say the same thing.
 - **Before turning Apple Photos.app on, the page asks you to confirm that its *Copy items to
   the Photos library* setting is ticked.** With it off, the photos this tool adds would not
   open and would never reach iCloud, and the tool has no way to see the setting. The page, the
-  help and [docs/PHOTOS.md](docs/PHOTOS.md) explain it, and how to put things right if it was
+  help and [docs/PHOTOS.md](https://github.com/ip2k/care-album-saver/blob/main/docs/PHOTOS.md) explain it, and how to put things right if it was
   off.
 - **Everywhere the tool means Apple's Photos app, it now says "Apple Photos.app".**
 - **Saving from the main page happens on the main page.** **Save new photos** shows its
@@ -81,7 +83,7 @@ two always say the same thing.
 - **Closing the setup page while it was still answering no longer crashes it.**
 - A thumbnail that cannot be shown says "No preview here"; a photo with no readable date says
   so.
-- A Photos problem is announced once, not every evening.
+- An Apple Photos.app problem is announced once, not every evening.
 - `deploy.js` says "Deployed, but not finished" when only moving the daily run failed.
 - **The main page's "Last run" line catches up when a run ends**, rather than at the next reload.
 - `scripts/demo.js` pretends Apple Photos.app again. Since the tool began calling
