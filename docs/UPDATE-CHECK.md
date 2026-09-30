@@ -51,9 +51,10 @@ flowchart LR
 Because the check compares the tag with `package.json`, a release is three things done
 together, or the check tells parents the wrong thing:
 
-1. **Bump `version`** in `packages/care-album-saver/package.json` (and the root
-   `package.json`), and move the `## [Unreleased]` entries of `CHANGELOG.md` under a
-   `## [X.Y.Z] — date` heading. Commit that on `main`.
+1. **Bump `version`** in `packages/care-album-saver/package.json` (the root `package.json`
+   has none), and move the `## [Unreleased]` entries of `CHANGELOG.md` under a
+   `## [X.Y.Z] - YYYY-MM-DD` heading, leaving `## [Unreleased]` empty above it. Commit that
+   on `main`.
 2. **Tag that commit** `vX.Y.Z` (the `v` is optional to the parser; the number must be
    `major.minor.patch`, with an optional `-pre.N` suffix).
 3. **Create the GitHub release** on that tag, with the CHANGELOG section as its body. That
