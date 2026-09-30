@@ -79,7 +79,12 @@ built each version (provenance). Before the first automated release:
    writes every owner's email into every version's `maintainers` — the automated releases'
    too — and a version's record cannot be edited, only unpublished, within 72 hours. Publish
    the hand-made version as a pre-release (for example `0.0.0-bootstrap.0`) so that it can be
-   unpublished once an automated release exists.
+   unpublished once an automated release exists. Then check that it is gone, with
+   `npm view care-album-saver versions --prefer-online`: `npm unpublish` prints
+   `- <name>@<version>` and exits 0 even when the registry refused the change, because the
+   registry answers 404 to a write from an account that is not signed in and npm reads any 404
+   as "already gone". On 2026-09-24 it reported 0.1.0 unpublished at least twice before an
+   `npm login` made it so ([UPSTREAM-CANDIDATES.md](UPSTREAM-CANDIDATES.md)).
 2. On npmjs.com, the package's **Settings → Trusted Publisher → GitHub Actions**:
    organization or user `ip2k`, repository `care-album-saver`, workflow `release.yml`,
    environment `npm`.

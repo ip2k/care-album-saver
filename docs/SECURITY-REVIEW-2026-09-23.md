@@ -251,7 +251,7 @@ to fail on the code before it:
 | F27 | supply | "Only your account can open" without its caveat in three places; doctor's "one request" | NOTE | caveat added (README's Docker section, the page's FAQ, PHOTOS.md); retries named |
 | F28 | supply | SECURITY.md's run-lock row would miss the one-day rule | NOTE | updated, with F2 |
 | F29 | supply | No CHANGELOG entry for the config folder's new mode | NOTE | added |
-| F30 | supply | The owner's npm and GitHub records | NOTE | 0.1.1 published with the new address (0.1.0 to be unpublished by the owner); `a52f841`, a merge-button commit replaced on `main`, to be added to the GitHub Support request |
+| F30 | supply | The owner's npm and GitHub records | NOTE | 0.1.1 published with the new address (0.1.0 unpublished by the owner on 2026-09-24, once signed in to npm again: npm had reported earlier attempts as done while the registry refused them, docs/UPSTREAM-CANDIDATES.md); `a52f841`, a merge-button commit replaced on `main`, to be added to the GitHub Support request |
 
 Also done in the main session, from the lanes' own lists of what they could not reach:
 `verify`'s requests take the session header from the client's one builder (outbound-13's third
