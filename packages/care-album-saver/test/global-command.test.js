@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
  */
 
 const ROOT = new URL('../../../', import.meta.url);
-const read = (path) => readFile(new URL(path, ROOT), 'utf8');
+// A Windows checkout has CRLF line endings; the documents are compared line by line.
+const read = async (path) => (await readFile(new URL(path, ROOT), 'utf8')).replace(/\r\n/g, '\n');
 const LINK = 'npm install -g ./packages/care-album-saver';
 
 test('the build leaves the command executable, so a link to it survives a build from scratch', async () => {
