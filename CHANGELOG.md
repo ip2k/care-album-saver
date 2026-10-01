@@ -7,6 +7,8 @@ two always say the same thing.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-01
+
 ### Fixed
 
 - **Installing from a clone puts the `care-album-saver` command on your computer, so it works
