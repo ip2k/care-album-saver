@@ -227,20 +227,26 @@ The setup assistant walks you through everything. **[Full illustrated guide →]
 **From npm:** `npm install -g care-album-saver`, then `care-album-saver setup`. Updating is
 described in [docs/UPDATING.md](docs/UPDATING.md).
 
-**From a clone**, five commands, once:
+**From a clone**, six commands, once:
 
 ```sh
 git clone https://github.com/ip2k/care-album-saver.git
 cd care-album-saver
 pnpm install
 pnpm build
-node packages/care-album-saver/dist/cli.js setup
+npm install -g ./packages/care-album-saver
+care-album-saver setup
 ```
 
-`pnpm install` needs [pnpm](https://pnpm.io/installation) and Node 22 or newer. Everything
-after the first run is just the last line again. If you would rather type
-`care-album-saver` than the whole path, run `pnpm link --global` inside
-`packages/care-album-saver` once.
+`pnpm install` needs [pnpm](https://pnpm.io/installation) and Node 22 or newer. The fifth line
+puts the `care-album-saver` command on your PATH, so it works from any folder: npm, which comes
+with Node, links it to this clone rather than copying it, so updating the clone
+([docs/UPDATING.md](docs/UPDATING.md)) updates the command too. Everything after the first run
+is just `care-album-saver setup`. (It is npm on purpose: pnpm 12 has no `pnpm link --global`,
+and its `pnpm add -g` needs `pnpm setup` first.) If npm answers `EACCES`, which happens with a
+Node installed by a Linux distribution, [npm's own guide](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally) sets that right; or skip
+that line and run `node packages/care-album-saver/dist/cli.js setup` from the clone instead.
+`npm uninstall -g care-album-saver` removes the command and leaves the clone alone.
 
 Then open the link it prints. Three steps: connect your account, tick the children you want
 and check the settings, then press **Start saving** — and optionally set up a daily run

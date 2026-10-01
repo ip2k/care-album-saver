@@ -39,3 +39,27 @@ against npm's mock registry, and the reply has to answer #7120's argument head o
 
 Here, [UPDATE-CHECK.md](UPDATE-CHECK.md) now says to confirm an unpublish with
 `npm view … --prefer-online` rather than trust the exit code.
+
+## pnpm: `pnpm setup` on a Homebrew pnpm breaks pnpm
+
+Observed on 2026-10-01 with pnpm 12.6.0 from Homebrew on macOS, following pnpm's own advice:
+`pnpm add -g .` refused until its global bin folder was on the PATH and said to run
+`pnpm setup`. That printed `Installing pnpm CLI globally from /opt/homebrew/bin` and wrote a
+global `package.json` holding `"@pnpm/exe": "file:/opt/homebrew/bin"`: the folder Homebrew
+keeps every command in, installed as though it were pnpm. It then put `pnpm`, `pnpx`, `pn`
+and `pnx` shims into `$PNPM_HOME/bin`, which the lines it added to `~/.zshrc` put ahead of
+Homebrew on the PATH. The shims run `node_modules/@pnpm/exe/pnpm` in that global folder,
+whose link leads into a virtual-store entry that was never created. From the next shell on,
+every `pnpm` command failed with "No such file or directory". Moving the four shims and the
+global folder aside brought Homebrew's pnpm back.
+
+[pnpm#15494](https://github.com/pnpm/pnpm/issues/15494) (`pnpm setup` failing with ETXTBSY
+while writing its shims, closed 2026-09-24) is nearby, but not this.
+
+Worth investigating upstream: a pnpm installed by another package manager should have
+`setup` add its bin folder to the PATH and nothing more, rather than install itself from
+the folder its executable happens to be in, and no shim should be written to a target that
+does not exist. First reproduce it in a throwaway `HOME` on the latest pnpm (12.8.2 when
+this was written); that has not been done.
+
+Here, the README no longer needs pnpm for the command: npm links it.

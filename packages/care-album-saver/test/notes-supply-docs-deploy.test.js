@@ -3,7 +3,7 @@ import { assertIsolatedConfigDir } from '../../../scripts/test-env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,9 +18,12 @@ import { fileURLToPath } from 'node:url';
  * daily run was not moved. Each now ends in a sentence that says so and how to try again.
  *
  * Every case runs a copy of deploy.js in a throwaway repository, deploying to a throwaway
- * production folder, with stand-ins for everything it starts: a `pnpm` that does nothing, and
- * a dist/ whose config.js and cli.js only say what the case needs. Nothing here reaches a
- * real scheduler, setting or checkout.
+ * production folder, with stand-ins for everything it starts: a `pnpm` that does nothing, an
+ * `npm` that writes down what it was asked and links like npm would, inside the throwaway
+ * folder, and a dist/ whose config.js and cli.js only say what the case needs. Nothing here
+ * reaches a real scheduler, setting, checkout or global npm folder: the stand-in npm is first
+ * on the PATH in every case, and scripts/test-env.js's CARE_ALBUM_NO_GLOBAL_LINK keeps
+ * deploy.js from asking npm at all unless a case lifts it.
  *
  * Not on Windows: the stand-in pnpm is a shell script, and deploy.js starts `pnpm` by name,
  * which on Windows is pnpm.cmd and needs a shell; production there is not a supported setup.
@@ -65,11 +68,33 @@ function makeDeployment(t, { config, cli }) {
   mkdirSync(bin);
   writeFileSync(join(bin, 'pnpm'), '#!/bin/sh\nexit 0\n');
   chmodSync(join(bin, 'pnpm'), 0o755);
-  return { base, dev, prod: join(base, 'prod'), bin };
+  // npm, as deploy.js uses it: `prefix --global` names a folder inside the throwaway one, and
+  // `install` links the package's command into its bin, or fails as npm does when the file
+  // npm-fails exists. Every call is written to npm.log.
+  const prefix = join(base, 'npm-prefix');
+  writeFileSync(join(bin, 'npm'), [
+    '#!/bin/sh',
+    `echo "$*" >> '${join(base, 'npm.log')}'`,
+    'case "$1" in',
+    `  prefix) echo '${prefix}' ;;`,
+    '  install)',
+    `    if [ -f '${join(base, 'npm-fails')}' ]; then echo "npm error code EACCES" >&2; echo "npm error syscall symlink" >&2; exit 1; fi`,
+    '    for last; do :; done',
+    `    mkdir -p '${join(prefix, 'bin')}' && ln -sfn "$last/dist/cli.js" '${join(prefix, 'bin', 'care-album-saver')}' ;;`,
+    'esac',
+    'exit 0',
+    '',
+  ].join('\n'));
+  chmodSync(join(bin, 'npm'), 0o755);
+  return { base, dev, prod: join(base, 'prod'), bin, prefix };
 }
 
-function deploy({ dev, prod, bin }) {
+/** What the stand-in npm was asked, one call a line. */
+const npmCalls = ({ base }) => (existsSync(join(base, 'npm.log')) ? readFileSync(join(base, 'npm.log'), 'utf8').trim().split('\n') : []);
+
+function deploy({ dev, prod, bin }, { link = false } = {}) {
   const env = { ...gitEnv(), PATH: `${bin}${delimiter}${process.env.PATH}` };
+  if (link) delete env.CARE_ALBUM_NO_GLOBAL_LINK;
   const r = spawnSync(process.execPath, [join(dev, 'scripts', 'deploy.js'), '--to', prod], { cwd: dev, env, encoding: 'utf8' });
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
@@ -112,4 +137,57 @@ test('and when it works, it says the run moved and that it deployed', posixOnly,
   assert.match(r.out, /Moving the daily run \(07:30\) to production…\n\s+Daily run: 07:30 \(stand-in\)/);
   assert.match(r.out, /Deployed [0-9a-f]{7} to production\./);
   assert.match(readFileSync(join(d.prod, '.care-album-saver-production'), 'utf8'), /^\/.*\nproduction, deployed /);
+});
+
+// The command (2026-10-01). `care-album-saver` on the PATH runs production, linked by npm.
+
+const UNSCHEDULED = 'export async function loadConfig() { return {}; }\n';
+
+test('under test, deploy.js leaves the care-album-saver command alone and never starts npm', posixOnly, (t) => {
+  const d = makeDeployment(t, { config: UNSCHEDULED, cli: 'process.exit(0);\n' });
+  const r = deploy(d);
+  assert.equal(r.status, 0, r.out + r.err);
+  assert.match(r.out, /The care-album-saver command was left as it is \(CARE_ALBUM_NO_GLOBAL_LINK is set\)\./);
+  assert.deepEqual(npmCalls(d), [], 'not even to ask where its commands go');
+  assert.match(r.out, /Deployed [0-9a-f]{7} to production\./);
+});
+
+test('it links the command to production, and a second deploy leaves a command that already runs production alone', posixOnly, (t) => {
+  const d = makeDeployment(t, { config: UNSCHEDULED, cli: 'process.exit(0);\n' });
+  const pkg = join(d.prod, 'packages', 'care-album-saver');
+  const first = deploy(d, { link: true });
+  assert.equal(first.status, 0, first.out + first.err);
+  assert.deepEqual(npmCalls(d), ['prefix --global', `install --global --ignore-scripts --no-audit --no-fund ${pkg}`],
+    'production\'s package folder, never the development checkout');
+  assert.match(first.out, /Linking the care-album-saver command to production…/);
+  assert.match(first.out, /care-album-saver now runs production, from any folder \(.*npm-prefix\/bin\/care-album-saver\)\./);
+  assert.equal(realpathSync(join(d.prefix, 'bin', 'care-album-saver')), realpathSync(join(pkg, 'dist', 'cli.js')));
+
+  const second = deploy(d, { link: true });
+  assert.equal(second.status, 0, second.out + second.err);
+  assert.match(second.out, /The care-album-saver command already runs production\./);
+  assert.deepEqual(npmCalls(d).slice(2), ['prefix --global'], 'asked where, and nothing installed');
+});
+
+test('a command that ran something else is relinked, and deploy.js says what it ran', posixOnly, (t) => {
+  const d = makeDeployment(t, { config: UNSCHEDULED, cli: 'process.exit(0);\n' });
+  const elsewhere = join(d.base, 'elsewhere-cli.js');
+  writeFileSync(elsewhere, 'process.exit(0);\n');
+  mkdirSync(join(d.prefix, 'bin'), { recursive: true });
+  symlinkSync(elsewhere, join(d.prefix, 'bin', 'care-album-saver'));
+  const r = deploy(d, { link: true });
+  assert.equal(r.status, 0, r.out + r.err);
+  assert.match(r.out, /Linking the care-album-saver command to production \(it ran .*elsewhere-cli\.js\)…/);
+  assert.equal(npmCalls(d).length, 2);
+});
+
+test('when npm cannot link it, deploy.js says production was deployed and how to link it by hand', posixOnly, (t) => {
+  const d = makeDeployment(t, { config: UNSCHEDULED, cli: 'process.exit(0);\n' });
+  writeFileSync(join(d.base, 'npm-fails'), '');
+  const r = deploy(d, { link: true });
+  assert.equal(r.status, 1, r.out + r.err);
+  assert.match(r.err, /Deployed, but not finished: [0-9a-f]{7} is in production, but the care-album-saver command was not linked to it: npm said "code EACCES"\./);
+  assert.match(r.err, /To try again: npm install -g ".*prod\/packages\/care-album-saver"/);
+  assert.doesNotMatch(r.err, /Not deployed|\bat (?:checkExecSyncError|execFileSync|file:\/\/)/);
+  assert.ok(existsSync(join(d.prod, '.care-album-saver-production')), 'production was deployed and marked');
 });

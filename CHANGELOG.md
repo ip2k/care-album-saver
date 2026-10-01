@@ -7,6 +7,20 @@ two always say the same thing.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Installing from a clone puts the `care-album-saver` command on your computer, so it works
+  from any folder.** The README's way to do it, `pnpm link --global`, no longer exists in
+  pnpm 12. The clone's instructions now run `npm install -g ./packages/care-album-saver` (npm
+  comes with Node), which links the command to the clone, so updating the clone updates the
+  command. The build now leaves the command executable, so rebuilding from scratch can no
+  longer make it answer "permission denied".
+
+### Changed
+
+- `scripts/deploy.js` links the `care-album-saver` command to the production copy on every
+  deploy, unless it already runs production.
+
 ## [0.2.0] - 2026-09-29
 
 ### Security

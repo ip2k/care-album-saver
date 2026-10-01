@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && node -e \"require('node:fs').chmodSync('packages/care-album-saver/dist/cli.js', 0o755)\"",
     "test": "node --test --import ./scripts/test-env.js \"packages/care-album-saver/test/*.test.js\"",
     "clean": "tsc --build --clean && node -e \"require('node:fs').rmSync('packages/care-album-saver/dist', { recursive: true, force: true })\""
   },

@@ -46,7 +46,9 @@ pnpm build
 Then stop the setup page (Ctrl+C in its terminal) and start it again. The daily run, if you
 set it up, runs the program from this folder, so it uses the new version from its next run
 with nothing else to change. If `git pull` says you have changes of your own, `git stash` puts
-them aside first.
+them aside first. The `care-album-saver` command, if you added it with
+`npm install -g ./packages/care-album-saver`, is a link to this folder, so it has nothing to
+redo either.
 
 ### You downloaded it as a ZIP, without git
 
@@ -110,7 +112,9 @@ node scripts/deploy.js
 ```
 
 `deploy.js` builds and tests the new version in production, moves the daily run onto it, and
-puts production back on the version it was on if anything fails.
+puts production back on the version it was on if anything fails. It also links the
+`care-album-saver` command to production, so typing it in any folder runs what the daily run
+runs, never the development checkout.
 
 ## After updating
 

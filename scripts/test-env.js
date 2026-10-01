@@ -67,6 +67,11 @@ process.env.CARE_ALBUM_NO_NOTIFY = '1';
 // inherit it with the rest of the environment.
 process.env.CARE_ALBUM_NO_LIVE_API = '1';
 
+// deploy.js links the `care-album-saver` command to production with `npm install -g`, which
+// changes the developer's own global npm. Its tests run a copy of deploy.js for real; while
+// this is set it leaves the command alone, and a test of the link passes a stand-in npm.
+process.env.CARE_ALBUM_NO_GLOBAL_LINK = '1';
+
 /**
  * Resolve symlinks where we can, so that two spellings of one place compare equal.
  *
