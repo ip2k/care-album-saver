@@ -33,13 +33,16 @@ git clone https://github.com/ip2k/care-album-saver.git
 cd care-album-saver
 pnpm install
 pnpm build
-node packages/care-album-saver/dist/cli.js setup
+npm install -g ./packages/care-album-saver
+care-album-saver setup
 ```
 
-Those five lines build it from a clone; you need [pnpm](https://pnpm.io/installation) and
-Node 22 or newer. It is also on npm: `npm install -g care-album-saver`, then
-`care-album-saver setup`, needs only Node. Every day after that, only the
-last line. Then it prints a link like
+Those six lines build it from a clone; you need [pnpm](https://pnpm.io/installation) and
+Node 22 or newer. The fifth puts the `care-album-saver` command on your computer, linked to
+the clone, so it works in any folder (if it answers `EACCES`, see
+[the README](../README.md#getting-started)). It is also on npm: `npm install -g care-album-saver`,
+then `care-album-saver setup`, needs only Node. Every day after that, only the last line:
+`care-album-saver setup`. Then it prints a link like
 `http://127.0.0.1:52341/?token=...`.
 
 **Copy that whole link and paste it into your browser.** You will see this:

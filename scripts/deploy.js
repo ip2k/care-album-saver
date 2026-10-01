@@ -17,8 +17,11 @@
  *      it by the time the tests run;
  *   4. marks the clone as production (an untracked .care-album-saver-production file), and
  *      this checkout as development (a file inside its .git, shared by its worktrees);
- *   5. and, when a daily run is set up, reinstalls it from production at the same time of
- *      day, so the scheduled job runs production's code and never a development build.
+ *   5. when a daily run is set up, reinstalls it from production at the same time of day, so
+ *      the scheduled job runs production's code and never a development build;
+ *   6. and links the `care-album-saver` command to production (`npm install -g` of its
+ *      package folder, which is a link, not a copy), so typing it in any folder runs what the
+ *      daily run runs. A command that already runs production is left as it is.
  *
  * Why this exists: the daily run used to point at the development checkout's dist/, so every
  * build of a branch in progress went live at the next scheduled run.
@@ -180,7 +183,60 @@ if (!dry || existsSync(join(PROD, '.git'))) {
   } else {
     say('No daily run is set up, so there is nothing to move.');
   }
+
+  // 6. The command.
+  linkCommand();
   say(dry ? 'Dry run finished; nothing was changed.' : `Deployed ${devMain.slice(0, 7)} to production.`);
+}
+
+/**
+ * `care-album-saver` on the PATH, pointed at production: npm links production's package
+ * folder into its global folder (a symlink, so later deploys need no relinking) and puts the
+ * command in its bin folder, which is on the PATH wherever npm's global commands work. The
+ * development checkout is never linked: the command would then run whatever branch is out.
+ */
+function linkCommand() {
+  const pkg = join(PROD, 'packages', 'care-album-saver');
+  if (process.env.CARE_ALBUM_NO_GLOBAL_LINK) {
+    say('The care-album-saver command was left as it is (CARE_ALBUM_NO_GLOBAL_LINK is set).');
+    return;
+  }
+  const retry = `To try again: npm install -g "${pkg}"`;
+  let bin;
+  try {
+    const prefix = run('npm', ['prefix', '--global'], PROD, { quiet: true });
+    bin = process.platform === 'win32' ? join(prefix, 'care-album-saver.cmd') : join(prefix, 'bin', 'care-album-saver');
+  } catch (error) {
+    unfinished(`${devMain.slice(0, 7)} is in production, but the care-album-saver command was not linked to it: ` +
+      `npm could not be asked where its commands go (${firstLine(error)}).\n  ${retry}`);
+  }
+  const target = (path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return null;
+    }
+  };
+  const was = target(bin);
+  if (was && was === target(join(pkg, 'dist', 'cli.js'))) {
+    say('The care-album-saver command already runs production.');
+    return;
+  }
+  say(was ? `Linking the care-album-saver command to production (it ran ${was})…` : 'Linking the care-album-saver command to production…');
+  try {
+    // --ignore-scripts: the package has none, and a link has no reason to run any.
+    run('npm', ['install', '--global', '--ignore-scripts', '--no-audit', '--no-fund', pkg], PROD, { mutates: true, quiet: true });
+  } catch (error) {
+    unfinished(`${devMain.slice(0, 7)} is in production, but the care-album-saver command was not linked to it: ` +
+      `npm said "${firstLine(error)}".\n  ${retry}`);
+  }
+  if (!dry) say(`care-album-saver now runs production, from any folder (${bin}).`);
+}
+
+/** The first line npm printed about a failure, or the error's own message. */
+function firstLine(error) {
+  const said = String(error.stderr ?? '').split('\n').map((l) => l.replace(/^npm (?:ERR!|error) ?/, '').trim()).find(Boolean);
+  return said || error.message;
 }
 
 /** The daily run's time from the saved settings, read the way the tool reads them. */
