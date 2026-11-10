@@ -90,14 +90,25 @@ stores, and this tool is deliberately local-only with no cloud component.
   #4 had been merged with GitHub's merge button, whose commit takes the author from the GitHub
   profile's display name, a personal name, and the committer "GitHub". That commit's identity
   was set to ip2k and its five descendants re-parented; every tree is unchanged. Open PR #5,
-  built on it, was rebuilt onto the new commit in the same atomic push. **Merge only locally
-  (`git merge --no-ff -F`), never with GitHub's merge, squash or rebase buttons, "Update branch",
-  web edits or suggestion commits**: each of those writes the profile name into history.
+  built on it, was rebuilt onto the new commit in the same atomic push. From then until
+  2026-11-09 every merge was made locally, because every commit GitHub writes (the merge, squash
+  and rebase buttons, "Update branch", web edits, suggestion commits) took that profile name.
   **A fourth, of one commit, the same day** (main 395a89c): PR #9, the 0.1.1 release, was
   merged with the button too (a52f841). It was the tip of `main`, so it was replaced by an
   identical commit with the ip2k identity before v0.1.1 was tagged, because a tag and npm's
   provenance record fix a commit id for good. The owner was asked to set the GitHub profile's
   display name to ip2k, which would make the button write nothing personal.
+  **GitHub's merge button is allowed again (owner, 2026-11-09).** The display name is now ip2k:
+  PR #18's button merge (d8a64cd) reads author `ip2k <401146+ip2k@users.noreply.github.com>` and
+  committer `GitHub <noreply@github.com>`, nothing personal. Use "Create a merge commit", never
+  squash or rebase, so a stream stays one unit in `main`. A local `git merge --no-ff -F` is still
+  fine and also puts Intent, Release notes and Test results in the merge commit; a button merge
+  leaves that record in the PR description. **Check every commit GitHub writes** (a merge,
+  "Update branch", a web edit, a suggestion commit) before tagging, deploying or building on it:
+  `git log -1 --format='%an <%ae> | %cn <%ce>' <commit>` must show only ip2k's noreply address
+  and `GitHub <noreply@github.com>`. If anything else appears, stop and tell the owner: replacing
+  the commit is a history rewrite and a force-push, which only the owner authorises, and it is
+  cheap only while the commit is the untagged tip of `main` (as with #9).
   GitHub still serves the old commits through closed PRs' `refs/pull/*/head` and PR #4's and
   #9's merge-commit links; only GitHub Support can remove those.
 - **Production and development are separate (2026-09-23).** Production is a clone on
