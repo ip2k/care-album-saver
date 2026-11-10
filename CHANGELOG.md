@@ -7,6 +7,8 @@ two always say the same thing.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-09
+
 ### Fixed
 
 - **The daily run works again on a Mac whose photos folder is in iCloud Drive.** When macOS
