@@ -814,6 +814,15 @@ function launchAgentPlist(env: Resolved, time: TimeOfDay): string {
     // the person is actually doing, which is right for an archive job.
     '  <key>ProcessType</key>',
     '  <string>Background</string>',
+    // Allowed to bring back what iCloud Drive has moved off this Mac. A photos folder in
+    // iCloud Drive, with "Optimize Mac Storage" on or the disk nearly full, keeps only a
+    // placeholder of each file, archive.json included, and a launchd job left to the system's
+    // default policy may not download one: its read fails with EDEADLK, which Node reports as
+    // "Unknown system error -11". A run started from a terminal or the setup page inherits
+    // permission from the app it was started in, so the job alone failed, every day from
+    // 2026-10-26 to 2026-11-08 on the owner's Mac. launchd.plist(5); setiopolicy_np(3).
+    '  <key>MaterializeDatalessFiles</key>',
+    '  <true/>',
     // Owner-only, for everything the job creates — the log above all. launchd opens
     // StandardOutPath itself, before this tool runs, with its own default of 0644, and the
     // run's output names each child. Umask 077 (63 in decimal, which is what launchd reads).

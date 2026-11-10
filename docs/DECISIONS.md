@@ -38,6 +38,7 @@ document and the work list that followed it) are in git history at d13f8ff, as
   [C6](#c6-how-the-tool-describes-itself) ·
   [C7](#c7-the-name-is-care-album-saver) ·
   [C8](#c8-every-photo-goes-to-apple-photosapp-once-and-copy-items-is-asked-about) ·
+  [C9](#c9-the-daily-run-may-download-what-icloud-drive-moved-away-old-jobs-are-not-rewritten) ·
   [rejected for good](#rejected-for-good) ·
   [decided elsewhere](#decided-elsewhere)
 - Open: [the API](#what-nobody-has-checked-yet-about-brightwheels-api) (Q1–Q8) ·
@@ -525,6 +526,38 @@ the parent's Photos data, the direction this tool never goes.
 - *A test import, checked afterwards*: finding out whether it opens means reading the library.
 - *Asking Apple Photos.app which items it took*: names or ids from the library back into the
   tool, where the count is enough.
+
+### C9. The daily run may download what iCloud Drive moved away; old jobs are not rewritten
+
+**Decision.** Settled on 9 November 2026. The LaunchAgent sets `MaterializeDatalessFiles`, so
+a daily run may download a file iCloud Drive has reduced to a placeholder on this Mac. A read
+the system refuses for that reason (EDEADLK, which Node 26 reports as *Unknown system error
+-11*) is named as that in the list's refusal, with the way forward that loses nothing: turn the
+daily run off and on again. A job installed by an earlier version is not rewritten. Its owner
+learns from that message, on the first run that hits a placeholder (the owner's choice, the
+same day; the owner's own job is replaced by `deploy.js`). The message names iCloud Drive only
+for a list under `~/Library/Mobile Documents`, since Dropbox, OneDrive and Google Drive leave
+the same placeholders. The one-off fingerprint baseline that a placeholder stops from being
+read is left to be taken again, not recorded as complete without that photo.
+
+**Why.** The owner's archive is in iCloud Drive. From 26 October 2026, around when another
+project's caches filled the Mac's disk, `archive.json` was a placeholder and every daily run
+stopped on reading it (on 9 November, 1,823 of the archive's 2,317 files still were). That went
+on for two weeks, and each failure said to move the list aside and rebuild, which would have
+downloaded every photo again as a `-2` copy. A run started from the setup page on 9 November
+worked, because a process inherits permission to download from the app it was started in; a launchd job
+without the key gets the system's default, which refuses. Shown on 2026-11-09 with two
+throwaway LaunchAgents on the owner's Mac, each reading a different placeholder: without the
+key, `errno -11` on `read`; with it, the file came back whole. A clone of a placeholder photo,
+which is how the Apple Photos.app step copies, also came back byte for byte.
+
+**Turned down.**
+- *Asking iCloud to download through `osascript` (`NSFileManager`) when a read is refused*:
+  a second AppleScript path and a wait loop, where launchd has a documented key. `brctl
+  download` no longer exists to do it more simply.
+- *Telling the setup page to warn about, or quietly reinstall, a job without the key*: more
+  code for installs that may not exist; reinstalling also stops a run in progress
+  (commit 1dcffba turned down rewriting jobs automatically, for the same reason).
 
 ### Rejected for good
 

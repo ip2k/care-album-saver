@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import type { Config } from './config.js';
 import { hashFile, MANIFEST_FILENAME, type ManifestRecord } from './ferry/index.js';
 import { containedFile } from './contain.js';
+import { offloadedToCloud } from './ferry/manifest.js';
 import { configDir, readJsonFile, UnreadableFileError, writeSecureFile } from './paths.js';
 
 /**
@@ -113,18 +114,26 @@ export async function savedFingerprints(config: Config, onBaseline?: () => void)
   if (!root || record.baselined.has(root)) return record.hashes;
   const files = await listed(root);
   if (files.length > 0) onBaseline?.();
+  // A photo a cloud folder moved off this Mac, read by a daily run set up before it was
+  // allowed to bring one back, is not a photo that is gone: the baseline is left to be taken
+  // again rather than written down as complete without it, which would keep it out of Apple
+  // Photos.app as "changed" for ever.
+  let offloaded = false;
   for (const entry of files) {
     if (typeof entry?.path !== 'string') continue;
     const file = await containedFile(root, entry.path);
     if (!file) continue;
-    const hash = await hashFile(file).catch(() => null);
+    const hash = await hashFile(file).catch((error: unknown) => {
+      if (offloadedToCloud(error)) offloaded = true;
+      return null;
+    });
     if (hash) record.hashes.add(hash);
   }
   // Merged with anything sync noted while this was hashing, then written as covering this folder.
   const now = await read();
   for (const h of now.hashes) record.hashes.add(h);
   for (const b of now.baselined) record.baselined.add(b);
-  record.baselined.add(root);
+  if (!offloaded) record.baselined.add(root);
   await write(record);
   return record.hashes;
 }
