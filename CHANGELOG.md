@@ -7,6 +7,19 @@ two always say the same thing.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The daily run works again on a Mac whose photos folder is in iCloud Drive.** When macOS
+  frees space by moving files off the Mac (*Optimize Mac Storage*, or a nearly full disk), it
+  leaves a placeholder that is downloaded again when read, but a daily run set up in the
+  background was not allowed to download it. Every run then stopped with *Unknown system
+  error -11*. A daily run set up from this version on is allowed to download them. **A daily
+  run set up by an earlier version keeps the old setting until you turn it off and on again**
+  on the setup page.
+- The message for that failure no longer tells you to move the list aside and rebuild the
+  archive, which would have downloaded every photo a second time. It now says what happened,
+  that nothing is wrong with the list, and to turn the daily run off and on again.
+
 ## [0.2.1] - 2026-10-01
 
 ### Fixed

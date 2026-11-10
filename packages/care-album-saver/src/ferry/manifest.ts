@@ -63,6 +63,20 @@ interface ManifestData {
 
 const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** EDEADLK in Darwin's sys/errno.h. Linux's is 35, so `os.constants` is not asked. */
+const DARWIN_EDEADLK = 11;
+
+/**
+ * Whether a read failed because the file is a placeholder iCloud Drive left on this Mac and
+ * this process may not download it (see MaterializeDatalessFiles in schedule.ts).
+ *
+ * Node has no name for this error on a Mac — its code is "Unknown system error -11" — so it
+ * is told by its number, and only on macOS, where that number means EDEADLK.
+ */
+export function offloadedByICloud(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'darwin' && (error as NodeJS.ErrnoException | null)?.errno === -DARWIN_EDEADLK;
+}
+
 /**
  * The text of the list file, read only when it is an ordinary file (§4.6, F13).
  *
@@ -150,6 +164,23 @@ export class ManifestUnusableError extends Error {
 }
 
 /**
+ * The refusal for a list that is there and could not be read.
+ *
+ * One that iCloud moved away has nothing wrong with it, so the usual way forward — move it
+ * and rebuild, downloading every photo a second time — would be the wrong one; on the owner's
+ * Mac it was offered every day for two weeks.
+ */
+export function unreadableList(file: string, error: unknown): ManifestUnusableError {
+  if (!offloadedByICloud(error)) return new ManifestUnusableError(file, why(error));
+  return new ManifestUnusableError(
+    file,
+    'it is in iCloud Drive, macOS has moved it off this Mac to save space, and this run is not allowed to bring it back',
+    'The list itself is fine, so do not move or delete it. Turn the daily run off and on again on the setup page, ' +
+      'which lets it bring back what iCloud moved away, or start a run from the setup page.',
+  );
+}
+
+/**
  * Read an archive's list, or null when it has none: the one judgement of which lists are
  * unusable as a whole (unreadable, not JSON, no list of files, a format this build does not
  * know), each refused with ManifestUnusableError. Entries are sorted, not judged: whether an
@@ -165,7 +196,7 @@ export async function readManifestFile(root: string): Promise<ManifestFile | nul
     // Only "it is not there" is an ordinary first run. A permission error or a directory
     // in its place means a manifest may well exist and simply cannot be read.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw new ManifestUnusableError(file, why(error));
+    throw unreadableList(file, error);
   }
 
   let data: ManifestData;
