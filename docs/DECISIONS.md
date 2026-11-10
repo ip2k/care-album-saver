@@ -535,7 +535,10 @@ the system refuses for that reason (EDEADLK, which Node 26 reports as *Unknown s
 -11*) is named as that in the list's refusal, with the way forward that loses nothing: turn the
 daily run off and on again. A job installed by an earlier version is not rewritten. Its owner
 learns from that message, on the first run that hits a placeholder (the owner's choice, the
-same day; the owner's own job is replaced by `deploy.js`).
+same day; the owner's own job is replaced by `deploy.js`). The message names iCloud Drive only
+for a list under `~/Library/Mobile Documents`, since Dropbox, OneDrive and Google Drive leave
+the same placeholders. The one-off fingerprint baseline that a placeholder stops from being
+read is left to be taken again, not recorded as complete without that photo.
 
 **Why.** The owner's archive is in iCloud Drive. From 26 October 2026, around when another
 project's caches filled the Mac's disk, `archive.json` was a placeholder and every daily run

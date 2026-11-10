@@ -67,13 +67,14 @@ const why = (error: unknown) => (error instanceof Error ? error.message : String
 const DARWIN_EDEADLK = 11;
 
 /**
- * Whether a read failed because the file is a placeholder iCloud Drive left on this Mac and
- * this process may not download it (see MaterializeDatalessFiles in schedule.ts).
+ * Whether a read failed because the file is a placeholder a cloud folder left on this Mac —
+ * iCloud Drive's, or Dropbox's, OneDrive's or Google Drive's, which use the same mechanism —
+ * and this process may not download it (see MaterializeDatalessFiles in schedule.ts).
  *
  * Node has no name for this error on a Mac — its code is "Unknown system error -11" — so it
  * is told by its number, and only on macOS, where that number means EDEADLK.
  */
-export function offloadedByICloud(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
+export function offloadedToCloud(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
   return platform === 'darwin' && (error as NodeJS.ErrnoException | null)?.errno === -DARWIN_EDEADLK;
 }
 
@@ -171,12 +172,13 @@ export class ManifestUnusableError extends Error {
  * Mac it was offered every day for two weeks.
  */
 export function unreadableList(file: string, error: unknown): ManifestUnusableError {
-  if (!offloadedByICloud(error)) return new ManifestUnusableError(file, why(error));
+  if (!offloadedToCloud(error)) return new ManifestUnusableError(file, why(error));
+  const where = file.includes('/Library/Mobile Documents/') ? 'iCloud Drive' : 'a cloud folder';
   return new ManifestUnusableError(
     file,
-    'it is in iCloud Drive, macOS has moved it off this Mac to save space, and this run is not allowed to bring it back',
+    `it is in ${where}, macOS has moved it off this Mac to save space, and this run is not allowed to bring it back`,
     'The list itself is fine, so do not move or delete it. Turn the daily run off and on again on the setup page, ' +
-      'which lets it bring back what iCloud moved away, or start a run from the setup page.',
+      'which lets it bring back what was moved away, or start a run from the setup page.',
   );
 }
 

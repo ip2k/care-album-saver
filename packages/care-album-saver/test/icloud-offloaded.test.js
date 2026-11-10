@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ManifestUnusableError, offloadedByICloud, unreadableList } from '../dist/ferry/manifest.js';
+import { ManifestUnusableError, offloadedToCloud, unreadableList } from '../dist/ferry/manifest.js';
 import * as schedule from '../dist/schedule.js';
 
 // What Node 26 hands back on a Mac when a launchd job without MaterializeDatalessFiles reads a
@@ -21,15 +21,15 @@ const offloaded = () =>
   });
 
 test('a read iCloud refused is told apart by its number, and only on a Mac', () => {
-  assert.equal(offloadedByICloud(offloaded(), 'darwin'), true);
-  assert.equal(offloadedByICloud(offloaded(), 'linux'), false, 'errno 11 is EAGAIN on Linux, not EDEADLK');
-  assert.equal(offloadedByICloud(offloaded(), 'win32'), false);
+  assert.equal(offloadedToCloud(offloaded(), 'darwin'), true);
+  assert.equal(offloadedToCloud(offloaded(), 'linux'), false, 'errno 11 is EAGAIN on Linux, not EDEADLK');
+  assert.equal(offloadedToCloud(offloaded(), 'win32'), false);
   const denied = Object.assign(new Error('EACCES: permission denied, open'), { errno: -13, code: 'EACCES', syscall: 'open' });
-  assert.equal(offloadedByICloud(denied, 'darwin'), false);
+  assert.equal(offloadedToCloud(denied, 'darwin'), false);
   const linuxDeadlock = Object.assign(new Error('EDEADLK'), { errno: -35, code: 'EDEADLK' });
-  assert.equal(offloadedByICloud(linuxDeadlock, 'darwin'), false);
-  assert.equal(offloadedByICloud(null, 'darwin'), false);
-  assert.equal(offloadedByICloud('a string', 'darwin'), false);
+  assert.equal(offloadedToCloud(linuxDeadlock, 'darwin'), false);
+  assert.equal(offloadedToCloud(null, 'darwin'), false);
+  assert.equal(offloadedToCloud('a string', 'darwin'), false);
 });
 
 test('a list iCloud moved away is not called broken, and rebuilding it is not suggested', (t) => {
@@ -44,6 +44,10 @@ test('a list iCloud moved away is not called broken, and rebuilding it is not su
   assert.match(error.message, /Nothing has been changed and nothing has been downloaded/);
   assert.doesNotMatch(error.message, /Unknown system error/);
   assert.doesNotMatch(error.message, /rebuild|second time/);
+  // Dropbox, OneDrive and Google Drive leave the same placeholders, and are not iCloud.
+  const dropbox = unreadableList('/Users/parent/Library/CloudStorage/Dropbox/Photos/archive.json', offloaded());
+  assert.match(dropbox.message, /it is in a cloud folder, macOS has moved it off this Mac/);
+  assert.doesNotMatch(dropbox.message, /iCloud/);
 });
 
 test('any other unreadable list keeps the reason the system gave and the way to rebuild', () => {
